@@ -1,0 +1,17 @@
+# AI Skills & Local Templates (Do not push to remote)
+ai/
+
+# ROS 2 build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Python & IDE
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.vscode/
+.idea/
+.DS_Store
+*.swp

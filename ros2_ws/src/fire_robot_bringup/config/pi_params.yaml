@@ -1,0 +1,33 @@
+# ============================================================
+# PI_PARAMS.YAML — Tham số phần cứng cho Raspberry Pi
+# Tất cả sensor/device config tập trung ở đây, KHÔNG hardcode
+# trong launch file hay source code.
+# ============================================================
+
+# --- Camsense X1 Lidar ---
+camsense_x1_node:
+  ros__parameters:
+    frame_id: "laser_frame"       # Khớp với URDF (base_link → laser_frame)
+    port: "/dev/ttyUSB0"
+    baud: 115200
+    angle_offset: 180             # Hiệu chỉnh góc (degree, right hand)
+
+# --- USB Camera ---
+# Node name: usb_cam (mặc định của package usb_cam)
+# Executable: usb_cam_node_exe
+# Publish: /image_raw (sensor_msgs/Image)
+#          /image_raw/compressed (sensor_msgs/CompressedImage) — qua image_transport
+usb_cam:
+  ros__parameters:
+    video_device: "/dev/video0"
+    image_width: 640
+    image_height: 480
+    framerate: 15.0               # PHẢI là float, không phải int
+    pixel_format: "mjpeg"         # mjpeg hiệu quả hơn yuyv khi truyền qua WiFi
+    io_method: "mmap"
+    camera_name: "fire_robot_cam"
+    camera_frame_id: "camera_frame"  # Khớp với URDF (base_link → camera_frame)
+
+# --- micro-ROS Agent ---
+# (micro-ROS Agent nhận tham số qua command line, không qua yaml)
+# Port: /dev/ttyACM0, Baudrate: 115200

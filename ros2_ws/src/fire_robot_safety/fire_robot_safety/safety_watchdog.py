@@ -9,11 +9,11 @@ Chức năng:
 
 Chuỗi an toàn:
     Laptop mất WiFi
-        → (500ms) Pi watchdog gửi /cmd_vel = 0 → Xe dừng an toàn
+        → (1000ms) Pi watchdog gửi /cmd_vel = 0 → Xe dừng an toàn
         → (1000ms) Nếu Pi cũng mất → ESP32-S3 firmware EMERGENCY
 
-QoS: /cmd_vel là topic điều khiển → Reliable (theo Tai_Lieu_So_4).
-Params: heartbeat_timeout_ms, check_period_ms (từ yaml / launch argument, KHÔNG hardcode).
+QoS: /cmd_vel dùng Best Effort để tương thích với ESP32 (micro-ROS Best Effort).
+Params: heartbeat_timeout_ms (default 1000), check_period_ms (từ yaml / launch argument).
 """
 
 import rclpy
@@ -29,7 +29,8 @@ class SafetyWatchdog(Node):
         super().__init__('safety_watchdog')
 
         # ── Parameters (KHÔNG hardcode) ──
-        self.declare_parameter('heartbeat_timeout_ms', 500)
+        # Tăng lên 1000ms để tránh lỗi bàn phím lặp phím gây đứt đoạn 592ms
+        self.declare_parameter('heartbeat_timeout_ms', 1000)
         self.declare_parameter('check_period_ms', 100)
 
         self._timeout_ms = (
@@ -39,10 +40,10 @@ class SafetyWatchdog(Node):
             self.get_parameter('check_period_ms').get_parameter_value().integer_value
         )
 
-        # ── QoS: /cmd_vel là control topic → Reliable ──
+        # ── QoS: /cmd_vel dùng Best Effort để tương thích với ESP32 (micro-ROS) ──
         cmd_vel_qos = QoSProfile(
             depth=10,
-            reliability=ReliabilityPolicy.RELIABLE,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
         )
 
         # ── Subscriber: lắng nghe /cmd_vel từ Laptop ──

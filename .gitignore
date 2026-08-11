@@ -1,6 +1,7 @@
 # AI Skills & Local Templates (Do not push to remote)
 ai/
-
+docs/
+AGENTS.md
 # ROS 2 build artifacts
 ros2_ws/build/
 ros2_ws/install/

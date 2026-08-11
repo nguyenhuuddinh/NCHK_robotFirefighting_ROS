@@ -23,7 +23,7 @@ usb_cam:
     image_width: 640
     image_height: 480
     framerate: 15.0               # PHẢI là float, không phải int
-    pixel_format: "mjpeg"         # mjpeg hiệu quả hơn yuyv khi truyền qua WiFi
+    pixel_format: "mjpeg"          # [Finding 5 FIX] Dùng mjpeg để giảm băng thông WiFi/CPU
     io_method: "mmap"
     camera_name: "fire_robot_cam"
     camera_frame_id: "camera_frame"  # Khớp với URDF (base_link → camera_frame)

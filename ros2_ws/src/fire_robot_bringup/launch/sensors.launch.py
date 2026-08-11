@@ -45,5 +45,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         camsense_x1_node,
-        usb_cam_node,
+        # Tạm thời TẮT camera khi chạy SLAM để tránh nghẽn băng thông WiFi
+        # usb_cam_node,
     ])

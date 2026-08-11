@@ -99,6 +99,17 @@ def generate_launch_description():
         ),
     )
 
+    # ── 6. Odom-to-TF Broadcaster ──
+    # Chuyển /odom (BEST_EFFORT từ ESP32) → /tf (RELIABLE trên DDS nội bộ)
+    # Thay thế cho việc ESP32 publish /tf trực tiếp qua USB Serial (gây block)
+    from launch_ros.actions import Node as LaunchNode
+    odom_to_tf_node = LaunchNode(
+        package='fire_robot_bringup',
+        executable='odom_to_tf_broadcaster',
+        name='odom_to_tf_broadcaster',
+        output='screen',
+    )
+
     return LaunchDescription([
         # Arguments
         use_sim_time_arg,
@@ -110,4 +121,6 @@ def generate_launch_description():
         micro_ros_launch,
         safety_launch,
         dashboard_launch,
+        # Nodes
+        odom_to_tf_node,
     ])

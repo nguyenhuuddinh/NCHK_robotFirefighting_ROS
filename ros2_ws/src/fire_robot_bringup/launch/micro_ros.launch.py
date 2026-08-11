@@ -4,11 +4,11 @@ micro_ros.launch.py — Khởi chạy micro-ROS Agent trên Raspberry Pi.
 Chạy trên: 🟢 PI
 Chức năng: Cầu nối USB Serial (ESP32-S3) ↔ ROS 2 DDS
     ESP32-S3 publish qua micro-ROS:
-        - /odom       (nav_msgs/Odometry)      — 50 Hz
-        - /imu/data   (sensor_msgs/Imu)        — 50 Hz
-        - /env_status (std_msgs/String, JSON)   — 1 Hz
+        - /odom       (nav_msgs/Odometry)      — 10 Hz, Best Effort
+        - /imu/data   (sensor_msgs/Imu)        — 10 Hz, Best Effort
+        - /env_status (std_msgs/String, JSON)   — 2 Hz, Best Effort
     ESP32-S3 subscribe qua micro-ROS:
-        - /cmd_vel    (geometry_msgs/Twist)     — Reliable QoS
+        - /cmd_vel    (geometry_msgs/Twist)     — Best Effort QoS
         - /fire_target(geometry_msgs/Point)     — Reliable QoS
         - /pump_cmd   (std_msgs/Bool)           — Reliable QoS
 
@@ -38,16 +38,23 @@ def generate_launch_description():
 
     # ── micro-ROS Agent ──
     # Agent nhận tham số qua CLI, không qua yaml.
-    # Dùng ExecuteProcess vì micro_ros_agent có giao diện CLI riêng:
-    #   ros2 run micro_ros_agent micro_ros_agent serial --dev <port> -b <baud>
-    micro_ros_agent = ExecuteProcess(
-        cmd=[
-            'ros2', 'run', 'micro_ros_agent', 'micro_ros_agent',
+    # [BUG FIX] Dùng Node với respawn=True thay vì ExecuteProcess.
+    # Lý do: Nếu cáp USB bị nhiễu (EMI từ motor) hoặc sụt áp nhẹ làm ngắt kết nối tạm thời,
+    # micro_ros_agent sẽ crash. Với respawn=True, nó sẽ tự động khởi động lại sau 2 giây
+    # giúp hệ thống tự phục hồi mà không cần bạn phải chạy lại lệnh launch bằng tay!
+    from launch_ros.actions import Node as LaunchNode
+    micro_ros_agent = LaunchNode(
+        package='micro_ros_agent',
+        executable='micro_ros_agent',
+        name='micro_ros_agent',
+        arguments=[
             'serial',
             '--dev', LaunchConfiguration('micro_ros_port'),
             '-b', LaunchConfiguration('micro_ros_baudrate'),
         ],
         output='screen',
+        respawn=True,
+        respawn_delay=2.0,
     )
 
     return LaunchDescription([

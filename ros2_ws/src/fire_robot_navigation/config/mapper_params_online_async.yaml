@@ -1,0 +1,69 @@
+# Thiết lập mặc định cơ bản cho SLAM Toolbox trên Laptop
+# ĐIỂM QUAN TRỌNG: QoS phải là "BEST_EFFORT" để tương thích với dữ liệu truyền qua WiFi từ Raspberry Pi.
+
+slam_toolbox:
+  ros__parameters:
+
+    # --- Thông số Plugin và Frame ---
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_region_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # Tên frame của ROS 2 TF Tree
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan
+    mode: mapping # Vẽ map
+
+    # --- QoS Configuration (Bắt buộc cho micro-ROS qua WiFi) ---
+    # Giá trị QoS:
+    # 1 = RELIABLE
+    # 2 = BEST_EFFORT
+    map_qos: 1          # /map topic có thể Reliable
+    scan_qos: 2         # /scan từ ESP32/Pi qua WiFi bắt buộc là BEST_EFFORT!
+    tf_qos: 1           # /tf là RELIABLE
+    
+    # --- Cấu hình Lidar ---
+    scan_queue_size: 5            # Hàng đợi chờ TF khớp với /scan.
+                                  # /scan và /tf đều từ Pi qua WiFi, có thể đến lệch nhau vài chục ms.
+                                  # 5 scans × 213ms = ~1s buffer, đủ cho WiFi jitter.
+    resolution: 0.05             # Độ phân giải bản đồ: 5cm/pixel (Rất tốt cho Lidar tầm ngắn)
+    max_laser_range: 8.0         # Tầm xa tối đa của Lidar Camsense X1
+    minimum_time_interval: 0.2   # Lidar quét 4.7 Hz (~0.21s), chọn 0.2s để không bị miss
+
+    # --- Map Update Parameters ---
+    transform_timeout: 0.3       # TF 20Hz (~50ms), 300ms dư sức chờ
+    tf_buffer_duration: 30.0     # 30s cache đủ cho SLAM lookup
+    map_update_interval: 1.0     # Cập nhật hiển thị bản đồ mỗi 1 giây
+    
+    # --- Motion Based Updates (Chỉ vẽ map khi xe di chuyển) ---
+    minimum_travel_distance: 0.1  # Xe di chuyển 10cm thì cập nhật map
+    minimum_travel_heading: 0.1   # ~5.7° — cập nhật đủ thường xuyên để scan matcher bắt kịp
+
+    # Các thông số Matcher (Tối ưu từ mặc định)
+    use_scan_matching: true
+    use_scan_barycenter: true
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # Khoảng cách vẽ
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true

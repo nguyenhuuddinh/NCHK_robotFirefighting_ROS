@@ -28,16 +28,16 @@ slam_toolbox:
     tf_qos: 1           # /tf là RELIABLE
     
     # --- Cấu hình Lidar ---
-    scan_queue_size: 5            # Hàng đợi chờ TF khớp với /scan.
-                                  # /scan và /tf đều từ Pi qua WiFi, có thể đến lệch nhau vài chục ms.
-                                  # 5 scans × 213ms = ~1s buffer, đủ cho WiFi jitter.
+    scan_queue_size: 30           # [QA4 FIX] Tăng từ 5 lên 30 để chứa đủ scan trong lúc chờ TF lookup.
+                                  # /scan và /tf đều từ Pi qua WiFi, có thể đến lệch nhau vài trăm ms.
+                                  # 30 scans × 213ms = ~6s buffer, đủ cho WiFi jitter thực tế.
     resolution: 0.05             # Độ phân giải bản đồ: 5cm/pixel (Rất tốt cho Lidar tầm ngắn)
     max_laser_range: 8.0         # Tầm xa tối đa của Lidar Camsense X1
     minimum_time_interval: 0.2   # Lidar quét 4.7 Hz (~0.21s), chọn 0.2s để không bị miss
 
     # --- Map Update Parameters ---
-    transform_timeout: 0.3       # TF 20Hz (~50ms), 300ms dư sức chờ
-    tf_buffer_duration: 30.0     # 30s cache đủ cho SLAM lookup
+    transform_timeout: 1.0       # [QA4 FIX] Tăng từ 0.3 lên 1.0s. WiFi jitter thực tế có thể 200-500ms.
+    tf_buffer_duration: 60.0     # [QA4 FIX] Tăng từ 30 lên 60s. TF cache rộng hơn tránh 'earlier than all data'.
     map_update_interval: 1.0     # Cập nhật hiển thị bản đồ mỗi 1 giây
     
     # --- Motion Based Updates (Chỉ vẽ map khi xe di chuyển) ---

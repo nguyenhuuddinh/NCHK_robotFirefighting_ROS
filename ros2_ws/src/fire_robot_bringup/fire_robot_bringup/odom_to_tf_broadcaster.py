@@ -12,26 +12,43 @@ Thiết kế Timer-based + Stale Guard (Bug 13 fix):
     Nếu /odom quá hạn (> odom_stale_timeout_ms), dừng phát TF và log warn.
     Khi /odom trở lại, tự động phát TF tiếp.
 
-Timestamp dùng đồng hồ Pi (self.get_clock().now()):
-    /scan cũng dùng đồng hồ Pi (từ camsense_x1_node trên Pi).
-    Cùng nguồn clock → SLAM luôn khớp được timestamp → không bị drop message.
+[QA4 Runtime Finding 3 FIX] Timestamp source cho TF:
+    Bug gốc: stamp TF bằng self.get_clock().now() mỗi 50ms, nhưng /scan bị
+    delay qua WiFi → SLAM lookup TF tại timestamp scan cũ hơn TF mới nhất
+    trong buffer → lỗi "earlier than all data in the transform cache".
+
+    Fix: Cho phép chọn nguồn timestamp qua parameter:
+    - "pi_receive_time": Dùng thời điểm Pi nhận /odom (cùng clock /scan) [MẶC ĐỊNH]
+    - "odom_header": Dùng msg.header.stamp từ ESP32 (cần time sync tốt)
+    - "pi_now": Giữ hành vi cũ (now() mỗi timer tick)
+
+    Thêm tf_stamp_offset_ms cho phép backdate nhẹ nếu WiFi delay /scan.
 
 Parameters:
     tf_publish_rate_hz    : Tần số phát TF (default: 20.0 Hz)
     odom_stale_timeout_ms : Thời gian tối đa /odom được coi là tươi (default: 300 ms)
     odom_qos_depth        : Depth của QoS subscriber /odom (default: 10)
+    tf_stamp_source       : "pi_receive_time" | "odom_header" | "pi_now"
+    tf_stamp_offset_ms    : Backdate TF stamp (ms), dương = lùi thời gian (default: 0)
 """
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.time import Time
 from nav_msgs.msg import Odometry
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
+from builtin_interfaces.msg import Time as TimeMsg
 
 
 class OdomToTfBroadcaster(Node):
     """Chuyển đổi /odom → /tf (odom → base_link) — Timer 20Hz + stale guard."""
+
+    STAMP_PI_RECEIVE = 'pi_receive_time'
+    STAMP_ODOM_HEADER = 'odom_header'
+    STAMP_PI_NOW = 'pi_now'
+    VALID_STAMP_SOURCES = [STAMP_PI_RECEIVE, STAMP_ODOM_HEADER, STAMP_PI_NOW]
 
     def __init__(self):
         super().__init__('odom_to_tf_broadcaster')
@@ -40,6 +57,8 @@ class OdomToTfBroadcaster(Node):
         self.declare_parameter('tf_publish_rate_hz', 20.0)
         self.declare_parameter('odom_stale_timeout_ms', 300)
         self.declare_parameter('odom_qos_depth', 10)
+        self.declare_parameter('tf_stamp_source', self.STAMP_PI_RECEIVE)
+        self.declare_parameter('tf_stamp_offset_ms', 0)
 
         tf_rate = self.get_parameter('tf_publish_rate_hz').value
         self._stale_timeout_ns = int(
@@ -47,10 +66,26 @@ class OdomToTfBroadcaster(Node):
         )
         odom_depth = self.get_parameter('odom_qos_depth').value
 
+        # Validate tf_stamp_source
+        self._stamp_source = self.get_parameter('tf_stamp_source').value
+        if self._stamp_source not in self.VALID_STAMP_SOURCES:
+            self.get_logger().warn(
+                f'[OdomToTF] tf_stamp_source="{self._stamp_source}" không hợp lệ. '
+                f'Dùng mặc định "{self.STAMP_PI_RECEIVE}". '
+                f'Giá trị hợp lệ: {self.VALID_STAMP_SOURCES}'
+            )
+            self._stamp_source = self.STAMP_PI_RECEIVE
+
+        # tf_stamp_offset_ms: dương = lùi thời gian
+        self._stamp_offset_ns = int(
+            self.get_parameter('tf_stamp_offset_ms').value * 1e6
+        )
+
         # --- Cached odom data (được cập nhật bởi callback) ---
         self._cached_position = None      # geometry_msgs/Point
         self._cached_orientation = None   # geometry_msgs/Quaternion
         self._last_odom_time_ns = 0       # Thời điểm nhận /odom (clock Pi, ns)
+        self._cached_odom_stamp = None    # msg.header.stamp từ ESP32 (TimeMsg)
         self._odom_received = False       # Đã nhận ít nhất 1 /odom chưa
 
         # --- Stale warning throttle ---
@@ -83,7 +118,9 @@ class OdomToTfBroadcaster(Node):
 
         self.get_logger().info(
             f'[OdomToTF] Timer {tf_rate:.0f}Hz + stale guard '
-            f'{self._stale_timeout_ns / 1e6:.0f}ms — dùng clock Pi'
+            f'{self._stale_timeout_ns / 1e6:.0f}ms — '
+            f'stamp_source="{self._stamp_source}", '
+            f'offset={self._stamp_offset_ns / 1e6:.0f}ms'
         )
 
     def _odom_callback(self, msg: Odometry):
@@ -91,6 +128,7 @@ class OdomToTfBroadcaster(Node):
         self._cached_position = msg.pose.pose.position
         self._cached_orientation = msg.pose.pose.orientation
         self._last_odom_time_ns = self.get_clock().now().nanoseconds
+        self._cached_odom_stamp = msg.header.stamp
         self._odom_received = True
 
         # Reset stale warning khi nhận /odom mới
@@ -104,6 +142,30 @@ class OdomToTfBroadcaster(Node):
             self.get_logger().info(
                 f'[OdomToTF] Đã nhận {self._odom_count} /odom messages'
             )
+
+    def _get_tf_stamp(self):
+        """Tính timestamp cho TF dựa trên tf_stamp_source và offset."""
+        if self._stamp_source == self.STAMP_ODOM_HEADER:
+            # Dùng timestamp gốc từ ESP32 (cần micro-ROS time sync)
+            if self._cached_odom_stamp is not None:
+                stamp_ns = (
+                    self._cached_odom_stamp.sec * 1_000_000_000
+                    + self._cached_odom_stamp.nanosec
+                )
+                stamp_ns -= self._stamp_offset_ns
+                return Time(nanoseconds=max(0, stamp_ns)).to_msg()
+            # Fallback nếu chưa có stamp
+            return self.get_clock().now().to_msg()
+
+        elif self._stamp_source == self.STAMP_PI_RECEIVE:
+            # Dùng thời điểm Pi nhận /odom (cùng clock với /scan)
+            stamp_ns = self._last_odom_time_ns - self._stamp_offset_ns
+            return Time(nanoseconds=max(0, stamp_ns)).to_msg()
+
+        else:
+            # pi_now: hành vi cũ — dùng now() mỗi timer tick
+            now_ns = self.get_clock().now().nanoseconds - self._stamp_offset_ns
+            return Time(nanoseconds=max(0, now_ns)).to_msg()
 
     def _timer_callback(self):
         """Timer 20Hz — phát TF nếu /odom còn tươi."""
@@ -129,8 +191,8 @@ class OdomToTfBroadcaster(Node):
         # /odom còn tươi → broadcast TF
         t = TransformStamped()
 
-        # Dùng đồng hồ Pi — cùng nguồn clock với /scan
-        t.header.stamp = self.get_clock().now().to_msg()
+        # [QA4 FIX] Dùng timestamp theo tf_stamp_source thay vì now() mù
+        t.header.stamp = self._get_tf_stamp()
         t.header.frame_id = 'odom'
         t.child_frame_id = 'base_link'
 

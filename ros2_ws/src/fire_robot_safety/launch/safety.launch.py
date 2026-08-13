@@ -2,8 +2,12 @@
 safety.launch.py — Khởi chạy Safety Watchdog trên Pi.
 
 Chạy trên: 🟢 PI
-Chức năng: Giám sát heartbeat /cmd_vel, gửi STOP nếu Laptop mất kết nối > 500ms.
+Chức năng: Giám sát heartbeat /cmd_vel, gửi STOP nếu Laptop mất kết nối > 1000ms.
 Tham số: heartbeat_timeout_ms, check_period_ms (qua launch arguments, không hardcode).
+
+Lưu ý: Default 1000ms khớp với firmware ESP32 watchdog (cũng 1000ms).
+    teleop_twist_keyboard không publish liên tục khi không nhấn phím,
+    500ms quá nhạy gây xe giật liên tục → SLAM scan matcher khó ổn định.
 """
 
 from launch import LaunchDescription
@@ -16,7 +20,7 @@ def generate_launch_description():
     # ── Launch Arguments (không hardcode) ──
     timeout_arg = DeclareLaunchArgument(
         'heartbeat_timeout_ms',
-        default_value='500',
+        default_value='1000',
         description='Thời gian tối đa (ms) không nhận /cmd_vel trước khi gửi STOP'
     )
 

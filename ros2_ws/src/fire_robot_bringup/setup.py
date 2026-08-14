@@ -29,6 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'odom_to_tf_broadcaster = fire_robot_bringup.odom_to_tf_broadcaster:main',
+            'scan_qos_relay = fire_robot_bringup.scan_qos_relay:main',
         ],
     },
 )

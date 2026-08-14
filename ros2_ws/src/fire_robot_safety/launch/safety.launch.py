@@ -1,13 +1,16 @@
 """
-safety.launch.py — Khởi chạy Safety Watchdog trên Pi.
+safety.launch.py — Khởi chạy Safety Command Gate trên Pi.
 
 Chạy trên: 🟢 PI
-Chức năng: Giám sát heartbeat /cmd_vel, gửi STOP nếu Laptop mất kết nối > 1000ms.
-Tham số: heartbeat_timeout_ms, check_period_ms (qua launch arguments, không hardcode).
+Chức năng:
+    Subscribe /cmd_vel_raw (từ teleop/Nav2/dashboard)
+    Publish   /cmd_vel     (tới micro-ROS Agent → ESP32)
+    STOP nếu input mất > heartbeat_timeout_ms (default 1000ms).
+
+[QA5 FIX] Đổi từ watchdog subscribe/publish cùng topic sang command gate
+    với input/output tách biệt, tránh self-feedback.
 
 Lưu ý: Default 1000ms khớp với firmware ESP32 watchdog (cũng 1000ms).
-    teleop_twist_keyboard không publish liên tục khi không nhấn phím,
-    500ms quá nhạy gây xe giật liên tục → SLAM scan matcher khó ổn định.
 """
 
 from launch import LaunchDescription
@@ -17,35 +20,53 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # ── Launch Arguments (không hardcode) ──
+    # ── Launch Arguments ──
+    input_topic_arg = DeclareLaunchArgument(
+        'cmd_vel_input_topic',
+        default_value='/cmd_vel_raw',
+        description='Topic đầu vào command velocity'
+    )
+
+    output_topic_arg = DeclareLaunchArgument(
+        'cmd_vel_output_topic',
+        default_value='/cmd_vel',
+        description='Topic đầu ra command velocity (tới ESP32)'
+    )
+
     timeout_arg = DeclareLaunchArgument(
         'heartbeat_timeout_ms',
         default_value='1000',
-        description='Thời gian tối đa (ms) không nhận /cmd_vel trước khi gửi STOP'
+        description='Thời gian tối đa (ms) không nhận input trước khi gửi STOP'
     )
 
-    check_period_arg = DeclareLaunchArgument(
-        'check_period_ms',
-        default_value='100',
-        description='Chu kỳ kiểm tra heartbeat (ms)'
+    output_rate_arg = DeclareLaunchArgument(
+        'cmd_vel_output_rate_hz',
+        default_value='10.0',
+        description='Tần suất publish output /cmd_vel (Hz)'
     )
 
-    # ── Safety Watchdog Node ──
-    safety_watchdog_node = Node(
+    # ── Safety Command Gate Node ──
+    safety_gate_node = Node(
         package='fire_robot_safety',
         executable='safety_watchdog',
         name='safety_watchdog',
         parameters=[{
+            'cmd_vel_input_topic':
+                LaunchConfiguration('cmd_vel_input_topic'),
+            'cmd_vel_output_topic':
+                LaunchConfiguration('cmd_vel_output_topic'),
             'heartbeat_timeout_ms':
                 LaunchConfiguration('heartbeat_timeout_ms'),
-            'check_period_ms':
-                LaunchConfiguration('check_period_ms'),
+            'cmd_vel_output_rate_hz':
+                LaunchConfiguration('cmd_vel_output_rate_hz'),
         }],
         output='screen',
     )
 
     return LaunchDescription([
+        input_topic_arg,
+        output_topic_arg,
         timeout_arg,
-        check_period_arg,
-        safety_watchdog_node,
+        output_rate_arg,
+        safety_gate_node,
     ])

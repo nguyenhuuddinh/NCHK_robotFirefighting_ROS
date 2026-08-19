@@ -1,8 +1,12 @@
 """
-micro_ros.launch.py — Khởi chạy micro-ROS Agent trên Raspberry Pi.
+Khởi chạy micro-ROS Agent trên Raspberry Pi.
+
+[LEGACY/MANUAL] — File này hiện là legacy và chỉ chạy manual khi cần test.
+Runtime chính đã chuyển sang serial_bridge_node (Raw Serial V2).
 
 Chạy trên: 🟢 PI
 Chức năng: Cầu nối USB Serial (ESP32-S3) ↔ ROS 2 DDS
+
     ESP32-S3 publish qua micro-ROS:
         - /odom       (nav_msgs/Odometry)      — 10 Hz, Best Effort
         - /imu/data   (sensor_msgs/Imu)        — 10 Hz, Best Effort
@@ -18,7 +22,7 @@ Cài đặt: sudo apt install ros-humble-micro-ros-agent
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 
 

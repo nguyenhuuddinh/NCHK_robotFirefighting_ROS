@@ -7,22 +7,22 @@ Lệnh:     ros2 launch fire_robot_bringup robot.launch.py
 Khởi chạy toàn bộ stack trên Pi bằng 1 lệnh duy nhất:
     1. fire_robot_description  → robot_state_publisher (TF tree: base_link → sensor frames)
     2. sensors.launch.py       → Camsense X1 Lidar (/scan_raw → /scan qua relay)
-    3. micro_ros.launch.py     → micro-ROS Agent (ESP32-S3 ↔ ROS 2)
+    3. serial_bridge_node      → Cầu nối Raw Serial V2 (ESP32-S3 ↔ ROS 2)
     4. safety.launch.py        → Safety Command Gate (/cmd_vel_raw → /cmd_vel)
     5. dashboard.launch.py     → Rosbridge WebSocket (Web Dashboard)
     6. odom_to_tf_broadcaster  → /odom → /tf (odom → base_link)
 
 Arguments (theo ros2_engineer.md Section 7.1):
     - use_sim_time           : false (mặc định, Pi chạy phần cứng thực)
-    - micro_ros_port         : /dev/ttyACM0
-    - micro_ros_baudrate     : 115200
+    - serial_port            : /dev/ttyACM0
+    - serial_baudrate        : 115200
     - cmd_vel_input_topic    : /cmd_vel_raw
     - cmd_vel_output_topic   : /cmd_vel
     - heartbeat_timeout_ms   : 1000
     - cmd_vel_output_rate_hz : 10.0
 
 🧪 Debug:
-    ros2 node list → camsense_x1_node, scan_qos_relay, micro_ros_agent,
+    ros2 node list → camsense_x1_node, scan_qos_relay, serial_bridge_node,
                      safety_watchdog, rosbridge_websocket, robot_state_publisher,
                      odom_to_tf_broadcaster
     CPU Pi < 70% (htop)
@@ -53,14 +53,14 @@ def generate_launch_description():
         description='Dùng sim time (false cho phần cứng thực)'
     )
 
-    micro_ros_port_arg = DeclareLaunchArgument(
-        'micro_ros_port',
+    serial_port_arg = DeclareLaunchArgument(
+        'serial_port',
         default_value='/dev/ttyACM0',
         description='Serial port của ESP32-S3'
     )
 
-    micro_ros_baudrate_arg = DeclareLaunchArgument(
-        'micro_ros_baudrate',
+    serial_baudrate_arg = DeclareLaunchArgument(
+        'serial_baudrate',
         default_value='115200',
         description='Baudrate giao tiếp với ESP32-S3'
     )
@@ -108,15 +108,18 @@ def generate_launch_description():
         ),
     )
 
-    # ── 3. micro-ROS Agent (ESP32-S3 ↔ ROS 2) ──
-    micro_ros_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(bringup_dir, 'launch', 'micro_ros.launch.py')
-        ),
-        launch_arguments={
-            'micro_ros_port': LaunchConfiguration('micro_ros_port'),
-            'micro_ros_baudrate': LaunchConfiguration('micro_ros_baudrate'),
-        }.items(),
+    # ── 3. Serial Bridge Node (ESP32-S3 ↔ ROS 2 via Raw Serial V2) ──
+    serial_bridge = LaunchNode(
+        package='fire_robot_bringup',
+        executable='serial_bridge_node',
+        name='serial_bridge_node',
+        output='screen',
+        parameters=[{
+            'serial_port': LaunchConfiguration('serial_port'),
+            'serial_baudrate': LaunchConfiguration('serial_baudrate'),
+        }],
+        respawn=True,
+        respawn_delay=2.0,
     )
 
     # ── 4. Safety Command Gate (/cmd_vel_raw → /cmd_vel) ──
@@ -151,16 +154,16 @@ def generate_launch_description():
     return LaunchDescription([
         # Arguments
         use_sim_time_arg,
-        micro_ros_port_arg,
-        micro_ros_baudrate_arg,
+        serial_port_arg,
+        serial_baudrate_arg,
         cmd_vel_input_arg,
         cmd_vel_output_arg,
         heartbeat_timeout_arg,
         cmd_vel_rate_arg,
-        # Sub-launches
+        # Sub-launches & Nodes
         description_launch,
         sensors_launch,
-        micro_ros_launch,
+        serial_bridge,
         safety_launch,
         dashboard_launch,
         # Nodes

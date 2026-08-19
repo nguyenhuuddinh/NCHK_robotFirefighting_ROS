@@ -1,0 +1,1 @@
+/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/ros2_ws/src/fire_robot_navigation/launch/slam.launch.py

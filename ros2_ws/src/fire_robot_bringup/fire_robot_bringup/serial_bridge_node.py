@@ -55,8 +55,15 @@ class SerialBridgeNode(Node):
         self.ser = None
 
         self.state_lock = threading.Lock()
+        self.tx_lock = threading.Lock()
+        self.publish_lock = threading.Lock()
+        self.node_destroyed = False
+        self.stop_request = False
+
         self.session_ready = False
         self.session_epoch = 0
+        self.telemetry_healthy = False
+        self.state_stale_timeout_ms = 500
 
         self.pending_cmd = None
         self.pending_pump = None
@@ -64,13 +71,24 @@ class SerialBridgeNode(Node):
 
         self.pump_state = 0
         self.last_state_time_mono = 0.0
+        self.last_env_time_mono = 0.0
+
+        self.latest_state = None
+        self.latest_env = None
 
         self.tx_fail_count = 0
         self.tx_partial_count = 0
         self.reconnect_count = 0
         self.cmd_drop_count = 0
+        self.telemetry_drop_count = 0
+        self.telemetry_publish_count = 0
+        self.telemetry_publish_fail_count = 0
+
+        self.state_publish_max_age = 0.0
+        self.env_publish_max_age = 0.0
 
         self.create_timer(10.0, self.log_timer_callback)
+        self.telemetry_timer = self.create_timer(0.05, self.telemetry_publish_callback)
 
         self.running = True
         self.worker_thread = threading.Thread(target=self.serial_worker, daemon=True)
@@ -79,7 +97,8 @@ class SerialBridgeNode(Node):
     def cmd_vel_callback(self, msg):
         """Handle /cmd_vel."""
         with self.state_lock:
-            if not self.session_ready:
+            if not self.session_ready or \
+                    (not self.telemetry_healthy and (msg.linear.x != 0.0 or msg.angular.z != 0.0)):
                 self.cmd_drop_count += 1
                 return
             self.pending_cmd = ((msg.linear.x, msg.angular.z), self.session_epoch)
@@ -87,7 +106,7 @@ class SerialBridgeNode(Node):
     def fire_target_callback(self, msg):
         """Handle /fire_target."""
         with self.state_lock:
-            if not self.session_ready:
+            if not self.session_ready or not self.telemetry_healthy:
                 self.cmd_drop_count += 1
                 return
             self.pending_fire = ((msg.x, msg.y), self.session_epoch)
@@ -96,7 +115,7 @@ class SerialBridgeNode(Node):
         """Handle /pump_cmd."""
         pump_req = 1 if msg.data else 0
         with self.state_lock:
-            if not self.session_ready:
+            if not self.session_ready or (not self.telemetry_healthy and pump_req != 0):
                 self.cmd_drop_count += 1
                 return
             self.pending_pump = (pump_req, self.session_epoch)
@@ -105,6 +124,7 @@ class SerialBridgeNode(Node):
         """Close serial port and advance epoch."""
         with self.state_lock:
             self.session_ready = False
+            self.telemetry_healthy = False
             self.session_epoch += 1
             self.pending_cmd = None
             self.pending_pump = None
@@ -112,9 +132,10 @@ class SerialBridgeNode(Node):
 
         if self.ser:
             try:
-                self.ser.close()
+                with getattr(self, 'tx_lock', threading.Lock()):
+                    self.ser.close()
             except Exception as e:
-                self.get_logger().debug(f"Serial close error: {e}")
+                self.get_logger().warn(f"Serial close error: {e}")
             finally:
                 self.ser = None
 
@@ -162,15 +183,33 @@ class SerialBridgeNode(Node):
                             self.pump_state = 0
                             with self.state_lock:
                                 self.session_ready = True
+                                self.telemetry_healthy = False
+                                self.last_state_time_mono = time.monotonic()
                             last_pump_time = time.monotonic()
                         else:
                             self.tx_partial_count += 1
                             raise Exception("Partial write during bootstrap")
                     except Exception as e:
-                        self.get_logger().debug(f"Failed to bootstrap port {self.port}: {e}")
+                        self.get_logger().warn(f"Failed to bootstrap port {self.port}: {e}")
                         self.close_serial()
                         time.sleep(1.0)
                         continue
+
+                need_close = False
+                with self.state_lock:
+                    stale = False
+                    if self.session_ready:
+                        age = time.monotonic() - self.last_state_time_mono
+                        if age > (self.state_stale_timeout_ms / 1000.0):
+                            stale = True
+
+                    if stale:
+                        self.telemetry_healthy = False
+                        need_close = True
+
+                if need_close:
+                    self.close_serial()
+                    continue
 
                 # Process pending commands
                 to_write = []
@@ -204,6 +243,13 @@ class SerialBridgeNode(Node):
 
                 for item_type, data in to_write:
                     frame = None
+                    with self.state_lock:
+                        if self.stop_request or not self.running or not self.session_ready or \
+                                not self.telemetry_healthy or self.ser is None or \
+                                getattr(self.ser, 'closed', True) or \
+                                self.session_epoch != current_epoch:
+                            break
+
                     if item_type == 'cmd':
                         frame = self.protocol.generate_cmd(data[0], data[1])
                     elif item_type == 'pump':
@@ -212,108 +258,326 @@ class SerialBridgeNode(Node):
                     elif item_type == 'fire':
                         frame = self.protocol.generate_fire(data[0], data[1])
 
-                    if frame:
-                        if not self._write_frame(frame):
-                            break
+                    if frame and not getattr(self, 'stop_request', False):
+                        tx_fail = False
+                        with self.tx_lock:
+                            with self.state_lock:
+                                if getattr(self, 'stop_request', False) or not self.running or \
+                                        not self.session_ready or not self.telemetry_healthy or \
+                                        self.ser is None or \
+                                        getattr(self.ser, 'closed', True) or \
+                                        self.session_epoch != current_epoch:
+                                    frame = None
 
-                # Process pump refresh (2Hz)
+                            if frame and not getattr(self, 'stop_request', False):
+                                try:
+                                    written = self.ser.write(frame)
+                                    if written < len(frame):
+                                        self.tx_partial_count += 1
+                                        raise Exception("Partial write")
+                                except Exception as e:
+                                    self.get_logger().warn(f"Write error: {e}")
+                                    self.tx_fail_count += 1
+                                    tx_fail = True
+                        if tx_fail:
+                            self.close_serial()
+
                 with self.state_lock:
                     ready = self.session_ready
-                if ready:
+                    healthy = self.telemetry_healthy
+                    current_epoch = self.session_epoch
+                    p_state = self.pump_state
+                if ready and healthy:
                     now_mono = time.monotonic()
                     if now_mono - last_pump_time >= 0.5:
                         last_pump_time = now_mono
-                        frame = self.protocol.generate_pump(self.pump_state)
-                        if frame:
-                            self._write_frame(frame)
+                        frame = self.protocol.generate_pump(p_state)
+                        if frame and not getattr(self, 'stop_request', False):
+                            tx_fail = False
+                            with self.tx_lock:
+                                with self.state_lock:
+                                    if getattr(self, 'stop_request', False) or \
+                                            not self.running or \
+                                            not self.session_ready or \
+                                            not self.telemetry_healthy or \
+                                            self.ser is None or \
+                                            getattr(self.ser, 'closed', True) or \
+                                            self.session_epoch != current_epoch:
+                                        frame = None
+                                if frame and not getattr(self, 'stop_request', False):
+                                    try:
+                                        written = self.ser.write(frame)
+                                        if written < len(frame):
+                                            self.tx_partial_count += 1
+                                            raise Exception("Partial pump write")
+                                    except Exception:
+                                        self.tx_fail_count += 1
+                                        tx_fail = True
+                            if tx_fail:
+                                self.close_serial()
 
                 # Process RX
                 try:
-                    chunk = self.ser.read(1024)
-                    if chunk:
-                        for frame in self.protocol.parse_chunk(chunk):
-                            self.handle_frame(frame)
+                    if self.ser and hasattr(self.ser, 'in_waiting'):
+                        budget = 10
+                        while budget > 0 and getattr(self, 'running', False):
+                            waiting = self.ser.in_waiting
+                            if waiting == 0:
+                                break
+                            chunk = self.ser.read(min(waiting, 1024))
+                            if chunk:
+                                for frame in self.protocol.parse_chunk(chunk):
+                                    self.handle_frame(frame)
+                            budget -= 1
+                    else:
+                        chunk = self.ser.read(1024)
+                        if chunk:
+                            for frame in self.protocol.parse_chunk(chunk):
+                                self.handle_frame(frame)
                 except Exception as e:
                     self.get_logger().warn(f"Serial read error: {e}")
                     self.close_serial()
         finally:
+            with self.state_lock:
+                self.running = False
+            try:
+                if self.ser and not getattr(self.ser, 'closed', True):
+                    with getattr(self, 'tx_lock', threading.Lock()):
+                        cmd = self.protocol.generate_cmd(0.0, 0.0)
+                        pump = self.protocol.generate_pump(0)
+                        if cmd:
+                            self.ser.write(cmd)
+                        if pump:
+                            self.ser.write(pump)
+            except Exception:
+                pass
             with self.state_lock:
                 self.session_ready = False
             self.close_serial()
 
     def handle_frame(self, frame):
         """Handle parsed telemetry frame."""
-        if frame['type'] == 'STATE':
-            self.last_state_time_mono = time.monotonic()
-            now = self.get_clock().now().to_msg()
+        now_mono = time.monotonic()
+        with self.state_lock:
+            if not self.session_ready:
+                return
+            epoch = self.session_epoch
 
-            odom = Odometry()
-            odom.header.stamp = now
-            odom.header.frame_id = 'odom'
-            odom.child_frame_id = 'base_link'
-            odom.pose.pose.position.x = frame['x']
-            odom.pose.pose.position.y = frame['y']
-            odom.pose.pose.position.z = 0.0
+            if frame['type'] == 'STATE':
+                self.last_state_time_mono = now_mono
+                self.telemetry_healthy = True
+                self.latest_state = (frame, epoch, now_mono)
+            elif frame['type'] == 'ENV':
+                self.last_env_time_mono = now_mono
+                self.latest_env = (frame, epoch, now_mono)
 
-            cy = math.cos(frame['yaw'] * 0.5)
-            sy = math.sin(frame['yaw'] * 0.5)
+    def telemetry_publish_callback(self):
+        """Publish telemetry from latest slots."""
+        with self.publish_lock:
+            if getattr(self, 'node_destroyed', False):
+                return
 
-            odom.pose.pose.orientation.x = 0.0
-            odom.pose.pose.orientation.y = 0.0
-            odom.pose.pose.orientation.z = sy
-            odom.pose.pose.orientation.w = cy
+        with self.state_lock:
+            state_item = self.latest_state
+            self.latest_state = None
+            env_item = self.latest_env
+            self.latest_env = None
 
-            odom.twist.twist.linear.x = frame['vx']
-            odom.twist.twist.angular.z = frame['wz']
+        if state_item:
+            frame, epoch, frame_mono = state_item
+            age = time.monotonic() - frame_mono
 
-            self.odom_pub.publish(odom)
+            with self.state_lock:
+                valid_odom = (self.running and self.session_ready and
+                              self.telemetry_healthy and self.session_epoch == epoch)
 
-            imu = Imu()
-            imu.header.stamp = now
-            imu.header.frame_id = 'imu_frame'
-            imu.orientation.x = 0.0
-            imu.orientation.y = 0.0
-            imu.orientation.z = sy
-            imu.orientation.w = cy
-            imu.angular_velocity.z = frame['gyro_z']
-            self.imu_pub.publish(imu)
+            if valid_odom and age < 0.2:
+                try:
+                    now = self.get_clock().now().to_msg()
+                    odom = Odometry()
+                    odom.header.stamp = now
+                    odom.header.frame_id = 'odom'
+                    odom.child_frame_id = 'base_link'
+                    odom.pose.pose.position.x = frame['x']
+                    odom.pose.pose.position.y = frame['y']
+                    odom.pose.pose.position.z = 0.0
 
-        elif frame['type'] == 'ENV':
-            msg = String()
-            if frame['valid'] == 0:
-                msg.data = json.dumps({"status": "WROOM_OFFLINE"})
+                    cy = math.cos(frame['yaw'] * 0.5)
+                    sy = math.sin(frame['yaw'] * 0.5)
+                    odom.pose.pose.orientation.x = 0.0
+                    odom.pose.pose.orientation.y = 0.0
+                    odom.pose.pose.orientation.z = sy
+                    odom.pose.pose.orientation.w = cy
+
+                    odom.twist.twist.linear.x = frame['vx']
+                    odom.twist.twist.angular.z = frame['wz']
+
+                    with self.publish_lock:
+                        if not getattr(self, 'node_destroyed', False):
+                            self.odom_pub.publish(odom)
+                    self.telemetry_publish_count += 1
+                    self.state_publish_max_age = max(self.state_publish_max_age, age)
+                except Exception as e:
+                    self.get_logger().warn(f"Odom publish exception: {e}")
+                    self.telemetry_publish_fail_count += 1
             else:
-                fire_str = f"{frame['fire_flags']:03d}"
-                msg.data = json.dumps({
-                    "fire": fire_str,
-                    "gas": frame['gas_ppm'],
-                    "temp": frame['temp_c'],
-                    "batt": frame['batt_v']
-                })
-            self.env_pub.publish(msg)
+                self.telemetry_drop_count += 1
+
+            with self.state_lock:
+                valid_imu = (self.running and self.session_ready and
+                             self.telemetry_healthy and self.session_epoch == epoch)
+
+            if valid_imu and age < 0.2:
+                try:
+                    # Reuse 'now', but don't overwrite it since they should match
+                    imu = Imu()
+                    imu.header.stamp = now
+                    imu.header.frame_id = 'imu_frame'
+                    imu.orientation.x = 0.0
+                    imu.orientation.y = 0.0
+                    imu.orientation.z = sy
+                    imu.orientation.w = cy
+                    imu.angular_velocity.z = frame['gyro_z']
+                    with self.publish_lock:
+                        if not getattr(self, 'node_destroyed', False):
+                            self.imu_pub.publish(imu)
+                    self.telemetry_publish_count += 1
+                except Exception as e:
+                    self.get_logger().warn(f"Imu publish exception: {e}")
+                    self.telemetry_publish_fail_count += 1
+            else:
+                self.telemetry_drop_count += 1
+
+        if env_item:
+            frame, epoch, frame_mono = env_item
+            age = time.monotonic() - frame_mono
+
+            with self.state_lock:
+                valid_env = (self.running and self.session_ready and
+                             self.telemetry_healthy and self.session_epoch == epoch)
+
+            if valid_env and age < 1.0:
+                try:
+                    msg = String()
+                    if frame['valid'] == 0:
+                        msg.data = json.dumps({"status": "WROOM_OFFLINE"})
+                    else:
+                        fire_str = f"{frame['fire_flags']:03d}"
+                        msg.data = json.dumps({
+                            "fire": fire_str,
+                            "gas": frame['gas_ppm'],
+                            "temp": frame['temp_c'],
+                            "batt": frame['batt_v']
+                        })
+                    with self.publish_lock:
+                        if not getattr(self, 'node_destroyed', False):
+                            self.env_pub.publish(msg)
+                    self.telemetry_publish_count += 1
+                    self.env_publish_max_age = max(self.env_publish_max_age, age)
+                except Exception as e:
+                    self.get_logger().warn(f"Env publish exception: {e}")
+                    self.telemetry_publish_fail_count += 1
+            else:
+                self.telemetry_drop_count += 1
 
     def log_timer_callback(self):
-        """Log diagnostic statistics."""
-        age_ms = -1
-        if self.last_state_time_mono > 0:
-            age_ms = int((time.monotonic() - self.last_state_time_mono) * 1000)
+        """Log diagnostics."""
+        if not getattr(self, 'session_ready', False):
+            self.get_logger().info("Session offline")
+            return
+
+        with getattr(self, 'state_lock', threading.Lock()):
+            drop = getattr(self, 'cmd_drop_count', 0)
+            self.cmd_drop_count = 0
+            t_drop = getattr(self, 'telemetry_drop_count', 0)
+            self.telemetry_drop_count = 0
+            t_pub = getattr(self, 'telemetry_publish_count', 0)
+            self.telemetry_publish_count = 0
+            t_fail = getattr(self, 'telemetry_publish_fail_count', 0)
+            self.telemetry_publish_fail_count = 0
+            tx_p = getattr(self, 'tx_partial_count', 0)
+            self.tx_partial_count = 0
+            tx_f = getattr(self, 'tx_fail_count', 0)
+            self.tx_fail_count = 0
+            recon = getattr(self, 'reconnect_count', 0)
+            self.reconnect_count = 0
+            s_max = getattr(self, 'state_publish_max_age', 0.0)
+            self.state_publish_max_age = 0.0
+            e_max = getattr(self, 'env_publish_max_age', 0.0)
+            self.env_publish_max_age = 0.0
 
         self.get_logger().info(
-            f"RX valid={self.protocol.valid_count} crc_fail={self.protocol.crc_fail_count} "
-            f"parse_fail={self.protocol.parse_fail_count} overflow={self.protocol.overflow_count} "
-            f"gap={self.protocol.gap_count} dup={self.protocol.dup_count} "
-            f"reconnect={self.reconnect_count} "
-            f"tx_fail={self.tx_fail_count} tx_partial={self.tx_partial_count} "
-            f"cmd_drop={self.cmd_drop_count} state_age_ms={age_ms}"
+            f"Serial telemetry: {t_pub} pub, {t_drop} drop, {t_fail} fail. "
+            f"Age max: state={s_max:.3f}s, env={e_max:.3f}s. "
+            f"CMD drop: {drop}. "
+            f"TX: {tx_f} fail, {tx_p} partial. Recon: {recon}"
         )
 
     def destroy_node(self):
         """Run main entry point."""
-        self.running = False
-        if self.worker_thread:
-            self.worker_thread.join(timeout=2.0)
-        self.close_serial()
+        with self.state_lock:
+            self.stop_request = True
+
+        if getattr(self, 'worker_thread', None):
+            if self.ser and hasattr(self.ser, 'cancel_read'):
+                try:
+                    self.ser.cancel_read()
+                except Exception:
+                    pass
+            if self.ser and hasattr(self.ser, 'cancel_write'):
+                try:
+                    self.ser.cancel_write()
+                except Exception:
+                    pass
+
+            t0 = time.time()
+            tx_acquired = False
+            while not tx_acquired and (time.time() - t0) < 1.0:
+                tx_acquired = getattr(self, 'tx_lock', threading.Lock()).acquire(timeout=0.1)
+
+            try:
+                with self.state_lock:
+                    self.running = False
+            finally:
+                if tx_acquired:
+                    self.tx_lock.release()
+
+            t0 = time.time()
+            while self.worker_thread.is_alive() and (time.time() - t0) < 1.0:
+                self.worker_thread.join(timeout=0.1)
+
+            if self.worker_thread.is_alive():
+                # force close serial
+                try:
+                    if self.ser and hasattr(self.ser, 'close'):
+                        self.ser.close()
+                except Exception:
+                    pass
+                self.worker_thread.join(timeout=1.0)
+                if self.worker_thread.is_alive():
+                    self.get_logger().error(
+                        "Worker thread still alive after force close, returning False")
+                    return False
+
+        pub_acquired = False
+        t0 = time.time()
+        while not pub_acquired and (time.time() - t0) < 1.0:
+            pub_acquired = getattr(self, 'publish_lock', threading.Lock()).acquire(timeout=0.1)
+
+        if pub_acquired:
+            self.node_destroyed = True
+            self.publish_lock.release()
+        else:
+            return False
+
+        if getattr(self, 'telemetry_timer', None) and not self.node_destroyed:
+            try:
+                self.telemetry_timer.cancel()
+            except Exception:
+                pass
+
         super().destroy_node()
+        return True
 
 
 def main(args=None):

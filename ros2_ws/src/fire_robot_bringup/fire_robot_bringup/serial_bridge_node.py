@@ -70,9 +70,16 @@ class SerialBridgeNode(Node):
         self.pending_fire = None
 
         self.pump_state = 0
+        self.cmd_version = 0
+        self.pump_version = 0
+        self.fire_version = 0
+        self.pump_written_version = 0
+        self.last_pump_time = 0.0
         self.last_state_time_mono = 0.0
         self.last_env_time_mono = 0.0
 
+        self.reconnect_backoff = 0.0
+        self.next_reconnect_mono = 0.0
         self.latest_state = None
         self.latest_env = None
 
@@ -97,28 +104,35 @@ class SerialBridgeNode(Node):
     def cmd_vel_callback(self, msg):
         """Handle /cmd_vel."""
         with self.state_lock:
-            if not self.session_ready or \
-                    (not self.telemetry_healthy and (msg.linear.x != 0.0 or msg.angular.z != 0.0)):
+            if not getattr(self, 'session_ready', False) or \
+                    (not getattr(self, 'telemetry_healthy', False) and
+                     (msg.linear.x != 0.0 or msg.angular.z != 0.0)):
                 self.cmd_drop_count += 1
                 return
-            self.pending_cmd = ((msg.linear.x, msg.angular.z), self.session_epoch)
+            self.cmd_version += 1
+            self.pending_cmd = ((msg.linear.x, msg.angular.z),
+                                self.session_epoch, self.cmd_version)
 
     def fire_target_callback(self, msg):
         """Handle /fire_target."""
         with self.state_lock:
-            if not self.session_ready or not self.telemetry_healthy:
+            if not getattr(self, 'session_ready', False) or \
+                    not getattr(self, 'telemetry_healthy', False):
                 self.cmd_drop_count += 1
                 return
-            self.pending_fire = ((msg.x, msg.y), self.session_epoch)
+            self.fire_version += 1
+            self.pending_fire = ((msg.x, msg.y), self.session_epoch, self.fire_version)
 
     def pump_cmd_callback(self, msg):
         """Handle /pump_cmd."""
         pump_req = 1 if msg.data else 0
         with self.state_lock:
-            if not self.session_ready or (not self.telemetry_healthy and pump_req != 0):
+            if not getattr(self, 'session_ready', False) or \
+                    (not getattr(self, 'telemetry_healthy', False) and pump_req != 0):
                 self.cmd_drop_count += 1
                 return
-            self.pending_pump = (pump_req, self.session_epoch)
+            self.pump_version += 1
+            self.pending_pump = (pump_req, self.session_epoch, self.pump_version)
 
     def close_serial(self):
         """Close serial port and advance epoch."""
@@ -155,14 +169,170 @@ class SerialBridgeNode(Node):
             self.close_serial()
             return False
 
-    def serial_worker(self):
-        """Single I/O worker for reading and writing."""
-        last_pump_time = time.monotonic()
+    def _pending_snapshot(self):
+        """Take a snapshot of pending TX items without clearing."""
+        snapshot = []
+        now_mono = time.monotonic()
+        with self.state_lock:
+            if not getattr(self, 'session_ready', False) or \
+                    not getattr(self, 'telemetry_healthy', False):
+                return snapshot
+
+            c_cmd = getattr(self, 'pending_cmd', None)
+            if c_cmd:
+                args, ep, ver = c_cmd
+                if ep == getattr(self, 'session_epoch', -1):
+                    snapshot.append(('CMD', args, ep, ver, c_cmd))
+
+            c_pump = getattr(self, 'pending_pump', None)
+            if c_pump:
+                req, ep, ver = c_pump
+                if ep == getattr(self, 'session_epoch', -1):
+                    snapshot.append(('PUMP', req, ep, ver, c_pump))
+            elif now_mono - getattr(self, 'last_pump_time', 0.0) >= 0.5:
+                req = getattr(self, 'pump_state', 0)
+                ver = getattr(self, 'pump_written_version', 0)
+                ep = getattr(self, 'session_epoch', -1)
+                snapshot.append(('PUMP_REFRESH', req, ep, ver, None))
+
+            c_fire = getattr(self, 'pending_fire', None)
+            if c_fire:
+                args, ep, ver = c_fire
+                if ep == getattr(self, 'session_epoch', -1):
+                    snapshot.append(('FIRE', args, ep, ver, c_fire))
+
+        return snapshot
+
+    def _write_pending_item(self, item, current_ser):
+        """Re-validate and write a single pending item."""
+        itype, data, ep, ver, original_tuple = item
+        frame = None
+
+        with self.state_lock:
+            if not getattr(self, 'session_ready', False) or \
+                    ep != getattr(self, 'session_epoch', -1) or \
+                    getattr(self, 'stop_request', False) or \
+                    self.ser is not current_ser or getattr(self.ser, 'closed', True):
+                return True
+
+            if not getattr(self, 'telemetry_healthy', False):
+                if itype == 'CMD' and data != (0.0, 0.0):
+                    return True
+                if itype == 'PUMP' and data != 0:
+                    return True
+                if itype == 'FIRE' or itype == 'PUMP_REFRESH':
+                    return True
+
+            if itype == 'CMD':
+                current_item = getattr(self, 'pending_cmd', None)
+                if current_item is not original_tuple and current_item is not None:
+                    c_args, c_ep, c_ver = current_item
+                    if c_ver > ver:
+                        self.cmd_drop_count += 1
+                        return True
+                frame = self.protocol.generate_cmd(data[0], data[1])
+            elif itype == 'PUMP':
+                current_item = getattr(self, 'pending_pump', None)
+                if current_item is not original_tuple and current_item is not None:
+                    c_req, c_ep, c_ver = current_item
+                    if c_ver > ver:
+                        self.cmd_drop_count += 1
+                        return True
+                frame = self.protocol.generate_pump(data)
+            elif itype == 'PUMP_REFRESH':
+                current_item = getattr(self, 'pending_pump', None)
+                if current_item is not None:
+                    c_req, c_ep, c_ver = current_item
+                    if c_ver > ver:
+                        return True
+                frame = self.protocol.generate_pump(data)
+            elif itype == 'FIRE':
+                current_item = getattr(self, 'pending_fire', None)
+                if current_item is not original_tuple and current_item is not None:
+                    c_args, c_ep, c_ver = current_item
+                    if c_ver > ver:
+                        return True
+                frame = self.protocol.generate_fire(data[0], data[1])
+
+        if not frame:
+            return True
+
+        if getattr(self, 'stop_request', False):
+            return True
+
         try:
-            while self.running:
-                with self.state_lock:
-                    is_closed = (self.ser is None or getattr(self.ser, 'closed', True))
-                if is_closed:
+            written = current_ser.write(frame)
+            if written < len(frame):
+                self.tx_partial_count += 1
+                return False
+        except Exception:
+            self.tx_fail_count += 1
+            return False
+
+        with self.state_lock:
+            if itype == 'CMD':
+                if getattr(self, 'pending_cmd', None) is original_tuple:
+                    self.pending_cmd = None
+            elif itype == 'PUMP':
+                if getattr(self, 'pending_pump', None) is original_tuple:
+                    self.pending_pump = None
+                self.pump_state = data
+                self.pump_written_version = ver
+                self.last_pump_time = time.monotonic()
+            elif itype == 'PUMP_REFRESH':
+                self.last_pump_time = time.monotonic()
+            elif itype == 'FIRE':
+                if getattr(self, 'pending_fire', None) is original_tuple:
+                    self.pending_fire = None
+
+        return True
+
+    def serial_worker(self):
+        """Worker thread for reading and writing."""
+        import time
+        try:
+            while getattr(self, 'running', False):
+                if getattr(self, 'stop_request', False):
+                    break
+                now = time.monotonic()
+                if now < getattr(self, 'next_reconnect_mono', 0.0):
+                    time.sleep(0.01)
+                    continue
+
+                budget = 10
+                read_failed = False
+                while budget > 0 and getattr(self, 'running', False):
+                    try:
+                        waiting = getattr(self.ser, 'in_waiting', 0) if self.ser else 0
+                        if waiting == 0:
+                            if self.ser:
+                                chunk = self.ser.read(1)
+                                if chunk:
+                                    waiting = getattr(self.ser, 'in_waiting', 0)
+                                    if waiting > 0:
+                                        chunk += self.ser.read(min(waiting, 1023))
+                                    for frame in self.protocol.parse_chunk(chunk):
+                                        self.handle_frame(frame)
+                            break
+                        if self.ser:
+                            chunk = self.ser.read(min(waiting, 1024))
+                            if chunk:
+                                for frame in self.protocol.parse_chunk(chunk):
+                                    self.handle_frame(frame)
+                    except Exception as e:
+                        self.get_logger().warn(f"Serial read error: {e}")
+                        self.close_serial()
+                        self.reconnect_backoff = min(
+                            1.0, max(0.1, getattr(self, 'reconnect_backoff', 0.0) * 1.5))
+                        self.next_reconnect_mono = time.monotonic() + self.reconnect_backoff
+                        read_failed = True
+                        break
+                    budget -= 1
+
+                if read_failed:
+                    continue
+
+                if getattr(self, 'ser', None) is None or getattr(self.ser, 'closed', True):
                     self.close_serial()
                     try:
                         self.ser = self.serial_cls(
@@ -171,38 +341,60 @@ class SerialBridgeNode(Node):
                         self.reconnect_count += 1
                         self.protocol.reset_parser()
 
-                        cmd = self.protocol.generate_cmd(0.0, 0.0)
-                        pump = self.protocol.generate_pump(0)
-
-                        if cmd is None or pump is None:
-                            raise Exception("Failed to generate bootstrap commands")
-
-                        w1 = self.ser.write(cmd)
-                        w2 = self.ser.write(pump)
-                        if w1 == len(cmd) and w2 == len(pump):
-                            self.pump_state = 0
+                        current_ser = self.ser
+                        if current_ser is None:
+                            raise Exception("Serial port closed immediately after open")
+                        with getattr(self, 'tx_lock', __import__('threading').Lock()):
                             with self.state_lock:
+                                if getattr(self, 'stop_request', False) or \
+                                        self.ser is not current_ser:
+                                    raise Exception("Stopped before bootstrap")
+                                cmd = self.protocol.generate_cmd(0.0, 0.0)
+                                pump = self.protocol.generate_pump(0)
+
+                            if getattr(self, 'stop_request', False):
+                                raise Exception("Stopped before write")
+                            w1 = current_ser.write(cmd)
+                            if w1 < len(cmd):
+                                self.tx_partial_count += 1
+                                raise Exception("Partial write during bootstrap")
+
+                            with self.state_lock:
+                                if getattr(self, 'stop_request', False) or \
+                                        self.ser is not current_ser:
+                                    raise Exception("Stopped before pump")
+
+                            w2 = current_ser.write(pump)
+                            if w2 < len(pump):
+                                self.tx_partial_count += 1
+                                raise Exception("Partial write during bootstrap")
+
+                            with self.state_lock:
+                                if getattr(self, 'stop_request', False) or \
+                                        self.ser is not current_ser:
+                                    raise Exception("Stopped after write")
                                 self.session_ready = True
                                 self.telemetry_healthy = False
+                                import time
                                 self.last_state_time_mono = time.monotonic()
-                            last_pump_time = time.monotonic()
-                        else:
-                            self.tx_partial_count += 1
-                            raise Exception("Partial write during bootstrap")
+                                self.last_pump_time = time.monotonic()
+                                self.pump_state = 0
                     except Exception as e:
                         self.get_logger().warn(f"Failed to bootstrap port {self.port}: {e}")
                         self.close_serial()
-                        time.sleep(1.0)
+                        self.reconnect_backoff = min(
+                            1.0, max(0.1, getattr(self, 'reconnect_backoff', 0.0) * 1.5))
+                        self.next_reconnect_mono = time.monotonic() + self.reconnect_backoff
                         continue
 
                 need_close = False
                 with self.state_lock:
                     stale = False
                     if self.session_ready:
+                        import time
                         age = time.monotonic() - self.last_state_time_mono
                         if age > (self.state_stale_timeout_ms / 1000.0):
                             stale = True
-
                     if stale:
                         self.telemetry_healthy = False
                         need_close = True
@@ -211,138 +403,31 @@ class SerialBridgeNode(Node):
                     self.close_serial()
                     continue
 
-                # Process pending commands
-                to_write = []
-                with self.state_lock:
-                    ready = self.session_ready
-                    current_epoch = self.session_epoch
+                snapshot = self._pending_snapshot()
+                if not snapshot:
+                    continue
 
-                    if self.pending_cmd:
-                        args, item_epoch = self.pending_cmd
-                        self.pending_cmd = None
-                        if ready and item_epoch == current_epoch:
-                            to_write.append(('cmd', args))
-                        else:
-                            self.cmd_drop_count += 1
-
-                    if self.pending_pump:
-                        pump_req, item_epoch = self.pending_pump
-                        self.pending_pump = None
-                        if ready and item_epoch == current_epoch:
-                            to_write.append(('pump', pump_req))
-                        else:
-                            self.cmd_drop_count += 1
-
-                    if self.pending_fire:
-                        args, item_epoch = self.pending_fire
-                        self.pending_fire = None
-                        if ready and item_epoch == current_epoch:
-                            to_write.append(('fire', args))
-                        else:
-                            self.cmd_drop_count += 1
-
-                for item_type, data in to_write:
-                    frame = None
-                    with self.state_lock:
-                        if self.stop_request or not self.running or not self.session_ready or \
-                                not self.telemetry_healthy or self.ser is None or \
-                                getattr(self.ser, 'closed', True) or \
-                                self.session_epoch != current_epoch:
-                            break
-
-                    if item_type == 'cmd':
-                        frame = self.protocol.generate_cmd(data[0], data[1])
-                    elif item_type == 'pump':
-                        self.pump_state = data
-                        frame = self.protocol.generate_pump(data)
-                    elif item_type == 'fire':
-                        frame = self.protocol.generate_fire(data[0], data[1])
-
-                    if frame and not getattr(self, 'stop_request', False):
-                        tx_fail = False
-                        with self.tx_lock:
-                            with self.state_lock:
-                                if getattr(self, 'stop_request', False) or not self.running or \
-                                        not self.session_ready or not self.telemetry_healthy or \
-                                        self.ser is None or \
-                                        getattr(self.ser, 'closed', True) or \
-                                        self.session_epoch != current_epoch:
-                                    frame = None
-
-                            if frame and not getattr(self, 'stop_request', False):
-                                try:
-                                    written = self.ser.write(frame)
-                                    if written < len(frame):
-                                        self.tx_partial_count += 1
-                                        raise Exception("Partial write")
-                                except Exception as e:
-                                    self.get_logger().warn(f"Write error: {e}")
-                                    self.tx_fail_count += 1
-                                    tx_fail = True
-                        if tx_fail:
-                            self.close_serial()
-
-                with self.state_lock:
-                    ready = self.session_ready
-                    healthy = self.telemetry_healthy
-                    current_epoch = self.session_epoch
-                    p_state = self.pump_state
-                if ready and healthy:
-                    now_mono = time.monotonic()
-                    if now_mono - last_pump_time >= 0.5:
-                        last_pump_time = now_mono
-                        frame = self.protocol.generate_pump(p_state)
-                        if frame and not getattr(self, 'stop_request', False):
-                            tx_fail = False
-                            with self.tx_lock:
-                                with self.state_lock:
-                                    if getattr(self, 'stop_request', False) or \
-                                            not self.running or \
-                                            not self.session_ready or \
-                                            not self.telemetry_healthy or \
-                                            self.ser is None or \
-                                            getattr(self.ser, 'closed', True) or \
-                                            self.session_epoch != current_epoch:
-                                        frame = None
-                                if frame and not getattr(self, 'stop_request', False):
-                                    try:
-                                        written = self.ser.write(frame)
-                                        if written < len(frame):
-                                            self.tx_partial_count += 1
-                                            raise Exception("Partial pump write")
-                                    except Exception:
-                                        self.tx_fail_count += 1
-                                        tx_fail = True
-                            if tx_fail:
-                                self.close_serial()
-
-                # Process RX
-                try:
-                    if self.ser and hasattr(self.ser, 'in_waiting'):
-                        budget = 10
-                        while budget > 0 and getattr(self, 'running', False):
-                            waiting = self.ser.in_waiting
-                            if waiting == 0:
+                tx_acquired = self.tx_lock.acquire(timeout=0.01)
+                if tx_acquired:
+                    tx_fail = False
+                    try:
+                        current_ser = self.ser
+                        for item in snapshot:
+                            if not self._write_pending_item(item, current_ser):
+                                tx_fail = True
                                 break
-                            chunk = self.ser.read(min(waiting, 1024))
-                            if chunk:
-                                for frame in self.protocol.parse_chunk(chunk):
-                                    self.handle_frame(frame)
-                            budget -= 1
-                    else:
-                        chunk = self.ser.read(1024)
-                        if chunk:
-                            for frame in self.protocol.parse_chunk(chunk):
-                                self.handle_frame(frame)
-                except Exception as e:
-                    self.get_logger().warn(f"Serial read error: {e}")
-                    self.close_serial()
+                    finally:
+                        self.tx_lock.release()
+
+                    if tx_fail:
+                        self.close_serial()
+
+        except Exception as e:
+            self.get_logger().error(f"Worker exception: {e}")
         finally:
-            with self.state_lock:
-                self.running = False
             try:
-                if self.ser and not getattr(self.ser, 'closed', True):
-                    with getattr(self, 'tx_lock', threading.Lock()):
+                if getattr(self, 'ser', None) and not getattr(self.ser, 'closed', True):
+                    with getattr(self, 'tx_lock', __import__('threading').Lock()):
                         cmd = self.protocol.generate_cmd(0.0, 0.0)
                         pump = self.protocol.generate_pump(0)
                         if cmd:
@@ -366,6 +451,8 @@ class SerialBridgeNode(Node):
             if frame['type'] == 'STATE':
                 self.last_state_time_mono = now_mono
                 self.telemetry_healthy = True
+                self.reconnect_backoff = 0.0
+                self.next_reconnect_mono = 0.0
                 self.latest_state = (frame, epoch, now_mono)
             elif frame['type'] == 'ENV':
                 self.last_env_time_mono = now_mono
@@ -516,6 +603,8 @@ class SerialBridgeNode(Node):
     def destroy_node(self):
         """Run main entry point."""
         with self.state_lock:
+            if getattr(self, 'node_destroyed', False):
+                return True
             self.stop_request = True
 
         if getattr(self, 'worker_thread', None):
@@ -533,14 +622,31 @@ class SerialBridgeNode(Node):
             t0 = time.time()
             tx_acquired = False
             while not tx_acquired and (time.time() - t0) < 1.0:
-                tx_acquired = getattr(self, 'tx_lock', threading.Lock()).acquire(timeout=0.1)
+                tx_acquired = getattr(self, 'tx_lock', __import__(
+                    'threading').Lock()).acquire(timeout=0.1)
+
+            pub_acquired = False
+            t1 = time.time()
+            while not pub_acquired and (time.time() - t1) < 1.0:
+                pub_acquired = getattr(self, 'publish_lock', __import__(
+                    'threading').Lock()).acquire(timeout=0.1)
+
+            if not tx_acquired or not pub_acquired:
+                if tx_acquired:
+                    self.tx_lock.release()
+                if pub_acquired:
+                    self.publish_lock.release()
+                with self.state_lock:
+                    self.stop_request = False
+                return False
 
             try:
                 with self.state_lock:
                     self.running = False
+                self.node_destroyed = True
             finally:
-                if tx_acquired:
-                    self.tx_lock.release()
+                self.publish_lock.release()
+                self.tx_lock.release()
 
             t0 = time.time()
             while self.worker_thread.is_alive() and (time.time() - t0) < 1.0:
@@ -555,22 +661,14 @@ class SerialBridgeNode(Node):
                     pass
                 self.worker_thread.join(timeout=1.0)
                 if self.worker_thread.is_alive():
-                    self.get_logger().error(
-                        "Worker thread still alive after force close, returning False")
+                    self.get_logger().error("Worker thread still alive after force close")
+                    with self.state_lock:
+                        self.running = True
+                        self.stop_request = False
+                        self.node_destroyed = False
                     return False
 
-        pub_acquired = False
-        t0 = time.time()
-        while not pub_acquired and (time.time() - t0) < 1.0:
-            pub_acquired = getattr(self, 'publish_lock', threading.Lock()).acquire(timeout=0.1)
-
-        if pub_acquired:
-            self.node_destroyed = True
-            self.publish_lock.release()
-        else:
-            return False
-
-        if getattr(self, 'telemetry_timer', None) and not self.node_destroyed:
+        if getattr(self, 'telemetry_timer', None):
             try:
                 self.telemetry_timer.cancel()
             except Exception:
@@ -589,7 +687,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
+        import time as tm
+        t0 = tm.time()
+        while not node.destroy_node() and (tm.time() - t0) < 5.0:
+            tm.sleep(0.1)
         if rclpy.ok():
             rclpy.shutdown()
 

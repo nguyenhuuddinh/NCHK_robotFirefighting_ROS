@@ -2,10 +2,18 @@
 ai/
 docs/
 AGENTS.md
-# ROS 2 build artifacts
+# ROS 2 build artifacts (repo root)
+/build/
+/install/
+/log/
+
+# ROS 2 build artifacts (workspace root)
 ros2_ws/build/
 ros2_ws/install/
 ros2_ws/log/
+
+# Local scratch files
+/test_debug.cpp
 
 # Python & IDE
 __pycache__/

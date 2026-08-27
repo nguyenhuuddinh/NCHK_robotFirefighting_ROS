@@ -1,9 +1,0 @@
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/uninstall.dir
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/fire_robot_navigation_uninstall.dir
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/test.dir
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/edit_cache.dir
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/rebuild_cache.dir
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/list_install_components.dir
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/install.dir
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/install/local.dir
-/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/build/fire_robot_navigation/CMakeFiles/install/strip.dir

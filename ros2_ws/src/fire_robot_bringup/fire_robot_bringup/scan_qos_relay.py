@@ -88,15 +88,17 @@ class ScanQosRelay(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = ScanQosRelay()
-
+    node = None
     try:
+        rclpy.init(args=args)
+        node = ScanQosRelay()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
+        rclpy.uninstall_signal_handlers()
         if rclpy.ok():
             rclpy.shutdown()
 

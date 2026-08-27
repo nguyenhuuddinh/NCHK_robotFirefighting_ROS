@@ -1,5 +1,5 @@
-import fcntl
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -22,7 +22,7 @@ def test_scan_qos_relay_subprocess_sigint_stress():
     env['PYTHONUNBUFFERED'] = '1'
     target_marker = "[ScanQosRelay] /scan_raw (Reliable) → /scan (Best Effort)"
 
-    for iteration in range(20):
+    for iteration in range(100):
         proc = subprocess.Popen(
             [sys.executable, '-m', 'fire_robot_bringup.scan_qos_relay'],
             env=env,
@@ -37,9 +37,6 @@ def test_scan_qos_relay_subprocess_sigint_stress():
             start_time = time.monotonic()
             output_buffer = ""
 
-            flags = fcntl.fcntl(proc.stdout.fileno(), fcntl.F_GETFL)
-            fcntl.fcntl(proc.stdout.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
-
             while time.monotonic() - start_time < 5.0:
                 if proc.poll() is not None:
                     stdout, _ = proc.communicate()
@@ -49,27 +46,26 @@ def test_scan_qos_relay_subprocess_sigint_stress():
                         f"OUTPUT:\n{output_buffer}"
                     )
 
-                try:
-                    chunk = proc.stdout.read()
-                    if chunk:
-                        output_buffer += chunk
-                        if target_marker in output_buffer:
-                            ready = True
-                            break
-                except (IOError, TypeError):
-                    pass
-
-                # Delay 0 to hit exact boundary condition
-                time.sleep(0)
+                rlist, _, _ = select.select([proc.stdout], [], [], 0.1)
+                if rlist:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    output_buffer += line
+                    if target_marker in line:
+                        ready = True
+                        # Send SIGINT (same as Ctrl+C) immediately in same branch
+                        proc.send_signal(signal.SIGINT)
+                        break
 
             if not ready:
                 proc.terminate()
                 stdout, _ = proc.communicate(timeout=2.0)
                 output_buffer += stdout or ""
-                pytest.fail(f"Iter {iteration} Timeout waiting for readiness.\nOUTPUT:\n{output_buffer}")
-
-            # Send SIGINT (same as Ctrl+C) immediately
-            proc.send_signal(signal.SIGINT)
+                pytest.fail(
+                    f"Iter {iteration} Timeout waiting for readiness.\n"
+                    f"OUTPUT:\n{output_buffer}"
+                )
 
             # Wait for it to exit
             try:
@@ -111,7 +107,7 @@ def test_scan_qos_relay_main_keyboard_interrupt(monkeypatch):
     """Test main() directly with KeyboardInterrupt when context is STILL valid."""
     import fire_robot_bringup.scan_qos_relay as sqr
 
-    def mock_spin(node):
+    def mock_spin(node, executor=None):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(sqr.rclpy, 'spin', mock_spin)

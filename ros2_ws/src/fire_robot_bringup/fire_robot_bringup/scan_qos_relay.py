@@ -19,6 +19,7 @@ Parameters:
 """
 
 import rclpy
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import LaserScan
@@ -89,10 +90,12 @@ class ScanQosRelay(Node):
 
 def main(args=None):
     node = None
+    executor = None
     try:
         rclpy.init(args=args)
+        executor = SingleThreadedExecutor()
         node = ScanQosRelay()
-        rclpy.spin(node)
+        rclpy.spin(node, executor=executor)
     except KeyboardInterrupt:
         pass
     finally:

@@ -33,6 +33,7 @@ Parameters:
 """
 
 import rclpy
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
@@ -216,16 +217,21 @@ class OdomToTfBroadcaster(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = OdomToTfBroadcaster()
-
+    node = None
+    executor = None
     try:
-        rclpy.spin(node)
+        rclpy.init(args=args)
+        executor = SingleThreadedExecutor()
+        node = OdomToTfBroadcaster()
+        rclpy.spin(node, executor=executor)
     except KeyboardInterrupt:
-        node.get_logger().info('[OdomToTF] Tắt node.')
+        pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        if node is not None:
+            node.destroy_node()
+        rclpy.uninstall_signal_handlers()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

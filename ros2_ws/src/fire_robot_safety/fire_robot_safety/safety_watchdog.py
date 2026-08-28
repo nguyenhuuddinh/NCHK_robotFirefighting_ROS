@@ -30,6 +30,7 @@ Parameters:
 
 import time
 import rclpy
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import Twist
@@ -152,16 +153,21 @@ class SafetyWatchdog(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = SafetyWatchdog()
-
+    node = None
+    executor = None
     try:
-        rclpy.spin(node)
-    except (KeyboardInterrupt, SystemExit):
-        node.get_logger().info('[SafetyGate] Tắt node.')
+        rclpy.init(args=args)
+        executor = SingleThreadedExecutor()
+        node = SafetyWatchdog()
+        rclpy.spin(node, executor=executor)
+    except KeyboardInterrupt:
+        pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        if node is not None:
+            node.destroy_node()
+        rclpy.uninstall_signal_handlers()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

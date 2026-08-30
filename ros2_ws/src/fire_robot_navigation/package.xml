@@ -14,6 +14,30 @@
   <depend>nav2_bringup</depend>
   <depend>slam_toolbox</depend>
 
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_smoother</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_velocity_smoother</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+
+  <!-- Direct Plugin Runtime Dependencies (QA2-5) -->
+  <exec_depend>dwb_core</exec_depend>
+  <!-- Reason: using DWBLocalPlanner -->
+  <exec_depend>dwb_critics</exec_depend>
+  <!-- Reason: using RotateToGoal, Oscillation, BaseObstacle, GoalAlign, PathAlign, PathDist, GoalDist critics -->
+  <exec_depend>dwb_plugins</exec_depend>
+  <!-- Reason: using StandardTrajectoryGenerator in DWB -->
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <!-- Reason: using NavfnPlanner -->
+  <exec_depend>nav2_costmap_2d</exec_depend>
+  <!-- Reason: using VoxelLayer, InflationLayer, ObstacleLayer, StaticLayer -->
+  <exec_depend>nav2_common</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
@@ -21,6 +45,8 @@
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>python3-yaml</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

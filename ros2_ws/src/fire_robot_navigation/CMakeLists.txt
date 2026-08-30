@@ -22,13 +22,23 @@ if(BUILD_TESTING)
   # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  # Register Python unit tests
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_nav2_launch test/test_nav2_launch.py)
+  ament_add_pytest_test(test_nav2_params test/test_nav2_params.py)
+  ament_add_pytest_test(test_nav2_invariants test/test_nav2_invariants.py)
 endif()
 
 install(DIRECTORY
   launch
   config
   maps
+  behavior_trees
   DESTINATION share/${PROJECT_NAME}
+  PATTERN "*.pyc" EXCLUDE
+  PATTERN "*.pyo" EXCLUDE
+  REGEX "(__pycache__)" EXCLUDE
 )
 
 ament_package()

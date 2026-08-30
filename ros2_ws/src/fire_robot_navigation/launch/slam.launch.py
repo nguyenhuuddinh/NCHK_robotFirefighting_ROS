@@ -7,13 +7,15 @@ Lệnh:
     ros2 launch fire_robot_navigation slam.launch.py rviz:=true
 
 Arguments:
-    use_sim_time    : false (mặc định, chạy phần cứng thực)
-    slam_params_file: đường dẫn config SLAM (mặc định mapper_params_online_async.yaml)
-    rviz            : false (mặc định). Đặt true để mở RViz với config SLAM tích hợp.
+---------
+use_sim_time    : false (mặc định, chạy phần cứng thực)
+slam_params_file: đường dẫn config SLAM (mặc định mapper_params_online_async.yaml)
+rviz            : false (mặc định). Đặt true để mở RViz với config SLAM tích hợp.
 
 [QA6 FIX] Thêm launch argument 'rviz' (mặc định false) để mở RViz với config
     slam.rviz đã đặt LaserScan Best Effort. Không thay đổi quy trình khởi động
     hiện tại khi không truyền argument.
+
 """
 
 import os

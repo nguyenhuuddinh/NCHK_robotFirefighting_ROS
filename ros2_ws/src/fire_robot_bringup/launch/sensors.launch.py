@@ -53,13 +53,13 @@ def generate_launch_description():
     # Package: usb_cam (cài bằng: sudo apt install ros-humble-usb-cam)
     # Publish: /image_raw (Image) + /image_raw/compressed (CompressedImage)
     # image_transport tự động tạo topic /compressed khi usb_cam chạy
-    usb_cam_node = Node(
-        package='usb_cam',
-        executable='usb_cam_node_exe',
-        name='usb_cam',
-        parameters=[pi_params_file],
-        output='screen',
-    )
+    # usb_cam_node = Node(
+    #     package='usb_cam',
+    #     executable='usb_cam_node_exe',
+    #     name='usb_cam',
+    #     parameters=[pi_params_file],
+    #     output='screen',
+    # )
 
     return LaunchDescription([
         camsense_x1_node,

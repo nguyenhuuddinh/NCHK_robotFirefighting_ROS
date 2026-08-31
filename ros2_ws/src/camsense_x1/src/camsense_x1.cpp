@@ -119,7 +119,10 @@ CamsenseX1::~CamsenseX1()
     if (transport_->is_open()) {
       try {
         transport_->close();
+      } catch (const std::exception & e) {
+        RCLCPP_WARN(this->get_logger(), "Destructor close exception: %s", e.what());
       } catch (...) {
+        RCLCPP_WARN(this->get_logger(), "Destructor unknown close exception");
       }
     }
   }
@@ -137,6 +140,9 @@ bool CamsenseX1::try_open_serial()
       RCLCPP_INFO(this->get_logger(), "Opened serial port: %s at %d", port_.c_str(), baud_);
       parser_->reset();
       total_reconnect_successes_++;
+      auto steady_now = std::chrono::steady_clock::now();
+      last_rx_steady_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        steady_now.time_since_epoch()).count();
       return true;
     }
   } catch (const std::exception & e) {
@@ -209,6 +215,7 @@ void CamsenseX1::rx_loop()
           auto steady_now = std::chrono::steady_clock::now();
           int64_t steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
             steady_now.time_since_epoch()).count();
+          last_rx_steady_ns_ = steady_ns;
           rclcpp::Time ros_now = this->now();
           {
             std::lock_guard<std::mutex> lk(stamp_mutex_);
@@ -220,6 +227,24 @@ void CamsenseX1::rx_loop()
         }
       } else {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        auto steady_now = std::chrono::steady_clock::now();
+        int64_t steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          steady_now.time_since_epoch()).count();
+        if (steady_ns - last_rx_steady_ns_ > kTransportSilenceTimeoutNs) {
+          total_silence_timeouts_++;
+          RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 2000,
+            "Transport silence detected (> 2000 ms). Invalidating session.");
+          session_valid = false;
+          reconnect_attempts_++;
+          try {
+            transport_->close();
+          } catch (const std::exception & e) {
+            RCLCPP_WARN(this->get_logger(), "Error closing transport after silence: %s", e.what());
+          } catch (...) {
+            RCLCPP_WARN(this->get_logger(), "Unknown error closing transport after silence");
+          }
+        }
       }
     } catch (const std::exception & e) {
       total_read_errors_++;
@@ -234,6 +259,7 @@ void CamsenseX1::rx_loop()
       } catch (const std::exception & ce) {
         RCLCPP_WARN(this->get_logger(), "Error during transport close: %s", ce.what());
       } catch (...) {
+        RCLCPP_WARN(this->get_logger(), "Unknown error during transport close");
       }
     }
   }
@@ -241,7 +267,7 @@ void CamsenseX1::rx_loop()
 
 void CamsenseX1::on_scan(const camsense_x1::ScanResult & result)
 {
-  RCLCPP_INFO(this->get_logger(), "on_scan called!");
+  RCLCPP_DEBUG(this->get_logger(), "on_scan called!");
   sensor_msgs::msg::LaserScan msg;
   msg.header.frame_id = frame_id_;  // frame_id_ is startup-only string.
 
@@ -313,7 +339,8 @@ void CamsenseX1::log_diagnostics()
     "Diag: pub=%" PRIu64 " drop=%" PRIu64 " (stale=%" PRIu64 ") pkt=%" PRIu64 " rej=%" PRIu64
     " disc=%" PRIu64 " dup=%" PRIu64 " ooo=%" PRIu64 " crst=%" PRIu64 " gap=%" PRIu64
     " chk=%" PRIu64 " spd_avg=%.0f age=%dms rd_err=%" PRIu64 " opn_err=%" PRIu64
-    " recon=%" PRIu64 "/%" PRIu64 " t_fb(proc=%" PRIu64 ",cache=%" PRIu64 ",nom=%" PRIu64 ")",
+    " recon=%" PRIu64 "/%" PRIu64 " t_fb(proc=%" PRIu64 ",cache=%" PRIu64 ",nom=%" PRIu64 ")"
+    " sil=%" PRIu64,
     static_cast<uint64_t>(c.revolutions_published),
     static_cast<uint64_t>(c.revolutions_dropped),
     static_cast<uint64_t>(c.stale_revolutions_dropped),
@@ -333,7 +360,8 @@ void CamsenseX1::log_diagnostics()
     static_cast<uint64_t>(total_reconnect_attempts_.load(std::memory_order_relaxed)),
     static_cast<uint64_t>(c.proc_clock_fallbacks),
     static_cast<uint64_t>(c.cache_fallbacks),
-    static_cast<uint64_t>(c.nominal_fallbacks));
+    static_cast<uint64_t>(c.nominal_fallbacks),
+    static_cast<uint64_t>(total_silence_timeouts_.load(std::memory_order_relaxed)));
 }
 
 void CamsenseX1::create_parameter()

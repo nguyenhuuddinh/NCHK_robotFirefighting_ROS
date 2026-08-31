@@ -75,6 +75,7 @@ class SerialBridgeNode(Node):
         self.fire_version = 0
         self.pump_written_version = 0
         self.last_pump_time = 0.0
+        self.session_started_mono = 0.0
         self.last_state_time_mono = 0.0
         self.last_env_time_mono = 0.0
 
@@ -90,11 +91,17 @@ class SerialBridgeNode(Node):
         self.telemetry_drop_count = 0
         self.telemetry_publish_count = 0
         self.telemetry_publish_fail_count = 0
+        self.bootstrap_fail_count = 0
+        self.read_fail_count = 0
+        self.open_attempt_count = 0
+        self.open_success_count = 0
+        self.open_fail_count = 0
+        self.last_failure_reason = 'none'
 
         self.state_publish_max_age = 0.0
         self.env_publish_max_age = 0.0
 
-        self.create_timer(10.0, self.log_timer_callback)
+        self.log_timer = self.create_timer(10.0, self.log_timer_callback)
         self.telemetry_timer = self.create_timer(0.05, self.telemetry_publish_callback)
 
         self.running = True
@@ -135,11 +142,12 @@ class SerialBridgeNode(Node):
             self.pending_pump = (pump_req, self.session_epoch, self.pump_version)
 
     def close_serial(self):
-        """Close serial port and advance epoch."""
+        """Close serial port safely."""
         with self.state_lock:
             self.session_ready = False
             self.telemetry_healthy = False
-            self.session_epoch += 1
+            if not getattr(self, 'stop_request', False):
+                self.session_epoch += 1
             self.pending_cmd = None
             self.pending_pump = None
             self.pending_fire = None
@@ -166,6 +174,7 @@ class SerialBridgeNode(Node):
         except Exception as e:
             self.get_logger().warn(f"Serial write error: {e}")
             self.tx_fail_count += 1
+            self.last_failure_reason = f"tx:{type(e).__name__}:{str(e)}"
             self.close_serial()
             return False
 
@@ -265,8 +274,9 @@ class SerialBridgeNode(Node):
             if written < len(frame):
                 self.tx_partial_count += 1
                 return False
-        except Exception:
+        except Exception as e:
             self.tx_fail_count += 1
+            self.last_failure_reason = f"tx:{type(e).__name__}:{str(e)}"
             return False
 
         with self.state_lock:
@@ -320,7 +330,10 @@ class SerialBridgeNode(Node):
                                 for frame in self.protocol.parse_chunk(chunk):
                                     self.handle_frame(frame)
                     except Exception as e:
-                        self.get_logger().warn(f"Serial read error: {e}")
+                        err_str = str(e)
+                        self.get_logger().warn(f"Serial read error: {err_str}")
+                        self.last_failure_reason = f"read:{type(e).__name__}:{err_str}"
+                        self.read_fail_count += 1
                         self.close_serial()
                         self.reconnect_backoff = min(
                             1.0, max(0.1, getattr(self, 'reconnect_backoff', 0.0) * 1.5))
@@ -334,13 +347,26 @@ class SerialBridgeNode(Node):
 
                 if getattr(self, 'ser', None) is None or getattr(self.ser, 'closed', True):
                     self.close_serial()
+                    self.open_attempt_count += 1
                     try:
                         self.ser = self.serial_cls(
                             self.port, self.baudrate, timeout=0.01, write_timeout=0.1)
+                        self.open_success_count += 1
                         self.get_logger().info(f"Opened serial port {self.port}")
                         self.reconnect_count += 1
                         self.protocol.reset_parser()
+                    except Exception as e:
+                        err_str = str(e)
+                        self.open_fail_count += 1
+                        self.last_failure_reason = f"open:{type(e).__name__}:{err_str}"
+                        self.get_logger().warn(f"Failed to open port {self.port}: {err_str}")
+                        self.close_serial()
+                        self.reconnect_backoff = min(
+                            1.0, max(0.1, getattr(self, 'reconnect_backoff', 0.0) * 1.5))
+                        self.next_reconnect_mono = time.monotonic() + self.reconnect_backoff
+                        continue
 
+                    try:
                         current_ser = self.ser
                         if current_ser is None:
                             raise Exception("Serial port closed immediately after open")
@@ -376,11 +402,15 @@ class SerialBridgeNode(Node):
                                 self.session_ready = True
                                 self.telemetry_healthy = False
                                 import time
-                                self.last_state_time_mono = time.monotonic()
+                                self.session_started_mono = time.monotonic()
+                                self.last_state_time_mono = 0.0
                                 self.last_pump_time = time.monotonic()
                                 self.pump_state = 0
                     except Exception as e:
-                        self.get_logger().warn(f"Failed to bootstrap port {self.port}: {e}")
+                        err_str = str(e)
+                        self.get_logger().warn(f"Failed to bootstrap port {self.port}: {err_str}")
+                        self.bootstrap_fail_count += 1
+                        self.last_failure_reason = f"boot:{type(e).__name__}:{err_str}"
                         self.close_serial()
                         self.reconnect_backoff = min(
                             1.0, max(0.1, getattr(self, 'reconnect_backoff', 0.0) * 1.5))
@@ -392,7 +422,10 @@ class SerialBridgeNode(Node):
                     stale = False
                     if self.session_ready:
                         import time
-                        age = time.monotonic() - self.last_state_time_mono
+                        if getattr(self, 'last_state_time_mono', 0.0) > 0.0:
+                            age = time.monotonic() - self.last_state_time_mono
+                        else:
+                            age = time.monotonic() - getattr(self, 'session_started_mono', 0.0)
                         if age > (self.state_stale_timeout_ms / 1000.0):
                             stale = True
                     if stale:
@@ -427,13 +460,17 @@ class SerialBridgeNode(Node):
         finally:
             try:
                 if getattr(self, 'ser', None) and not getattr(self.ser, 'closed', True):
-                    with getattr(self, 'tx_lock', __import__('threading').Lock()):
-                        cmd = self.protocol.generate_cmd(0.0, 0.0)
-                        pump = self.protocol.generate_pump(0)
-                        if cmd:
-                            self.ser.write(cmd)
-                        if pump:
-                            self.ser.write(pump)
+                    tx_lock = getattr(self, 'tx_lock', None)
+                    if tx_lock and tx_lock.acquire(timeout=0.1):
+                        try:
+                            cmd = self.protocol.generate_cmd(0.0, 0.0)
+                            pump = self.protocol.generate_pump(0)
+                            if cmd:
+                                self.ser.write(cmd)
+                            if pump:
+                                self.ser.write(pump)
+                        finally:
+                            tx_lock.release()
             except Exception:
                 pass
             with self.state_lock:
@@ -570,7 +607,29 @@ class SerialBridgeNode(Node):
     def log_timer_callback(self):
         """Log diagnostics."""
         if not getattr(self, 'session_ready', False):
-            self.get_logger().info("Session offline")
+            age = "never"
+            with getattr(self, 'state_lock', __import__('threading').Lock()):
+                if getattr(self, 'last_state_time_mono', 0.0) > 0.0:
+                    age_val = time.monotonic() - self.last_state_time_mono
+                    age = f"{age_val:.1f}s"
+                epoch = getattr(self, 'session_epoch', 0)
+                recon = getattr(self, 'reconnect_count', 0)
+                backoff = getattr(self, 'reconnect_backoff', 0.0)
+                last_fail = getattr(self, 'last_failure_reason', 'none')
+                tx_f = getattr(self, 'tx_fail_count', 0)
+                boot_f = getattr(self, 'bootstrap_fail_count', 0)
+                read_f = getattr(self, 'read_fail_count', 0)
+
+                open_attempt = getattr(self, 'open_attempt_count', 0)
+                open_succ = getattr(self, 'open_success_count', 0)
+                open_fail = getattr(self, 'open_fail_count', 0)
+
+            self.get_logger().info(
+                f"Session offline | epoch={epoch} recon={recon} backoff={backoff:.2f}s "
+                f"age={age} tx_fail={tx_f} rx_fail={read_f} boot_fail={boot_f} "
+                f"open_attempt={open_attempt} open_succ={open_succ} open_fail={open_fail} "
+                f"last_err={last_fail}"
+            )
             return
 
         with getattr(self, 'state_lock', threading.Lock()):
@@ -601,11 +660,40 @@ class SerialBridgeNode(Node):
         )
 
     def destroy_node(self):
-        """Run main entry point."""
-        with self.state_lock:
-            if getattr(self, 'node_destroyed', False):
-                return True
-            self.stop_request = True
+        """Clean up resources, cancel timers, and safely terminate worker threads."""
+        if getattr(self, 'node_destroyed', False):
+            return True
+
+        import time
+        with getattr(self, 'state_lock', __import__('threading').Lock()):
+            if not getattr(self, '_shutdown_started', False):
+                self._shutdown_started = True
+                self._shutdown_deadline_mono = time.monotonic() + 3.5
+                self.stop_request = True
+                self.running = False
+                self.session_ready = False
+                self.telemetry_healthy = False
+                self.session_epoch += 1
+                self.pending_cmd = None
+                self.pending_pump = None
+                self.pending_fire = None
+                self.latest_state = None
+                self.latest_env = None
+                self.session_started_mono = 0.0
+                self.last_state_time_mono = 0.0
+
+                if getattr(self, 'telemetry_timer', None):
+                    try:
+                        self.telemetry_timer.cancel()
+                    except Exception:
+                        pass
+                if getattr(self, 'log_timer', None):
+                    try:
+                        self.log_timer.cancel()
+                    except Exception:
+                        pass
+
+        deadline = getattr(self, '_shutdown_deadline_mono', time.monotonic())
 
         if getattr(self, 'worker_thread', None):
             if self.ser and hasattr(self.ser, 'cancel_read'):
@@ -619,63 +707,37 @@ class SerialBridgeNode(Node):
                 except Exception:
                     pass
 
-            t0 = time.time()
-            tx_acquired = False
-            while not tx_acquired and (time.time() - t0) < 1.0:
-                tx_acquired = getattr(self, 'tx_lock', __import__(
-                    'threading').Lock()).acquire(timeout=0.1)
-
-            pub_acquired = False
-            t1 = time.time()
-            while not pub_acquired and (time.time() - t1) < 1.0:
-                pub_acquired = getattr(self, 'publish_lock', __import__(
-                    'threading').Lock()).acquire(timeout=0.1)
-
-            if not tx_acquired or not pub_acquired:
-                if tx_acquired:
-                    self.tx_lock.release()
-                if pub_acquired:
-                    self.publish_lock.release()
-                with self.state_lock:
-                    self.stop_request = False
+            timeout = max(0.0, deadline - time.monotonic())
+            self.worker_thread.join(timeout=timeout)
+            if self.worker_thread.is_alive():
+                if time.monotonic() >= deadline:
+                    self.get_logger().error(
+                        "Teardown budget exhausted, failing closed (worker thread).")
                 return False
 
-            try:
-                with self.state_lock:
-                    self.running = False
-                self.node_destroyed = True
-            finally:
-                self.publish_lock.release()
-                self.tx_lock.release()
+        tl = getattr(self, 'tx_lock', None)
+        if tl:
+            timeout = max(0.0, deadline - time.monotonic())
+            if not tl.acquire(timeout=timeout):
+                if time.monotonic() >= deadline:
+                    self.get_logger().error(
+                        "Teardown budget exhausted, failing closed (tx_lock).")
+                return False
+            tl.release()
 
-            t0 = time.time()
-            while self.worker_thread.is_alive() and (time.time() - t0) < 1.0:
-                self.worker_thread.join(timeout=0.1)
+        pl = getattr(self, 'publish_lock', None)
+        if pl:
+            timeout = max(0.0, deadline - time.monotonic())
+            if not pl.acquire(timeout=timeout):
+                if time.monotonic() >= deadline:
+                    self.get_logger().error(
+                        "Teardown budget exhausted, failing closed (publish_lock).")
+                return False
+            pl.release()
 
-            if self.worker_thread.is_alive():
-                # force close serial
-                try:
-                    if self.ser and hasattr(self.ser, 'close'):
-                        self.ser.close()
-                except Exception:
-                    pass
-                self.worker_thread.join(timeout=1.0)
-                if self.worker_thread.is_alive():
-                    self.get_logger().error("Worker thread still alive after force close")
-                    with self.state_lock:
-                        self.running = True
-                        self.stop_request = False
-                        self.node_destroyed = False
-                    return False
-
-        if getattr(self, 'telemetry_timer', None):
-            try:
-                self.telemetry_timer.cancel()
-            except Exception:
-                pass
-
-        super().destroy_node()
-        return True
+        ret = super().destroy_node()
+        self.node_destroyed = True
+        return True if ret is None else ret
 
 
 def main(args=None):
@@ -688,9 +750,21 @@ def main(args=None):
         pass
     finally:
         import time as tm
-        t0 = tm.time()
-        while not node.destroy_node() and (tm.time() - t0) < 5.0:
-            tm.sleep(0.1)
+        deadline = tm.monotonic() + 3.7
+        while True:
+            remaining = deadline - tm.monotonic()
+            if remaining <= 0:
+                break
+            if node.destroy_node():
+                break
+            tm.sleep(min(0.1, remaining))
+
+        # Final nonblocking cleanup check within absolute deadline
+        if not getattr(node, 'node_destroyed', False):
+            # Force non-blocking check by setting deadline to now
+            node._shutdown_deadline_mono = tm.monotonic()
+            node.destroy_node()
+
         if rclpy.ok():
             rclpy.shutdown()
 

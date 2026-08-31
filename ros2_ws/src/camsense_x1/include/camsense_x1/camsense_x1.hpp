@@ -84,6 +84,12 @@ private:
   std::atomic<uint64_t> total_open_errors_{0};
   std::atomic<int64_t> last_publish_steady_ns_{0};
 
+  // Silence timeout guard
+  std::atomic<uint64_t> total_silence_timeouts_{0};
+  int64_t last_rx_steady_ns_ = 0;
+  // 5.2Hz implies ~192ms/rev. 2000ms is >10 revolutions, generous but fast enough to recover.
+  static constexpr int64_t kTransportSilenceTimeoutNs = 2000000000LL;
+
   // First-ray ROS timestamp tracking (L3-3).
   // Stored per-revolution; set when parser starts a new revolution.
   std::mutex stamp_mutex_;

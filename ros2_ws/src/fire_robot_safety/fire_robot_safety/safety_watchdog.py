@@ -21,7 +21,7 @@ Chuỗi an toàn:
 QoS output: Best Effort để khớp ESP32 micro-ROS subscriber.
 Timeout: Dùng monotonic/steady time (time.monotonic()), không bị ảnh hưởng NTP.
 
-Parameters:
+ROS 2 Parameters:
     cmd_vel_input_topic     : Topic đầu vào (default: /cmd_vel_raw)
     cmd_vel_output_topic    : Topic đầu ra (default: /cmd_vel)
     heartbeat_timeout_ms    : Timeout ms (default: 1000)

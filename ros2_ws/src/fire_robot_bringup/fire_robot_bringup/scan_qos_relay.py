@@ -11,7 +11,7 @@ Chức năng:
     Không sửa timestamp, frame_id, ranges hoặc bất kỳ field nào.
     Không thêm queue tích lũy riêng — dùng KEEP_LAST nhỏ.
 
-Parameters:
+ROS 2 Parameters:
     input_topic  : Topic đầu vào (default: /scan_raw)
     output_topic : Topic đầu ra (default: /scan)
     input_depth  : QoS depth đầu vào (default: 5)

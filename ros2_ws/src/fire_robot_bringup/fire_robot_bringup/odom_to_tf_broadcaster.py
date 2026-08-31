@@ -24,7 +24,7 @@ Thiết kế Timer-based + Stale Guard (Bug 13 fix):
 
     Thêm tf_stamp_offset_ms cho phép backdate nhẹ nếu WiFi delay /scan.
 
-Parameters:
+ROS 2 Parameters:
     tf_publish_rate_hz    : Tần số phát TF (default: 20.0 Hz)
     odom_stale_timeout_ms : Thời gian tối đa /odom được coi là tươi (default: 300 ms)
     odom_qos_depth        : Depth của QoS subscriber /odom (default: 10)
@@ -40,7 +40,6 @@ from rclpy.time import Time
 from nav_msgs.msg import Odometry
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
-from builtin_interfaces.msg import Time as TimeMsg
 
 
 class OdomToTfBroadcaster(Node):

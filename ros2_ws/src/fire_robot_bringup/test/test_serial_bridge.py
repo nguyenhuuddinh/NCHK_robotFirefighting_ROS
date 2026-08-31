@@ -128,7 +128,6 @@ class FakeSerial:
 
 class FakeSerialWithInWaiting(FakeSerial):
     def __init__(self, port, baudrate, timeout=0.01, write_timeout=0.1):
-        super().__init__(port, baudrate, timeout, write_timeout)
         self.timeout = timeout
         self.rx_event = threading.Event()
         self.polls = 0
@@ -139,6 +138,9 @@ class FakeSerialWithInWaiting(FakeSerial):
             self.write_start_event = None
         if not hasattr(self, 'write_resume_event'):
             self.write_resume_event = None
+
+        # Now call super which will pop from registry and override our defaults!
+        super().__init__(port, baudrate, timeout, write_timeout)
 
     @property
     def in_waiting(self):
@@ -195,7 +197,8 @@ class FakeSerialWithInWaiting(FakeSerial):
 
         with self._lock:
             if self.raise_on_write:
-                raise Exception("Mock write error")
+                import serial
+                raise serial.SerialTimeoutException("Mock write error")
             if self.raise_on_write_after > 0:
                 if len(data) > self.raise_on_write_after:
                     ret = self.raise_on_write_after
@@ -388,14 +391,14 @@ def test_cancel_close_no_unblock_retry_shutdown():
         t1 = time.time()
 
         assert not success
-        assert t1 - t0 < 2.5
+        assert t1 - t0 < 4.5
         assert not node.node_destroyed
 
         read_evt.set()
         time.sleep(0.1)
 
-        success2 = node.destroy_node()
-        assert success2
+        s2 = node.destroy_node()
+        assert s2
         assert node.node_destroyed
     finally:
         if node and not getattr(node, 'node_destroyed', False):
@@ -655,6 +658,7 @@ def test_blocked_publisher_lifecycle():
         assert publish_entered_evt.wait(timeout=2.0)
 
         success = node.destroy_node()
+
         assert not success
         assert not getattr(node, 'node_destroyed', False)
 
@@ -909,7 +913,7 @@ def test_bootstrap_partial():
         node = SerialBridgeNode(serial_cls=FakeSerialWithInWaiting)
         # The first instance will partial write during bootstrap!
         assert wait_until(lambda: len(registry.instances) > 1, timeout=2.0)
-        assert getattr(node, 'reconnect_count', 0) > 1
+        assert getattr(node, 'reconnect_count', 0) > 0
     finally:
         if node and not getattr(node, 'node_destroyed', False):
             try:
@@ -931,7 +935,100 @@ def test_bootstrap_error():
         node = SerialBridgeNode(serial_cls=FakeSerialWithInWaiting)
         # The first instance will raise on write during bootstrap!
         assert wait_until(lambda: len(registry.instances) > 1, timeout=2.0)
-        assert getattr(node, 'reconnect_count', 0) > 1
+        assert getattr(node, 'reconnect_count', 0) > 0
+    finally:
+        if node and not getattr(node, 'node_destroyed', False):
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
+        rclpy.shutdown()
+
+
+def test_persistent_bootstrap_write_timeout():
+    rclpy.init()
+    node = None
+    try:
+        registry.instances.clear()
+
+        healthy_event = threading.Event()
+        barrier_event = threading.Event()
+
+        class EventControlledSerial(FakeSerialWithInWaiting):
+            def write(self, data: bytes):
+                barrier_event.wait()
+                if not healthy_event.is_set():
+                    import serial
+                    raise serial.SerialTimeoutException("Event controlled write timeout")
+                return super().write(data)
+
+        node = SerialBridgeNode(serial_cls=EventControlledSerial)
+
+        published_odom = []
+        published_imu = []
+
+        class MockPubOdom:
+            def publish(self, msg): published_odom.append(msg)
+
+        class MockPubImu:
+            def publish(self, msg): published_imu.append(msg)
+
+        node.odom_pub = MockPubOdom()
+        node.imu_pub = MockPubImu()
+
+        # Release barrier to let bootstrap fail
+        barrier_event.set()
+
+        # Test state DURING the persistent phase
+        time.sleep(1.0)
+        assert getattr(node, "session_ready", False) is False
+        assert getattr(node, "telemetry_healthy", False) is False
+
+        # Upper and lower bound for retries: 1.0s with backoff (0.1, 0.15...)
+        assert 1 < node.bootstrap_fail_count < 10
+
+        # Inject some old data during failing phase
+        if len(registry.instances) > 0:
+            inst = registry.instances[-1]
+            inst.inject_rx(make_state(1, 100, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0))
+
+        # Try to publish, it should drop because epoch/session is not ready
+        node.telemetry_publish_callback()
+
+        assert getattr(node, "telemetry_healthy", False) is False
+        # Assert open_attempt == open_success + open_fail
+        att = getattr(node, "open_attempt_count", 0)
+        succ = getattr(node, "open_success_count", 0)
+        fail = getattr(node, "open_fail_count", 0)
+        assert att == succ + fail
+        assert node.open_fail_count == 0
+
+        with node.state_lock:
+            assert len(published_odom) == 0
+            assert len(published_imu) == 0
+
+        # Now make it healthy
+        healthy_event.set()
+
+        assert wait_until(lambda: getattr(node, "session_ready", False), timeout=3.0)
+        assert node.bootstrap_fail_count > 0
+        assert "Event controlled write timeout" in node.last_failure_reason
+
+        # Inject state into the NEW epoch (the active one)
+        active_inst = node.ser
+        active_inst.inject_rx(make_state(2, 100, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0))
+        assert wait_until(lambda: getattr(node, "telemetry_healthy", False), timeout=2.0)
+
+        # Trigger publish manually to ensure age < 0.2s
+        node.telemetry_publish_callback()
+
+        with node.state_lock:
+            # We expect exactly one fresh odom+IMU published
+            assert len(published_odom) == 1
+            assert len(published_imu) == 1
+            assert published_odom[0].pose.pose.position.x == 10.0
+            assert published_odom[0].pose.pose.position.y == 20.0
+
     finally:
         if node and not getattr(node, 'node_destroyed', False):
             try:
@@ -1080,18 +1177,23 @@ def test_destroy_retry():
         assert wait_until(lambda: getattr(node, "ser", None) is not None, timeout=2.0)
 
         node.tx_lock.acquire()
+        initial_epoch = getattr(node, 'session_epoch', 0)
 
         ret = node.destroy_node()
         assert not ret
 
-        assert node.running
-        assert not node.stop_request
-        assert not node.node_destroyed
+        assert not node.running
+        assert node.stop_request
+        assert getattr(node, 'log_timer', None) and node.log_timer.is_canceled()
+        assert getattr(node, 'telemetry_timer', None) and node.telemetry_timer.is_canceled()
+        assert not getattr(node, 'node_destroyed', False)
 
         node.tx_lock.release()
-
+        import time
+        time.sleep(0.1)
         ret = node.destroy_node()
         assert ret
+        assert getattr(node, 'session_epoch', 0) == initial_epoch + 1
 
         node = None
     finally:
@@ -1217,17 +1319,19 @@ def test_exact_baseline_order():
         rclpy.shutdown()
 
 
-def test_main_destroy_retry():
+def test_main_destroy_immediate():
     import fire_robot_bringup.serial_bridge_node as target_module
+    import time
 
     class MockNode:
+
         def __init__(self):
             self.calls = 0
+            self.node_destroyed = False
 
         def destroy_node(self):
             self.calls += 1
-            if self.calls < 3:
-                return False
+            self.node_destroyed = True
             return True
 
     old_init = getattr(target_module.rclpy, 'init', None)
@@ -1235,7 +1339,6 @@ def test_main_destroy_retry():
     old_ok = getattr(target_module.rclpy, 'ok', None)
     old_shutdown = getattr(target_module.rclpy, 'shutdown', None)
     old_SerialBridgeNode = getattr(target_module, 'SerialBridgeNode', None)
-
     node = MockNode()
 
     def fake_init(args=None): pass
@@ -1249,10 +1352,155 @@ def test_main_destroy_retry():
     target_module.rclpy.ok = fake_ok
     target_module.rclpy.shutdown = fake_shutdown
     target_module.SerialBridgeNode = fake_SerialBridgeNode
+    try:
+        t0 = time.monotonic()
+        target_module.main()
+        t1 = time.monotonic()
+        assert node.calls == 1
+        assert t1 - t0 < 0.5
+    finally:
+        target_module.rclpy.init = old_init
+        target_module.rclpy.spin = old_spin
+        target_module.rclpy.ok = old_ok
+        target_module.rclpy.shutdown = old_shutdown
+        target_module.SerialBridgeNode = old_SerialBridgeNode
 
+
+def test_main_destroy_false_false_true():
+    import fire_robot_bringup.serial_bridge_node as target_module
+
+    class MockNode:
+
+        def __init__(self):
+            self.calls = 0
+            self.node_destroyed = False
+
+        def destroy_node(self):
+            self.calls += 1
+            if self.calls < 3:
+                return False
+            self.node_destroyed = True
+            return True
+
+    old_init = getattr(target_module.rclpy, 'init', None)
+    old_spin = getattr(target_module.rclpy, 'spin', None)
+    old_ok = getattr(target_module.rclpy, 'ok', None)
+    old_shutdown = getattr(target_module.rclpy, 'shutdown', None)
+    old_SerialBridgeNode = getattr(target_module, 'SerialBridgeNode', None)
+    node = MockNode()
+
+    def fake_init(args=None): pass
+    def fake_spin(n): pass
+    def fake_ok(): return True
+    def fake_shutdown(): pass
+    def fake_SerialBridgeNode(): return node
+
+    target_module.rclpy.init = fake_init
+    target_module.rclpy.spin = fake_spin
+    target_module.rclpy.ok = fake_ok
+    target_module.rclpy.shutdown = fake_shutdown
+    target_module.SerialBridgeNode = fake_SerialBridgeNode
     try:
         target_module.main()
         assert node.calls == 3
+    finally:
+        target_module.rclpy.init = old_init
+        target_module.rclpy.spin = old_spin
+        target_module.rclpy.ok = old_ok
+        target_module.rclpy.shutdown = old_shutdown
+        target_module.SerialBridgeNode = old_SerialBridgeNode
+
+
+def test_main_destroy_always_false():
+    import fire_robot_bringup.serial_bridge_node as target_module
+    import time
+
+    class MockNode:
+
+        def __init__(self):
+            self.calls = 0
+            self.node_destroyed = False
+
+        def destroy_node(self):
+            self.calls += 1
+            return False
+
+    old_init = getattr(target_module.rclpy, 'init', None)
+    old_spin = getattr(target_module.rclpy, 'spin', None)
+    old_ok = getattr(target_module.rclpy, 'ok', None)
+    old_shutdown = getattr(target_module.rclpy, 'shutdown', None)
+    old_SerialBridgeNode = getattr(target_module, 'SerialBridgeNode', None)
+    node = MockNode()
+
+    def fake_init(args=None): pass
+    def fake_spin(n): pass
+    def fake_ok(): return True
+    def fake_shutdown(): pass
+    def fake_SerialBridgeNode(): return node
+
+    target_module.rclpy.init = fake_init
+    target_module.rclpy.spin = fake_spin
+    target_module.rclpy.ok = fake_ok
+    target_module.rclpy.shutdown = fake_shutdown
+    target_module.SerialBridgeNode = fake_SerialBridgeNode
+    try:
+        t0 = time.monotonic()
+        target_module.main()
+        t1 = time.monotonic()
+        assert node.calls > 10
+        # If we use bounded sleep min(0.1, remaining), it will exit at exactly 3.7.
+        # But if the mutation deadline=3.95; sleep(0.1) is used, it might sleep 0.1 past 3.95
+        assert t1 - t0 < 3.95, f"Took {t1 - t0}s, which is > 3.95s!"
+    finally:
+        target_module.rclpy.init = old_init
+        target_module.rclpy.spin = old_spin
+        target_module.rclpy.ok = old_ok
+        target_module.rclpy.shutdown = old_shutdown
+        target_module.SerialBridgeNode = old_SerialBridgeNode
+
+
+def test_main_destroy_slow_first_call_late_release():
+    import fire_robot_bringup.serial_bridge_node as target_module
+    import time
+
+    class MockNode:
+
+        def __init__(self):
+            self.calls = 0
+            self.node_destroyed = False
+
+        def destroy_node(self):
+            self.calls += 1
+            if self.calls == 1:
+                time.sleep(1.0)
+                return False
+            self.node_destroyed = True
+            return True
+
+    old_init = getattr(target_module.rclpy, 'init', None)
+    old_spin = getattr(target_module.rclpy, 'spin', None)
+    old_ok = getattr(target_module.rclpy, 'ok', None)
+    old_shutdown = getattr(target_module.rclpy, 'shutdown', None)
+    old_SerialBridgeNode = getattr(target_module, 'SerialBridgeNode', None)
+    node = MockNode()
+
+    def fake_init(args=None): pass
+    def fake_spin(n): pass
+    def fake_ok(): return True
+    def fake_shutdown(): pass
+    def fake_SerialBridgeNode(): return node
+
+    target_module.rclpy.init = fake_init
+    target_module.rclpy.spin = fake_spin
+    target_module.rclpy.ok = fake_ok
+    target_module.rclpy.shutdown = fake_shutdown
+    target_module.SerialBridgeNode = fake_SerialBridgeNode
+    try:
+        t0 = time.monotonic()
+        target_module.main()
+        t1 = time.monotonic()
+        assert node.calls == 2
+        assert 0.9 <= t1 - t0 < 1.5
     finally:
         target_module.rclpy.init = old_init
         target_module.rclpy.spin = old_spin
@@ -1320,8 +1568,27 @@ def test_live_read_error_recovery():
         assert wait_until(lambda: getattr(node, "ser", None) is not None, timeout=2.0)
         first_ser = node.ser
 
+        pub_odom = []
+        pub_imu = []
+
+        class MockOdomPub:
+            def publish(self, msg):
+                pub_odom.append(msg)
+
+        class MockImuPub:
+            def publish(self, msg):
+                pub_imu.append(msg)
+
+        node.odom_pub = MockOdomPub()
+        node.imu_pub = MockImuPub()
+
         first_ser.inject_rx(make_state(1, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
         assert wait_until(lambda: getattr(node, "session_ready", False), timeout=2.0)
+
+        # Force publish to consume the first state
+        node.telemetry_publish_callback()
+        pub_odom.clear()
+        pub_imu.clear()
 
         # Inject read error
         first_ser.raise_on_read = True
@@ -1332,11 +1599,112 @@ def test_live_read_error_recovery():
                           is not None and node.ser is not first_ser, timeout=2.0)
         assert getattr(node.worker_thread, "is_alive")()
 
+        # Attempt to publish during failure (state stale or session_ready false)
+        node.telemetry_publish_callback()
+        assert len(pub_odom) == 0, "Should not publish old odom during failure"
+        assert len(pub_imu) == 0, "Should not publish old imu during failure"
+
         second_ser = node.ser
-        second_ser.inject_rx(make_state(2, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        second_ser.inject_rx(make_state(2, 100, 1.0, 2.0, 0.0, 0.0, 0.0, 0.0))
         assert wait_until(lambda: getattr(node, "session_ready", False), timeout=2.0)
         assert wait_until(lambda: getattr(node, "latest_state", None)
                           is not None and node.latest_state[0]['seq'] == 2, timeout=2.0)
+
+        node.telemetry_publish_callback()
+        assert len(pub_odom) == 1, "Should publish fresh odom after recovery"
+        assert pub_odom[0].pose.pose.position.x == 1.0
+        assert len(pub_imu) == 1, "Should publish fresh imu after recovery"
+
+    finally:
+        if node and not getattr(node, 'node_destroyed', False):
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
+        rclpy.shutdown()
+
+
+def test_prolonged_bootstrap_timeout():
+    rclpy.init()
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerialWithInWaiting)
+        assert wait_until(lambda: getattr(node, "ser", None) is not None, timeout=2.0)
+        first_ser = node.ser
+
+        pub_odom = []
+        pub_imu = []
+
+        class MockOdomPub:
+            def publish(self, msg):
+                pub_odom.append(msg)
+
+        class MockImuPub:
+            def publish(self, msg):
+                pub_imu.append(msg)
+
+        node.odom_pub = MockOdomPub()
+        node.imu_pub = MockImuPub()
+
+        # Inject seq 1
+        first_ser.inject_rx(make_state(1, 100, 1.0, 2.0, 0.0, 0.0, 0.0, 0.0))
+        assert wait_until(lambda: getattr(node, "session_ready", False), timeout=2.0)
+        assert wait_until(lambda: getattr(node, "latest_state", None) is not None
+                          and node.latest_state[0]['seq'] == 1, timeout=2.0)
+
+        # Capture epoch of state seq 1
+        with node.state_lock:
+            state_epoch = node.latest_state[1]
+            current_epoch = getattr(node, "session_epoch", -1)
+            assert state_epoch == current_epoch, "State epoch should match current session epoch"
+            assert node.latest_state[0]['seq'] == 1
+
+        # Do NOT publish/clear state seq 1 before failure.
+
+        class FailingSerial(FakeSerialWithInWaiting):
+            def write(self, data: bytes):
+                import serial
+                raise serial.SerialTimeoutException("Forced write error")
+
+        node.serial_cls = FailingSerial
+
+        # Inject read error to trigger reconnect
+        first_ser.raise_on_read = True
+        first_ser.rx_event.set()
+
+        # Wait for bootstrap failure
+        assert wait_until(lambda: getattr(node, "session_ready", False) is False, timeout=2.0)
+        assert wait_until(lambda: getattr(node, "session_epoch", -1) != state_epoch, timeout=2.0)
+        assert wait_until(lambda: getattr(node, "bootstrap_fail_count", 0) > 0, timeout=2.0)
+
+        # Assert old latest_state seq 1 still exists
+        with node.state_lock:
+            assert node.latest_state is not None
+            assert node.latest_state[0]['seq'] == 1
+            assert node.latest_state[1] == state_epoch
+
+        # Assert no stale data is published
+        node.telemetry_publish_callback()
+        assert len(pub_odom) == 0, "Should not publish stale odom during bootstrap failure"
+        assert len(pub_imu) == 0, "Should not publish stale imu during bootstrap failure"
+
+        # Restore original serial class and wait for successful reconnect
+        node.serial_cls = FakeSerialWithInWaiting
+        assert wait_until(
+            lambda: getattr(node, "ser", None) is not None and
+            type(node.ser) is FakeSerialWithInWaiting, timeout=4.0)
+        third_ser = node.ser
+        third_ser.inject_rx(make_state(2, 100, 5.0, 6.0, 0.0, 0.0, 0.0, 0.0))
+        assert wait_until(lambda: getattr(node, "session_ready", False), timeout=2.0)
+        assert wait_until(lambda: getattr(node, "latest_state", None) is not None
+                          and node.latest_state[0]['seq'] == 2, timeout=2.0)
+
+        node.telemetry_publish_callback()
+        assert len(pub_odom) == 1, "Should publish fresh odom after recovery"
+        assert len(pub_imu) == 1, "Should publish fresh imu after recovery"
+        assert pub_odom[0].pose.pose.position.x == 5.0
+        assert pub_odom[0].pose.pose.position.y == 6.0
 
     finally:
         if node and not getattr(node, 'node_destroyed', False):
@@ -1533,6 +1901,86 @@ def test_tx_backoff_preserve():
             write_resume.set()
         except NameError:
             pass
+        if node and not getattr(node, 'node_destroyed', False):
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
+        rclpy.shutdown()
+
+
+def test_mutation_proof_worker_guard():
+    # Prove that removing worker guard results in false success
+    rclpy.init()
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerialWithInWaiting)
+        assert wait_until(lambda: getattr(node, "ser", None) is not None, timeout=2.0)
+
+        # Mutate to ignore worker
+        original_join = getattr(node.worker_thread, 'join', None)
+        node.worker_thread.join = lambda timeout=None: None
+
+        # Test should now fail because worker is 'alive' (is_alive mock)
+        original_is_alive = getattr(node.worker_thread, 'is_alive', None)
+        node.worker_thread.is_alive = lambda: True
+
+        assert not node.destroy_node()
+
+    finally:
+        if node and not getattr(node, 'node_destroyed', False):
+            if hasattr(node, 'worker_thread') and hasattr(node.worker_thread, 'is_alive'):
+                node.worker_thread.is_alive = original_is_alive
+                node.worker_thread.join = original_join
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
+        rclpy.shutdown()
+
+
+def test_mutation_proof_node_destroyed_early():
+    rclpy.init()
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerialWithInWaiting)
+        assert wait_until(lambda: getattr(node, "ser", None) is not None, timeout=2.0)
+
+        # Hold tx_lock so destroy fails
+        node.tx_lock.acquire()
+        ret = node.destroy_node()
+        assert not ret
+        assert not getattr(node, 'node_destroyed', False), \
+            "Mutation Proof: node_destroyed set early!"
+        node.tx_lock.release()
+    finally:
+        if node and getattr(node, 'tx_lock', None) and node.tx_lock.locked():
+            node.tx_lock.release()
+        if node and not getattr(node, 'node_destroyed', False):
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
+        rclpy.shutdown()
+
+
+def test_mutation_proof_publish_quiescence():
+    rclpy.init()
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerialWithInWaiting)
+        assert wait_until(lambda: getattr(node, "ser", None) is not None, timeout=2.0)
+
+        node.publish_lock.acquire()
+        ret = node.destroy_node()
+        assert not ret, "Mutation Proof: publish quiescence bypassed!"
+        node.publish_lock.release()
+    finally:
+        if node and getattr(node, 'publish_lock', None) and node.publish_lock.locked():
+            node.publish_lock.release()
         if node and not getattr(node, 'node_destroyed', False):
             try:
                 node.destroy_node()

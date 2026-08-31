@@ -28,6 +28,10 @@ public:
 
   void open() override
   {
+    {
+      std::lock_guard<std::mutex> lock(time_mutex);
+      open_times.push_back(std::chrono::steady_clock::now());
+    }
     const int n = ++opens;
     if (initial_failure_ || (n > 1 && n <= 1 + failures_)) {
       throw std::runtime_error("fake open failure");
@@ -36,6 +40,10 @@ public:
   }
   void close() override
   {
+    {
+      std::lock_guard<std::mutex> lock(time_mutex);
+      close_times.push_back(std::chrono::steady_clock::now());
+    }
     ++closes;
     if (bad_close_) {throw std::runtime_error("fake close failure; is_open remains true");}
     opened = false;
@@ -68,6 +76,12 @@ public:
     rx_data_.insert(rx_data_.end(), data.begin(), data.end());
   }
 
+  size_t pending_bytes()
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return rx_data_.size();
+  }
+
   void set_port(const std::string &) override {}
   void set_baudrate(uint32_t) override {}
   void set_timeout(serial::Timeout) override {}
@@ -87,6 +101,10 @@ public:
 
   std::atomic<bool> opened{false}, armed{false};
   std::atomic<int> opens{0}, closes{0}, read_errors{0};
+
+  std::vector<std::chrono::steady_clock::time_point> open_times;
+  std::vector<std::chrono::steady_clock::time_point> close_times;
+  std::mutex time_mutex;
 
 private:
   bool bad_close_;
@@ -198,17 +216,24 @@ TEST(NodeTest, PersistentFaultBoundedRetry)
 TEST(NodeTest, ShutdownBackoff)
 {
   rclcpp::NodeOptions options;
-  auto fake = std::make_shared<FakeTransport>(false, 1000);
+  auto fake = std::make_shared<FakeTransport>(false, 1, false);
   auto node = std::make_shared<CamsenseX1>("fake_cancel", options, fake);
-  fake->armed = true;
-  bool entered = wait_until([&]() {return fake->opens >= 2;});
+  // Do not arm, let it hit silence timeout (2s)
+  bool entered = wait_until([&]() {return fake->opens >= 2;}, 2500);
   EXPECT_TRUE(entered);
+
+  // worker is inside a cancel-aware reconnect backoff
   std::this_thread::sleep_for(20ms);
+
   const auto begin = std::chrono::steady_clock::now();
   node.reset();
   const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
     std::chrono::steady_clock::now() - begin).count();
-  EXPECT_LT(ms, 500);
+  EXPECT_LT(ms, 50);
+
+  int final_opens = fake->opens.load();
+  std::this_thread::sleep_for(500ms);
+  EXPECT_EQ(fake->opens.load(), final_opens);  // no reopens
 }
 
 TEST(NodeTest, CloseFailureFatal)
@@ -226,6 +251,273 @@ TEST(NodeTest, CloseFailureFatal)
 
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
   EXPECT_EQ(fake->opens.load(), 1);  // No new opens, object is fatal!
+}
+TEST(NodeTest, CloseFailureFatalSilence)
+{
+  rclcpp::NodeOptions options;
+  auto fake = std::make_shared<FakeTransport>(true);  // Bad close
+  auto node = std::make_shared<CamsenseX1>("fake_close_silence", options, fake);
+
+  bool attempted_close = wait_until([&]() {return fake->closes >= 1;}, 2500);
+  EXPECT_TRUE(attempted_close);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  EXPECT_EQ(fake->opens.load(), 1);  // No new opens, object is fatal!
+}
+
+
+TEST(NodeTest, TransportSilenceRecovery)
+{
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({rclcpp::Parameter("frame_id", "laser_frame")});
+  auto fake = std::make_shared<FakeTransport>();
+  // It returns available() = 0 and never throws if armed is false.
+  auto node = std::make_shared<CamsenseX1>("fake_silence", options, fake);
+
+  bool entered = wait_until([&]() {return fake->opens.load() >= 1;});
+  EXPECT_TRUE(entered);
+
+  int initial_opens = fake->opens.load();
+
+  // The guard is 2000 ms. We wait up to 2500 ms for the node to detect silence, close, and reopen.
+  bool recovered = wait_until([&]() {return fake->opens.load() > initial_opens;}, 2500);
+  EXPECT_TRUE(recovered);
+  EXPECT_GT(fake->opens.load(), initial_opens);
+
+  // Send a valid revolution to ensure parser wasn't corrupted
+  sensor_msgs::msg::LaserScan::SharedPtr received_scan;
+  std::mutex scan_mutex;
+  auto sub = node->create_subscription<sensor_msgs::msg::LaserScan>(
+    "/scan", 10, [&](sensor_msgs::msg::LaserScan::SharedPtr msg) {
+      std::lock_guard<std::mutex> lock(scan_mutex);
+      received_scan = msg;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  auto spin_thread = std::thread([&executor]() {executor.spin();});
+
+  wait_until([&]() {return sub->get_publisher_count() > 0;}, 1000);
+
+  std::vector<uint8_t> rev_data;
+  auto rev_pkts = make_full_revolution();
+  for (const auto & pkt : rev_pkts) {
+    rev_data.insert(rev_data.end(), pkt.begin(), pkt.end());
+  }
+  auto wrap_pkt = make_packet(0.0, 6.8);
+  rev_data.insert(rev_data.end(), wrap_pkt.begin(), wrap_pkt.end());
+
+  auto next_inject = std::chrono::steady_clock::now();
+  bool msg_received = wait_until(
+    [&]() {
+      if (std::chrono::steady_clock::now() >= next_inject) {
+        fake->inject(rev_data);
+        next_inject = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+      }
+      std::lock_guard<std::mutex> lock(scan_mutex);
+      return received_scan != nullptr;
+    }, 3000);
+  EXPECT_TRUE(msg_received);
+  if (msg_received) {
+    std::lock_guard<std::mutex> lock(scan_mutex);
+    EXPECT_EQ(received_scan->header.frame_id, "laser_frame");
+    EXPECT_EQ(received_scan->ranges.size(), 400u);
+  }
+
+  executor.cancel();
+  spin_thread.join();
+}
+
+TEST(NodeTest, BoundaryByteSilencesTimeout)
+{
+  rclcpp::NodeOptions options;
+  auto fake = std::make_shared<FakeTransport>();
+  auto node = std::make_shared<CamsenseX1>("fake_boundary", options, fake);
+
+  bool entered = wait_until([&]() {return fake->opens.load() >= 1;});
+  EXPECT_TRUE(entered);
+  int initial_opens = fake->opens.load();
+
+  std::this_thread::sleep_for(1800ms);
+  fake->inject(make_packet(0.0, 6.8));  // Valid packet
+  std::this_thread::sleep_for(1000ms);
+
+  EXPECT_EQ(fake->opens.load(), initial_opens);
+}
+
+TEST(NodeTest, ProlongedSilenceBoundedRetry)
+{
+  rclcpp::NodeOptions options;
+  auto fake = std::make_shared<FakeTransport>();
+  auto node = std::make_shared<CamsenseX1>("fake_prolonged", options, fake);
+
+  bool entered = wait_until([&]() {return fake->opens.load() >= 1;});
+  EXPECT_TRUE(entered);
+
+  // Wait 5000ms. Expected:
+  // initial open (0s)
+  // silence timeout (2s) -> close, backoff 200ms -> open
+  // silence timeout (4.2s) -> close, backoff 400ms -> open
+  // total opens = 3 in 5 seconds.
+  std::this_thread::sleep_for(5000ms);
+
+  int ops = fake->opens.load();
+  EXPECT_GE(ops, 3);
+  EXPECT_LE(ops, 4);
+
+  std::lock_guard<std::mutex> lock(fake->time_mutex);
+  ASSERT_GE(fake->open_times.size(), 3u);
+  auto dt1 = std::chrono::duration_cast<std::chrono::milliseconds>(
+    fake->open_times[1] - fake->open_times[0]).count();
+  auto dt2 = std::chrono::duration_cast<std::chrono::milliseconds>(
+    fake->open_times[2] - fake->open_times[1]).count();
+
+  // First interval: ~2000ms silence + 200ms backoff
+  // Minimum 2150ms to strictly distinguish half-backoff mutation (100ms)
+  EXPECT_GT(dt1, 2150);
+  EXPECT_LT(dt1, 2350);
+
+  // Second interval: ~2000ms silence + 400ms backoff
+  // Minimum 2350ms to strictly distinguish half-backoff mutation (200ms)
+  EXPECT_GT(dt2, 2350);
+  EXPECT_LT(dt2, 2550);
+}
+
+TEST(NodeTest, EpochIsolation)
+{
+  rclcpp::NodeOptions options;
+  auto fake = std::make_shared<FakeTransport>();
+  auto node = std::make_shared<CamsenseX1>("fake_epoch", options, fake);
+
+  sensor_msgs::msg::LaserScan::SharedPtr received_scan;
+  std::mutex scan_mutex;
+  auto sub = node->create_subscription<sensor_msgs::msg::LaserScan>(
+    "/scan", 10, [&](sensor_msgs::msg::LaserScan::SharedPtr msg) {
+      std::lock_guard<std::mutex> lock(scan_mutex);
+      received_scan = msg;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  auto spin_thread = std::thread([&executor]() {executor.spin();});
+  wait_until([&]() {return sub->get_publisher_count() > 0;}, 1000);
+
+  int initial_opens = fake->opens.load();
+
+  auto rev_pkts = make_full_revolution();
+  std::vector<uint8_t> half_data;
+  for (size_t i = 0; i < rev_pkts.size() / 2; ++i) {
+    half_data.insert(half_data.end(), rev_pkts[i].begin(), rev_pkts[i].end());
+  }
+
+  auto start_time = std::chrono::steady_clock::now();
+  fake->inject(half_data);
+
+  // 3. Đợi bằng observable test-only evidence rằng toàn bộ nửa đầu đã được đọc
+  bool data_consumed = wait_until([&]() {return fake->pending_bytes() == 0;}, 1000);
+  EXPECT_TRUE(data_consumed);
+
+  // 4. Ngay sau đó bật armed=true để available() ném read error
+  fake->armed = true;
+
+  // 5. Đợi read_errors >= 1, rồi tắt armed
+  bool error_thrown = wait_until([&]() {return fake->read_errors.load() >= 1;}, 1000);
+  EXPECT_TRUE(error_thrown);
+  fake->armed = false;
+
+  // 6. Đợi một successful reopen thật
+  bool recovered = wait_until(
+    [&]() {return fake->opens.load() > initial_opens && fake->opened.load();}, 1000);
+  EXPECT_TRUE(recovered);
+
+  // 7. Assert thời gian từ lúc old half được consume tới lúc chuẩn bị inject new half < 450 ms
+  auto end_time = std::chrono::steady_clock::now();
+  auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    end_time - start_time).count();
+  std::cout << "[ TEST ] actual elapsed_ms = " << elapsed_ms << std::endl;
+  EXPECT_LT(elapsed_ms, 450);
+
+  // 8. Inject nửa sau + wrap packet
+  std::vector<uint8_t> other_half;
+  for (size_t i = rev_pkts.size() / 2; i < rev_pkts.size(); ++i) {
+    other_half.insert(other_half.end(), rev_pkts[i].begin(), rev_pkts[i].end());
+  }
+  auto wrap_pkt = make_packet(0.0, 6.8);
+  other_half.insert(other_half.end(), wrap_pkt.begin(), wrap_pkt.end());
+  fake->inject(other_half);
+
+  std::this_thread::sleep_for(200ms);
+
+  // 9. Assert không nhận scan nào
+  {
+    std::lock_guard<std::mutex> lock(scan_mutex);
+    EXPECT_EQ(received_scan, nullptr);  // No scan because epoch changed
+  }
+
+  // 10. Inject một full fresh revolution và assert nhận scan để chứng minh parser còn dùng được.
+  std::vector<uint8_t> rev_data;
+  for (const auto & pkt : rev_pkts) {
+    rev_data.insert(rev_data.end(), pkt.begin(), pkt.end());
+  }
+  rev_data.insert(rev_data.end(), wrap_pkt.begin(), wrap_pkt.end());
+  fake->inject(rev_data);
+
+  wait_until(
+    [&]() {
+      std::lock_guard<std::mutex> lock(scan_mutex);
+      return received_scan != nullptr;
+    }, 1000);
+
+  {
+    std::lock_guard<std::mutex> lock(scan_mutex);
+    EXPECT_NE(received_scan, nullptr);
+  }
+
+  executor.cancel();
+  spin_thread.join();
+}
+
+TEST(NodeTest, ExactOneScan)
+{
+  rclcpp::NodeOptions options;
+  auto fake = std::make_shared<FakeTransport>();
+  auto node = std::make_shared<CamsenseX1>("fake_exact_scan", options, fake);
+
+  int scan_count = 0;
+  std::mutex scan_mutex;
+  auto sub = node->create_subscription<sensor_msgs::msg::LaserScan>(
+    "/scan", 10, [&](sensor_msgs::msg::LaserScan::SharedPtr) {
+      std::lock_guard<std::mutex> lock(scan_mutex);
+      scan_count++;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  auto spin_thread = std::thread([&executor]() {executor.spin();});
+  wait_until([&]() {return sub->get_publisher_count() > 0;}, 1000);
+
+  int initial_opens = fake->opens.load();
+  bool recovered = wait_until([&]() {return fake->opens.load() > initial_opens;}, 2500);
+  EXPECT_TRUE(recovered);
+
+  std::vector<uint8_t> rev_data;
+  auto rev_pkts = make_full_revolution();
+  for (const auto & pkt : rev_pkts) {
+    rev_data.insert(rev_data.end(), pkt.begin(), pkt.end());
+  }
+  auto wrap_pkt = make_packet(0.0, 6.8);
+  rev_data.insert(rev_data.end(), wrap_pkt.begin(), wrap_pkt.end());
+  fake->inject(rev_data);
+
+  std::this_thread::sleep_for(1000ms);
+
+  {
+    std::lock_guard<std::mutex> lock(scan_mutex);
+    EXPECT_EQ(scan_count, 1);
+  }
+
+  executor.cancel();
+  spin_thread.join();
 }
 
 TEST(NodeTest, LaserScanPublishing)

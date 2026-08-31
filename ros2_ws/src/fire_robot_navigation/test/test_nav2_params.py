@@ -1,12 +1,15 @@
 import os
 import yaml
+import copy
 import unittest
 
 
 class TestNav2Params(unittest.TestCase):
     def setUp(self):
-        self.params_file = os.path.join(
-            os.path.dirname(__file__), '..', 'config', 'nav2_params.yaml')
+        from ament_index_python.packages import get_package_share_directory
+        self.pkg_share = get_package_share_directory('fire_robot_navigation')
+        print(f"Resolved package_share: {self.pkg_share}")
+        self.params_file = os.path.join(self.pkg_share, 'config', 'nav2_params.yaml')
         with open(self.params_file, 'r') as f:
             self.params = yaml.safe_load(f)
 
@@ -272,32 +275,160 @@ class TestNav2Params(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
-    def test_no_reverse(self):
-        behaviors = self.params.get('behavior_server', {}).get('ros__parameters', {})
+    def _validate_bt_contract(self, params_dict, bt_files_content):
+        # 1. Extract all tags
+        import xml.etree.ElementTree as ET
+        all_tags = set()
+        for content in bt_files_content:
+            root = ET.fromstring(content)
+            for elem in root.iter():
+                all_tags.add(elem.tag)
+
+        # 2. Builtin and custom tags check
+        builtins = {'root', 'BehaviorTree', 'ReactiveSequence', 'ReactiveFallback', 'Sequence'}
+        mapping = {
+            'ComputePathToPose': 'nav2_compute_path_to_pose_action_bt_node',
+            'ComputePathThroughPoses': 'nav2_compute_path_through_poses_action_bt_node',
+            'FollowPath': 'nav2_follow_path_action_bt_node',
+            'Spin': 'nav2_spin_action_bt_node',
+            'Wait': 'nav2_wait_action_bt_node',
+            'ClearEntireCostmap': 'nav2_clear_costmap_service_bt_node',
+            'GoalUpdated': 'nav2_goal_updated_condition_bt_node',
+            'RateController': 'nav2_rate_controller_bt_node',
+            'RecoveryNode': 'nav2_recovery_node_bt_node',
+            'PipelineSequence': 'nav2_pipeline_sequence_bt_node',
+            'RoundRobin': 'nav2_round_robin_node_bt_node',
+            'RemovePassedGoals': 'nav2_remove_passed_goals_action_bt_node',
+        }
+
+        bt_nav = params_dict.get('bt_navigator', {}).get('ros__parameters', {})
+        bt_plugins = bt_nav.get('plugin_lib_names', [])
+
+        # Check no reverse tags in XML
+        for tag in all_tags:
+            reverse_tags = ['BackUp', 'DriveOnHeading', 'AssistedTeleop']
+            self.assertNotIn(tag, reverse_tags, f"Reverse tag found: {tag}")
+            if tag in builtins:
+                continue
+            self.assertIn(tag, mapping, f"Unknown XML tag: {tag}")
+            lib_name = mapping[tag]
+            self.assertIn(lib_name, bt_plugins, f"Missing plugin for tag {tag}: {lib_name}")
+
+            # verify library exists
+            from ament_index_python.packages import get_package_prefix
+            nav2_bt_prefix = get_package_prefix('nav2_behavior_tree')
+            lib_path = os.path.join(nav2_bt_prefix, 'lib', f'lib{lib_name}.so')
+            self.assertTrue(os.path.exists(lib_path), f"Library not found: {lib_path}")
+
+        # Check no reverse plugins in params
+        behaviors = params_dict.get('behavior_server', {}).get('ros__parameters', {})
         plugins = behaviors.get('behavior_plugins', [])
         self.assertNotIn('backup', plugins)
         self.assertNotIn('drive_on_heading', plugins)
         self.assertNotIn('assisted_teleop', plugins)
 
-        bt_nav = self.params.get('bt_navigator', {}).get('ros__parameters', {})
-        bt_plugins = bt_nav.get('plugin_lib_names', [])
-        self.assertNotIn('nav2_back_up_action_bt_node', bt_plugins)
-        self.assertNotIn('nav2_drive_on_heading_bt_node', bt_plugins)
-        self.assertNotIn('nav2_assisted_teleop_action_bt_node', bt_plugins)
+        banned_bt_plugins = [
+            'nav2_back_up_action_bt_node',
+            'nav2_drive_on_heading_bt_node',
+            'nav2_assisted_teleop_action_bt_node',
+            'nav2_back_up_cancel_bt_node',
+            'nav2_drive_on_heading_cancel_bt_node',
+            'nav2_assisted_teleop_cancel_bt_node'
+        ]
+        for p in banned_bt_plugins:
+            self.assertNotIn(p, bt_plugins, f"Reverse plugin found: {p}")
 
-    def test_bt_xml_no_reverse(self):
-        pkg_share = os.path.join(os.path.dirname(__file__), '..')
+    def _get_bt_files_content(self, pkg_share=None):
+        if pkg_share is None:
+            pkg_share = self.pkg_share
         bt_files = [
             'navigate_to_pose_no_reverse.xml',
             'navigate_through_poses_no_reverse.xml'
         ]
+        contents = []
         for bt_file in bt_files:
             xml_path = os.path.join(pkg_share, 'behavior_trees', bt_file)
             with open(xml_path, 'r') as f:
+                contents.append(f.read())
+        return contents
+
+    def test_no_reverse(self):
+        # Baseline validation
+        bt_contents = self._get_bt_files_content()
+        self._validate_bt_contract(self.params, bt_contents)
+
+    def test_qa20_bt_mutations(self):
+        import tempfile
+        import shutil
+
+        # Mutation 1 & 2: TemporaryDirectory copy installed XML/YAML and mutate
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, 'config'))
+            os.makedirs(os.path.join(d, 'behavior_trees'))
+
+            yaml_dest = os.path.join(d, 'config', 'nav2_params.yaml')
+            shutil.copy(self.params_file, yaml_dest)
+
+            bt_files = [
+                'navigate_to_pose_no_reverse.xml',
+                'navigate_through_poses_no_reverse.xml'
+            ]
+            for bt_file in bt_files:
+                src = os.path.join(self.pkg_share, 'behavior_trees', bt_file)
+                dst = os.path.join(d, 'behavior_trees', bt_file)
+                shutil.copy(src, dst)
+
+            # Mutate XML copy (unknown tag)
+            xml_mutate_path = os.path.join(d, 'behavior_trees', 'navigate_to_pose_no_reverse.xml')
+            with open(xml_mutate_path, 'r') as f:
                 content = f.read()
-            self.assertNotIn('<BackUp', content)
-            self.assertNotIn('<DriveOnHeading', content)
-            self.assertNotIn('<AssistedTeleop', content)
+            with open(xml_mutate_path, 'w') as f:
+                f.write(content.replace('<GoalUpdated/>', '<GoalUpdated/><UnknownInstalledTag/>'))
+
+            # Load and validate XML mutation
+            with open(yaml_dest, 'r') as f:
+                loaded_params = yaml.safe_load(f)
+            mutated_bt_contents = self._get_bt_files_content(d)
+            with self.assertRaisesRegex(AssertionError, "Unknown XML tag: UnknownInstalledTag"):
+                self._validate_bt_contract(loaded_params, mutated_bt_contents)
+
+            # Revert XML for next mutation
+            with open(xml_mutate_path, 'w') as f:
+                f.write(content)
+
+            # Mutate YAML copy (remove plugin)
+            with open(yaml_dest, 'r') as f:
+                yaml_content = f.read()
+            yaml_content = yaml_content.replace('- nav2_goal_updated_condition_bt_node', '')
+            with open(yaml_dest, 'w') as f:
+                f.write(yaml_content)
+
+            # Load and validate YAML mutation
+            with open(yaml_dest, 'r') as f:
+                loaded_params = yaml.safe_load(f)
+            clean_bt_contents = self._get_bt_files_content(d)
+            with self.assertRaisesRegex(AssertionError, "Missing plugin for tag GoalUpdated"):
+                self._validate_bt_contract(loaded_params, clean_bt_contents)
+
+        bt_contents = self._get_bt_files_content()
+
+        # Mutation 3: reverse tag in XML
+        bad_bt_contents2 = [bt_contents[0].replace('<GoalUpdated/>', '<GoalUpdated/><BackUp/>')]
+        with self.assertRaisesRegex(AssertionError, "Reverse tag found: BackUp"):
+            self._validate_bt_contract(self.params, bad_bt_contents2)
+
+        # Mutation 4-6: deep copy independent mutations for 3 cancel plugins
+        cancel_plugins = [
+            'nav2_back_up_cancel_bt_node',
+            'nav2_drive_on_heading_cancel_bt_node',
+            'nav2_assisted_teleop_cancel_bt_node'
+        ]
+        for cp in cancel_plugins:
+            p_mut = copy.deepcopy(self.params)
+            p_mut_plugins = p_mut['bt_navigator']['ros__parameters']['plugin_lib_names']
+            p_mut_plugins.append(cp)
+            with self.assertRaisesRegex(AssertionError, cp):
+                self._validate_bt_contract(p_mut, bt_contents)
 
     def test_plugins_validity(self):
         # controller

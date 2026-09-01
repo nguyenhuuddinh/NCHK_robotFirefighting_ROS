@@ -28,12 +28,15 @@ ROS 2 Parameters:
     cmd_vel_output_rate_hz  : Tần suất publish output (default: 10.0)
 """
 
+import signal
 import time
+
 import rclpy
+from geometry_msgs.msg import Twist
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from geometry_msgs.msg import Twist
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.signals import SignalHandlerOptions
 
 
 class SafetyWatchdog(Node):
@@ -155,19 +158,68 @@ class SafetyWatchdog(Node):
 def main(args=None):
     node = None
     executor = None
+
+    shutdown_requested = [False]
+
+    def graceful_signal_handler(signum, frame):
+        if not shutdown_requested[0]:
+            shutdown_requested[0] = True
+            raise KeyboardInterrupt()
+
+    original_sigterm = signal.getsignal(signal.SIGTERM)
+    original_sigint = signal.getsignal(signal.SIGINT)
+
+    signal.signal(signal.SIGTERM, graceful_signal_handler)
+    signal.signal(signal.SIGINT, graceful_signal_handler)
+
+    primary_exc = None
+    cleanup_errors = []
+
     try:
-        rclpy.init(args=args)
+        rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
         executor = SingleThreadedExecutor()
         node = SafetyWatchdog()
         rclpy.spin(node, executor=executor)
     except KeyboardInterrupt:
-        pass
+        shutdown_requested[0] = True
+    except BaseException as e:
+        primary_exc = e
     finally:
+        shutdown_requested[0] = True
+
         if node is not None:
-            node.destroy_node()
-        rclpy.uninstall_signal_handlers()
-        if rclpy.ok():
-            rclpy.shutdown()
+            try:
+                if hasattr(node, '_timer') and node._timer is not None:
+                    if not node._timer.is_canceled():
+                        node._timer.cancel()
+            except BaseException as e:
+                cleanup_errors.append(e)
+
+        if executor is not None:
+            try:
+                executor.shutdown()
+            except BaseException as e:
+                cleanup_errors.append(e)
+
+        if node is not None:
+            try:
+                node.destroy_node()
+            except BaseException as e:
+                cleanup_errors.append(e)
+
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except BaseException as e:
+            cleanup_errors.append(e)
+
+        signal.signal(signal.SIGTERM, original_sigterm)
+        signal.signal(signal.SIGINT, original_sigint)
+
+        if primary_exc is not None:
+            raise primary_exc
+        if cleanup_errors:
+            raise cleanup_errors[0]
 
 
 if __name__ == '__main__':

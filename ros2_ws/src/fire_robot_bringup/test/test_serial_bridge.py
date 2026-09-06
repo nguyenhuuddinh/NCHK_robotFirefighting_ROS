@@ -1,8 +1,15 @@
-import rclpy
-import pytest
 """Tests for node logic with mock serial."""
+import os
+import select
+import signal
+import subprocess
+import sys
 import threading
 import time
+
+import pytest
+import rclpy
+from rclpy.signals import SignalHandlerOptions
 
 from std_msgs.msg import Bool
 from geometry_msgs.msg import Twist, Point
@@ -47,6 +54,84 @@ def make_env(seq, ms, fire, gas, temp, batt, valid):
     payload = f"ENV,2,{seq},{fire},{gas:.1f},{temp:.1f},{batt:.1f},{valid}"
     crc = crc16_ccitt_false(payload.encode())
     return f"@{payload}*{crc:04X}\n".encode()
+
+
+def run_serial_bridge_signal_subprocess(signal_to_send, iterations):
+    """Run immediate real-signal cycles without opening hardware serial."""
+    env = os.environ.copy()
+    env['PYTHONUNBUFFERED'] = '1'
+    env['ROS_DOMAIN_ID'] = '97'
+    env['ROS_LOCALHOST_ONLY'] = '1'
+    env['ROS_LOG_DIR'] = (
+        f'/tmp/serial_bridge_signal_test_{signal_to_send}')
+    os.makedirs(env['ROS_LOG_DIR'], exist_ok=True)
+
+    command = [
+        sys.executable,
+        '-m',
+        'fire_robot_bringup.serial_bridge_node',
+        '--ros-args',
+        '-p',
+        'serial_port:=/tmp/serial_bridge_signal_test_no_device',
+    ]
+    forbidden_output = (
+        'Traceback',
+        'KeyboardInterrupt',
+        'ExternalShutdownException',
+        'RCLError',
+        "publisher's context is invalid",
+        'rcl_shutdown already called',
+        'Executor.__del__',
+    )
+
+    for iteration in range(iterations):
+        proc = subprocess.Popen(
+            command,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        output = ''
+        ready = False
+
+        try:
+            readiness_deadline = time.monotonic() + 5.0
+            while time.monotonic() < readiness_deadline:
+                if proc.poll() is not None:
+                    remainder, _ = proc.communicate()
+                    output += remainder or ''
+                    break
+
+                readable, _, _ = select.select([proc.stdout], [], [], 0.1)
+                if not readable:
+                    continue
+                line = proc.stdout.readline()
+                output += line
+                if 'Serial worker thread started.' in line:
+                    ready = True
+                    proc.send_signal(signal_to_send)
+                    break
+
+            assert ready, (
+                f'Iteration {iteration} did not reach readiness:\n{output}')
+
+            remainder, _ = proc.communicate(timeout=5.0)
+            output += remainder or ''
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                f'Iteration {iteration} did not exit after signal:\n{output}')
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                remainder, _ = proc.communicate()
+                output += remainder or ''
+
+        assert proc.returncode == 0, (
+            f'Iteration {iteration} returned {proc.returncode}:\n{output}')
+        for forbidden in forbidden_output:
+            assert forbidden not in output, (
+                f'Iteration {iteration} leaked {forbidden!r}:\n{output}')
 
 
 class FakeSerial:
@@ -1602,7 +1687,9 @@ def test_main_destroy_immediate(rclpy_init):
     old_SerialBridgeNode = getattr(target_module, 'SerialBridgeNode', None)
     node = MockNode()
 
-    def fake_init(args=None): pass
+    def fake_init(*args, **kwargs):
+        assert kwargs.get('signal_handler_options') == SignalHandlerOptions.NO
+
     def fake_spin(n): pass
     def fake_ok(): return True
     def fake_shutdown(): pass
@@ -1650,7 +1737,9 @@ def test_main_destroy_false_false_true(rclpy_init):
     old_SerialBridgeNode = getattr(target_module, 'SerialBridgeNode', None)
     node = MockNode()
 
-    def fake_init(args=None): pass
+    def fake_init(*args, **kwargs):
+        assert kwargs.get('signal_handler_options') == SignalHandlerOptions.NO
+
     def fake_spin(n): pass
     def fake_ok(): return True
     def fake_shutdown(): pass
@@ -1693,7 +1782,9 @@ def test_main_destroy_always_false(rclpy_init):
     old_SerialBridgeNode = getattr(target_module, 'SerialBridgeNode', None)
     node = MockNode()
 
-    def fake_init(args=None): pass
+    def fake_init(*args, **kwargs):
+        assert kwargs.get('signal_handler_options') == SignalHandlerOptions.NO
+
     def fake_spin(n): pass
     def fake_ok(): return True
     def fake_shutdown(): pass
@@ -1746,7 +1837,9 @@ def test_main_destroy_slow_first_call_late_release(rclpy_init):
     old_SerialBridgeNode = getattr(target_module, 'SerialBridgeNode', None)
     node = MockNode()
 
-    def fake_init(args=None): pass
+    def fake_init(*args, **kwargs):
+        assert kwargs.get('signal_handler_options') == SignalHandlerOptions.NO
+
     def fake_spin(n): pass
     def fake_ok(): return True
     def fake_shutdown(): pass
@@ -1769,6 +1862,78 @@ def test_main_destroy_slow_first_call_late_release(rclpy_init):
         target_module.rclpy.ok = old_ok
         target_module.rclpy.shutdown = old_shutdown
         target_module.SerialBridgeNode = old_SerialBridgeNode
+
+
+@pytest.mark.parametrize('signal_to_send', [signal.SIGINT, signal.SIGTERM])
+def test_main_signal_keeps_context_valid_until_destroy(
+        rclpy_init, monkeypatch, signal_to_send):
+    """Keep the ROS context valid through node cleanup for both signals."""
+    import fire_robot_bringup.serial_bridge_node as target_module
+
+    call_order = []
+    context_ok = [False]
+    original_sigint = signal.getsignal(signal.SIGINT)
+    original_sigterm = signal.getsignal(signal.SIGTERM)
+
+    class MockNode:
+        def __init__(self):
+            self.node_destroyed = False
+
+        def destroy_node(self):
+            assert context_ok[0]
+            call_order.append('node.destroy_node')
+            registered_handler = signal.getsignal(signal_to_send)
+            registered_handler(signal_to_send, None)
+            self.node_destroyed = True
+            return True
+
+    node = MockNode()
+
+    def fake_init(*args, **kwargs):
+        assert kwargs.get('signal_handler_options') == SignalHandlerOptions.NO
+        context_ok[0] = True
+        call_order.append('rclpy.init')
+
+    def fake_spin(candidate):
+        assert candidate is node
+        call_order.append('rclpy.spin')
+        registered_handler = signal.getsignal(signal_to_send)
+        registered_handler(signal_to_send, None)
+
+    def fake_ok():
+        return context_ok[0]
+
+    def fake_shutdown():
+        assert context_ok[0]
+        call_order.append('rclpy.shutdown')
+        context_ok[0] = False
+
+    monkeypatch.setattr(target_module.rclpy, 'init', fake_init)
+    monkeypatch.setattr(target_module.rclpy, 'spin', fake_spin)
+    monkeypatch.setattr(target_module.rclpy, 'ok', fake_ok)
+    monkeypatch.setattr(target_module.rclpy, 'shutdown', fake_shutdown)
+    monkeypatch.setattr(target_module, 'SerialBridgeNode', lambda: node)
+
+    target_module.main()
+
+    assert call_order == [
+        'rclpy.init',
+        'rclpy.spin',
+        'node.destroy_node',
+        'rclpy.shutdown',
+    ]
+    assert signal.getsignal(signal.SIGINT) == original_sigint
+    assert signal.getsignal(signal.SIGTERM) == original_sigterm
+
+
+def test_main_subprocess_sigint_stress():
+    """Reject ROS-context shutdown races under immediate real SIGINT."""
+    run_serial_bridge_signal_subprocess(signal.SIGINT, 100)
+
+
+def test_main_subprocess_sigterm_stress():
+    """Reject ROS-context shutdown races under immediate real SIGTERM."""
+    run_serial_bridge_signal_subprocess(signal.SIGTERM, 100)
 
 
 def test_bootstrap_lifecycle_gate(rclpy_init):

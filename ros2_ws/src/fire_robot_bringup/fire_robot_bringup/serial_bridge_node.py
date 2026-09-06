@@ -1,9 +1,11 @@
 """Bridge ROS 2 and raw serial V2."""
 import json
 import math
+import signal
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.signals import SignalHandlerOptions
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Twist, Point
@@ -1006,28 +1008,77 @@ class SerialBridgeNode(Node):
 
 def main(args=None):
     """Run main entry point."""
-    rclpy.init(args=args)
-    node = SerialBridgeNode()
+    node = None
+    shutdown_requested = [False]
+
+    def graceful_signal_handler(signum, frame):
+        if not shutdown_requested[0]:
+            shutdown_requested[0] = True
+            raise KeyboardInterrupt()
+
+    original_sigterm = signal.getsignal(signal.SIGTERM)
+    original_sigint = signal.getsignal(signal.SIGINT)
+    primary_exc = None
+    cleanup_errors = []
+
     try:
-        rclpy.spin(node)
+        signal.signal(signal.SIGTERM, graceful_signal_handler)
+        signal.signal(signal.SIGINT, graceful_signal_handler)
+
+        try:
+            rclpy.init(
+                args=args,
+                signal_handler_options=SignalHandlerOptions.NO)
+            node = SerialBridgeNode()
+            rclpy.spin(node)
+        except KeyboardInterrupt:
+            shutdown_requested[0] = True
+        except BaseException as e:
+            primary_exc = e
+        finally:
+            shutdown_requested[0] = True
+
+            if node is not None:
+                try:
+                    deadline = time.monotonic() + 3.7
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        if node.destroy_node():
+                            break
+                        time.sleep(min(0.1, remaining))
+
+                    if not getattr(node, 'node_destroyed', False):
+                        node.destroy_node()
+                except BaseException as e:
+                    cleanup_errors.append(e)
+
+            try:
+                if rclpy.ok():
+                    rclpy.shutdown()
+            except BaseException as e:
+                cleanup_errors.append(e)
     except KeyboardInterrupt:
-        pass
+        shutdown_requested[0] = True
+    except BaseException as e:
+        if primary_exc is None:
+            primary_exc = e
     finally:
-        deadline = time.monotonic() + 3.7
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            if node.destroy_node():
-                break
-            time.sleep(min(0.1, remaining))
+        try:
+            signal.signal(signal.SIGTERM, original_sigterm)
+        except BaseException as e:
+            cleanup_errors.append(e)
 
-        # Final nonblocking reap attempt
-        if not getattr(node, 'node_destroyed', False):
-            node.destroy_node()
+        try:
+            signal.signal(signal.SIGINT, original_sigint)
+        except BaseException as e:
+            cleanup_errors.append(e)
 
-        if rclpy.ok():
-            rclpy.shutdown()
+        if primary_exc is not None:
+            raise primary_exc
+        if cleanup_errors:
+            raise cleanup_errors[0]
 
 
 if __name__ == '__main__':

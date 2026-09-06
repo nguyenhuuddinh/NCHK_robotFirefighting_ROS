@@ -16,6 +16,13 @@ import time
 from fire_robot_bringup.serial_protocol import SerialProtocolV2
 
 
+DEFAULT_SERIAL_PORT = (
+    '/dev/serial/by-id/'
+    'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N16R8_'
+    '_16MB_Flash___8MB_PSRAM__9C139EAAE110-if00'
+)
+
+
 class SerialBridgeNode(Node):
     """Bridge Node between ROS 2 topics and raw serial."""
 
@@ -23,7 +30,7 @@ class SerialBridgeNode(Node):
         """Initialize SerialBridgeNode."""
         super().__init__('serial_bridge_node')
 
-        self.declare_parameter('serial_port', '/dev/ttyACM0')
+        self.declare_parameter('serial_port', DEFAULT_SERIAL_PORT)
         self.declare_parameter('serial_baudrate', 115200)
 
         self.port = self.get_parameter('serial_port').value
@@ -130,7 +137,8 @@ class SerialBridgeNode(Node):
         """Transition the transport state while ``state_lock`` is held."""
         valid = {
             'BACKOFF': ['OPENING', 'SHUTTING_DOWN'],
-            'OPENING': ['WAIT_FIRST_STATE', 'CLOSING', 'SHUTTING_DOWN'],
+            'OPENING': [
+                'WAIT_FIRST_STATE', 'BACKOFF', 'CLOSING', 'SHUTTING_DOWN'],
             'WAIT_FIRST_STATE': ['HEALTHY', 'CLOSING', 'SHUTTING_DOWN'],
             'HEALTHY': ['CLOSING', 'SHUTTING_DOWN'],
             'CLOSING': ['BACKOFF', 'SHUTTING_DOWN'],

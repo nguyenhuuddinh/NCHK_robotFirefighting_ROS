@@ -4667,3 +4667,48 @@ def test_close_flush_error_is_observable_and_close_continues(rclpy_init):
     finally:
         if not node.node_destroyed:
             node.destroy_node()
+
+
+def test_open_failure_enters_backoff_before_retry(rclpy_init):
+    """A missing serial path must not hot-loop in the OPENING state."""
+    first_attempt = threading.Event()
+
+    class MissingSerial:
+        attempt_count = 0
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            type(self).attempt_count += 1
+            first_attempt.set()
+            raise OSError('device is absent')
+
+    node = SerialBridgeNode(serial_cls=MissingSerial)
+    try:
+        assert first_attempt.wait(timeout=1.0)
+        assert wait_until(
+            lambda: node._session_state == 'BACKOFF', timeout=1.0)
+        with node.state_lock:
+            assert node.open_attempt_count == 1
+            assert node.open_fail_count == 1
+            assert node.reconnect_backoff == pytest.approx(0.1)
+            assert node.next_reconnect_mono > time.monotonic()
+    finally:
+        if not node.node_destroyed:
+            node.destroy_node()
+
+
+def test_pi_runtime_uses_stable_esp32_serial_path():
+    """Keep Pi runtime on by-id when Linux assigns another ttyACM minor."""
+    from pathlib import Path
+
+    package_root = Path(__file__).resolve().parents[1]
+    stable_path = (
+        '/dev/serial/by-id/'
+        'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N16R8_'
+        '_16MB_Flash___8MB_PSRAM__9C139EAAE110-if00'
+    )
+    launch_text = (package_root / 'launch' / 'robot.launch.py').read_text()
+    params_text = (package_root / 'config' / 'pi_params.yaml').read_text()
+
+    assert stable_path in launch_text.replace("'\n            '", '')
+    assert stable_path in params_text

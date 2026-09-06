@@ -14,7 +14,7 @@ Khởi chạy toàn bộ stack trên Pi bằng 1 lệnh duy nhất:
 
 Arguments (theo ros2_engineer.md Section 7.1):
     - use_sim_time           : false (mặc định, Pi chạy phần cứng thực)
-    - serial_port            : /dev/ttyACM0
+    - serial_port            : /dev/serial/by-id/usb-Espressif_...-if00
     - serial_baudrate        : 115200
     - cmd_vel_input_topic    : /cmd_vel_raw
     - cmd_vel_output_topic   : /cmd_vel
@@ -55,8 +55,12 @@ def generate_launch_description():
 
     serial_port_arg = DeclareLaunchArgument(
         'serial_port',
-        default_value='/dev/ttyACM0',
-        description='Serial port của ESP32-S3'
+        default_value=(
+            '/dev/serial/by-id/'
+            'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N16R8_'
+            '_16MB_Flash___8MB_PSRAM__9C139EAAE110-if00'
+        ),
+        description='Stable USB serial path của ESP32-S3'
     )
 
     serial_baudrate_arg = DeclareLaunchArgument(

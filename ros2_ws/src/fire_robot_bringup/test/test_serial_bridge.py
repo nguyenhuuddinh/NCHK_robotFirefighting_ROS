@@ -4565,3 +4565,105 @@ def test_diagnostic_snapshot_reset_is_atomic(rclpy_init):
             node.state_lock = original_lock
         if not node.node_destroyed:
             node.destroy_node()
+
+
+def test_close_flushes_driver_tx_before_close(rclpy_init):
+    """Discard stalled CDC TX before close can wait for kernel drain."""
+    events = []
+    close_done = threading.Event()
+
+    class DrainSensitiveHandle:
+        def __init__(self):
+            self.closed = False
+            self.output_flushed = False
+
+        def cancel_read(self):
+            events.append('cancel_read')
+
+        def cancel_write(self):
+            events.append('cancel_write')
+
+        def reset_output_buffer(self):
+            events.append('reset_output_buffer')
+            self.output_flushed = True
+
+        def close(self):
+            events.append('close')
+            assert self.output_flushed
+            self.closed = True
+            close_done.set()
+
+    registry.instances.clear()
+    node = SerialBridgeNode(serial_cls=FakeSerial)
+    try:
+        assert wait_until(lambda: node.ser is not None)
+        node.stop_request = True
+        node.worker_thread.join(timeout=2.0)
+        assert not node.worker_thread.is_alive()
+        _reap_all_close_ownership(node)
+
+        handle = DrainSensitiveHandle()
+        with node.state_lock:
+            node.ser = handle
+            node.session_ready = True
+            node.telemetry_healthy = True
+            node._session_state = 'HEALTHY'
+
+        node._quarantine_handle(handle, 'test:cdc-tx-stall')
+        assert close_done.wait(timeout=1.0)
+        _reap_all_close_ownership(node)
+
+        assert events == [
+            'cancel_read',
+            'cancel_write',
+            'reset_output_buffer',
+            'close',
+        ]
+        assert handle.closed is True
+    finally:
+        if not node.node_destroyed:
+            node.destroy_node()
+
+
+def test_close_flush_error_is_observable_and_close_continues(rclpy_init):
+    """A flush error must be diagnosed without leaking the serial handle."""
+    flush_error = RuntimeError('Flush_err_775')
+    close_done = threading.Event()
+
+    class FlushErrorHandle:
+        def __init__(self):
+            self.closed = False
+
+        def reset_output_buffer(self):
+            raise flush_error
+
+        def close(self):
+            self.closed = True
+            close_done.set()
+
+    registry.instances.clear()
+    node = SerialBridgeNode(serial_cls=FakeSerial)
+    try:
+        assert wait_until(lambda: node.ser is not None)
+        node.stop_request = True
+        node.worker_thread.join(timeout=2.0)
+        assert not node.worker_thread.is_alive()
+        _reap_all_close_ownership(node)
+
+        handle = FlushErrorHandle()
+        with node.state_lock:
+            node.ser = handle
+            node.session_ready = True
+            node.telemetry_healthy = True
+            node._session_state = 'HEALTHY'
+
+        node._quarantine_handle(handle, 'test:flush-error')
+        assert close_done.wait(timeout=1.0)
+        with node.state_lock:
+            assert node.last_failure_reason == (
+                'close_flush:RuntimeError:Flush_err_775')
+        _reap_all_close_ownership(node)
+        assert handle.closed is True
+    finally:
+        if not node.node_destroyed:
+            node.destroy_node()

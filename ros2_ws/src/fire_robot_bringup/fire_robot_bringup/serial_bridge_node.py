@@ -299,6 +299,19 @@ class SerialBridgeNode(Node):
                                 and time.monotonic() >= shutdown_deadline):
                             raise TimeoutError('Shutdown deadline exhausted')
                         if result is None:
+                            # Linux cdc_acm drains queued TX during close().
+                            # Discard it first so a stalled USB endpoint cannot
+                            # hold the close worker in tty_wait_until_sent.
+                            reset_output = getattr(
+                                current_handle, 'reset_output_buffer', None)
+                            if reset_output is not None:
+                                try:
+                                    reset_output()
+                                except Exception as e:
+                                    with self.state_lock:
+                                        self.last_failure_reason = (
+                                            'close_flush:'
+                                            f'{type(e).__name__}:{e}')
                             current_handle.close()
                             result = True
                     except TimeoutError as e:

@@ -71,26 +71,29 @@ controller_server:
 
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5
+      # HW gate 2026-09-07: xe chay on dinh tu 0.05 m/s; 5 cm trong 10 giay
+      # phan anh dung tien trien cua goal ngan va tranh false-stuck o toc do thap.
+      required_movement_radius: 0.05
       movement_time_allowance: 10.0
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25 # UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD
-      yaw_goal_tolerance: 0.25 # UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD
+      # HW gate 2026-09-07: hai goal thanh cong va mot cancel dung an toan.
+      xy_goal_tolerance: 0.08
+      yaw_goal_tolerance: 0.15
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: True
       # Seed Source: nav2_bringup/params/nav2_params.yaml (Humble 1.1.20)
-      # Motion Values: (UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD)
+      # HW gate 2026-09-07: x=0.05 m/s chay duoc; Nav2 goal da chay that.
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.26
+      max_vel_x: 0.08
       max_vel_y: 0.0
-      max_vel_theta: 1.0
-      min_speed_xy: 0.0
-      max_speed_xy: 0.26
-      min_speed_theta: 0.0
+      max_vel_theta: 0.5
+      min_speed_xy: 0.05
+      max_speed_xy: 0.08
+      min_speed_theta: 0.4
       acc_lim_x: 2.5
       acc_lim_y: 0.0
       acc_lim_theta: 3.2
@@ -104,8 +107,8 @@ controller_server:
       linear_granularity: 0.05
       angular_granularity: 0.025
       transform_tolerance: 0.2
-      xy_goal_tolerance: 0.25
-      trans_stopped_velocity: 0.25
+      xy_goal_tolerance: 0.08
+      trans_stopped_velocity: 0.03
       short_circuit_trajectory_evaluation: True
       stateful: True
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
@@ -250,8 +253,9 @@ behavior_server:
     use_sim_time: true
     simulate_ahead_time: 2.0
     # Seed Source: nav2_bringup/params/nav2_params.yaml (Humble 1.1.20)
-    max_rotational_vel: 1.0 # (UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD)
-    min_rotational_vel: 0.4 # (UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD)
+    # HW gate 2026-09-07: Spin +/-0.35 rad thanh cong va dung ve zero.
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.4
     rotational_acc_lim: 3.2 # (UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD)
 
 velocity_smoother:
@@ -261,9 +265,9 @@ velocity_smoother:
     scale_velocities: False
     feedback: "OPEN_LOOP"
     # Seed Source: nav2_bringup/params/nav2_params.yaml (Humble 1.1.20)
-    # Motion Values: (UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD)
-    max_velocity: [0.26, 0.0, 1.0]
-    min_velocity: [0.0, 0.0, -1.0]
+    # HW gate 2026-09-07: dong bo voi envelope DWB da test tren xe that.
+    max_velocity: [0.08, 0.0, 0.5]
+    min_velocity: [0.0, 0.0, -0.5]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: "/odom"

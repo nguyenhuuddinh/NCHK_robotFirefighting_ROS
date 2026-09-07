@@ -88,6 +88,7 @@ class TestNav2Params(unittest.TestCase):
         controller = params.get('controller_server', {}).get('ros__parameters', {})
         dwb = controller.get('FollowPath', {})
         goal_checker = controller.get('general_goal_checker', {})
+        progress_checker = controller.get('progress_checker', {})
 
         # DWB FollowPath.xy_goal_tolerance (QA9)
         self.assertIn('xy_goal_tolerance', dwb, "Missing xy_goal_tolerance in FollowPath")
@@ -108,6 +109,14 @@ class TestNav2Params(unittest.TestCase):
             self.assertIn(k, goal_checker, f"Missing {k} in general_goal_checker")
             self.assertTrue(math.isfinite(goal_checker.get(k)))
             self.assertGreater(goal_checker.get(k), 0.0)
+
+        for k in ['required_movement_radius', 'movement_time_allowance']:
+            self.assertIn(k, progress_checker, f"Missing {k} in progress_checker")
+            self.assertTrue(math.isfinite(progress_checker.get(k)))
+            self.assertGreater(progress_checker.get(k), 0.0)
+        self.assertLessEqual(
+            progress_checker.get('required_movement_radius'),
+            goal_checker.get('xy_goal_tolerance'))
 
         self.assertGreater(dwb.get('max_vel_x'), 0.0)
         self.assertEqual(dwb.get('min_vel_x'), 0.0)
@@ -183,6 +192,29 @@ class TestNav2Params(unittest.TestCase):
 
     def test_baseline(self):
         self._validate_params(self.params)
+
+    def test_hardware_validated_motion_envelope(self):
+        controller = self.params['controller_server']['ros__parameters']
+        dwb = controller['FollowPath']
+        goal_checker = controller['general_goal_checker']
+        progress_checker = controller['progress_checker']
+        behaviors = self.params['behavior_server']['ros__parameters']
+        smoother = self.params['velocity_smoother']['ros__parameters']
+
+        self.assertEqual(dwb['min_speed_xy'], 0.05)
+        self.assertEqual(dwb['max_vel_x'], 0.08)
+        self.assertEqual(dwb['max_speed_xy'], 0.08)
+        self.assertEqual(dwb['min_speed_theta'], 0.4)
+        self.assertEqual(dwb['max_vel_theta'], 0.5)
+        self.assertEqual(dwb['trans_stopped_velocity'], 0.03)
+        self.assertEqual(dwb['xy_goal_tolerance'], 0.08)
+        self.assertEqual(goal_checker['xy_goal_tolerance'], 0.08)
+        self.assertEqual(goal_checker['yaw_goal_tolerance'], 0.15)
+        self.assertEqual(progress_checker['required_movement_radius'], 0.05)
+        self.assertEqual(behaviors['min_rotational_vel'], 0.4)
+        self.assertEqual(behaviors['max_rotational_vel'], 0.5)
+        self.assertEqual(smoother['max_velocity'], [0.08, 0.0, 0.5])
+        self.assertEqual(smoother['min_velocity'], [0.0, 0.0, -0.5])
 
     def test_qa10_mutations(self):
         import copy

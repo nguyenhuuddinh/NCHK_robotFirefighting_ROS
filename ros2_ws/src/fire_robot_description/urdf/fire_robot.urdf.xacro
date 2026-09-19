@@ -14,9 +14,9 @@
 
   <!-- Bánh xe -->
   <xacro:property name="wheel_radius"  value="0.034"/>
-  <xacro:property name="wheel_width"   value="0.026"/>
-  <xacro:property name="track_width"   value="0.180"/>
-  <xacro:property name="wheelbase"     value="0.134"/>
+  <xacro:property name="wheel_width"   value="0.027"/>
+  <xacro:property name="track_width"   value="0.173"/>
+  <xacro:property name="wheelbase"     value="0.135"/>
 
   <!-- Vị trí cảm biến (Z = ground_clearance + Z_đo_từ_đáy_xe) -->
   <xacro:property name="lidar_x"  value="0.094"/>

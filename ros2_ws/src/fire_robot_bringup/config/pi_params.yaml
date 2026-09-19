@@ -33,3 +33,18 @@ serial_bridge_node:
   ros__parameters:
     serial_port: "/dev/serial/by-id/usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N16R8__16MB_Flash___8MB_PSRAM__9C139EAAE110-if00"
     serial_baudrate: 115200
+    # ESP32-S3 can need ~4-6 s after reset for boot + IMU calibration +
+    # Task_SerialComm startup. A 2 s grace made Pi close DTR before the first
+    # STATE frame, causing repeated USB open/close cycles after a board reset.
+    first_state_timeout_s: 8.0
+
+# --- Odometry -> TF ---
+odom_to_tf_broadcaster:
+  ros__parameters:
+    tf_publish_rate_hz: 20.0
+    odom_stale_timeout_ms: 300
+    odom_qos_depth: 10
+    tf_stamp_source: "pi_receive_time"
+    # Odom 10 Hz co the tre toi ~100 ms so voi lookup "now" cua Rotation Shim.
+    # Gia tri am day TF ve phia truoc; stale guard van dung TF neu mat odom.
+    tf_stamp_offset_ms: -100

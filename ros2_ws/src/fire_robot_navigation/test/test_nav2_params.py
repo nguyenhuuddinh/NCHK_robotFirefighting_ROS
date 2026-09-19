@@ -45,6 +45,11 @@ class TestNav2Params(unittest.TestCase):
         self.assertEqual(amcl_params.get('odom_frame_id'), 'odom')
         self.assertEqual(amcl_params.get('base_frame_id'), 'base_link')
         self.assertEqual(amcl_params.get('scan_topic'), '/scan')
+        for key in ['update_min_d', 'update_min_a']:
+            self.assertIn(key, amcl_params, f"Missing AMCL motion threshold {key}")
+            self.assertTrue(math.isfinite(amcl_params.get(key)))
+            self.assertGreater(amcl_params.get(key), 0.0)
+            self.assertLessEqual(amcl_params.get(key), 0.05)
 
         bt_params = params.get('bt_navigator', {}).get('ros__parameters', {})
         self.assertEqual(bt_params.get('global_frame'), 'map')
@@ -86,24 +91,46 @@ class TestNav2Params(unittest.TestCase):
         walk_dict(params)
 
         controller = params.get('controller_server', {}).get('ros__parameters', {})
-        dwb = controller.get('FollowPath', {})
+        rpp = controller.get('FollowPath', {})
         goal_checker = controller.get('general_goal_checker', {})
         progress_checker = controller.get('progress_checker', {})
 
-        # DWB FollowPath.xy_goal_tolerance (QA9)
-        self.assertIn('xy_goal_tolerance', dwb, "Missing xy_goal_tolerance in FollowPath")
-        self.assertTrue(math.isfinite(dwb.get('xy_goal_tolerance')))
-        self.assertGreater(dwb.get('xy_goal_tolerance'), 0.0)
+        self.assertEqual(controller.get('controller_frequency'), 10.0)
 
-        # math.isfinite on dwb
-        dwb_keys = [
-            'max_vel_x', 'min_vel_x', 'max_vel_y', 'min_vel_y', 'max_vel_theta', 'min_speed_theta',
-            'min_speed_xy', 'max_speed_xy', 'acc_lim_x', 'acc_lim_y', 'acc_lim_theta',
-            'decel_lim_x', 'decel_lim_y', 'decel_lim_theta', 'trans_stopped_velocity'
+        self.assertEqual(
+            rpp.get('plugin'),
+            'nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController')
+        self.assertNotIn('primary_controller', rpp)
+        rpp_keys = [
+            'desired_linear_vel', 'lookahead_dist', 'min_lookahead_dist',
+            'max_lookahead_dist', 'lookahead_time',
+            'min_approach_linear_velocity', 'approach_velocity_scaling_dist',
+            'regulated_linear_scaling_min_radius',
+            'regulated_linear_scaling_min_speed', 'cost_scaling_dist',
+            'cost_scaling_gain', 'inflation_cost_scaling_factor',
+            'max_allowed_time_to_collision_up_to_carrot',
+            'rotate_to_heading_min_angle', 'rotate_to_heading_angular_vel',
+            'max_angular_accel', 'transform_tolerance',
+            'max_robot_pose_search_dist'
         ]
-        for k in dwb_keys:
-            self.assertIn(k, dwb, f"Missing required key {k} in FollowPath")
-            self.assertTrue(math.isfinite(dwb.get(k)))
+        for key in rpp_keys:
+            self.assertIn(key, rpp, f"Missing RPP key {key}")
+            self.assertTrue(math.isfinite(rpp[key]))
+            self.assertGreater(rpp[key], 0.0)
+        for key in [
+            'use_velocity_scaled_lookahead_dist',
+            'use_regulated_linear_velocity_scaling',
+            'use_cost_regulated_linear_velocity_scaling',
+            'use_collision_detection', 'use_rotate_to_heading',
+            'use_interpolation'
+        ]:
+            self.assertIs(rpp.get(key), True)
+        self.assertIs(rpp.get('allow_reversing'), False)
+        self.assertLessEqual(rpp['min_lookahead_dist'], rpp['lookahead_dist'])
+        self.assertLessEqual(rpp['lookahead_dist'], rpp['max_lookahead_dist'])
+        self.assertLessEqual(rpp['rotate_to_heading_min_angle'], math.pi)
+        self.assertLessEqual(rpp['min_approach_linear_velocity'], rpp['desired_linear_vel'])
+        self.assertLessEqual(rpp['regulated_linear_scaling_min_speed'], rpp['desired_linear_vel'])
 
         for k in ['xy_goal_tolerance', 'yaw_goal_tolerance']:
             self.assertIn(k, goal_checker, f"Missing {k} in general_goal_checker")
@@ -117,19 +144,6 @@ class TestNav2Params(unittest.TestCase):
         self.assertLessEqual(
             progress_checker.get('required_movement_radius'),
             goal_checker.get('xy_goal_tolerance'))
-
-        self.assertGreater(dwb.get('max_vel_x'), 0.0)
-        self.assertEqual(dwb.get('min_vel_x'), 0.0)
-        self.assertGreater(dwb.get('max_vel_theta'), 0.0)
-        self.assertGreater(dwb.get('acc_lim_x'), 0.0)
-        self.assertLess(dwb.get('decel_lim_x'), 0.0)
-        self.assertEqual(dwb.get('max_vel_y'), 0.0)
-        self.assertEqual(dwb.get('min_vel_y'), 0.0)
-        self.assertEqual(dwb.get('acc_lim_y'), 0.0)
-        self.assertEqual(dwb.get('decel_lim_y'), 0.0)
-        self.assertGreaterEqual(dwb.get('min_speed_theta'), 0.0)
-        self.assertGreaterEqual(dwb.get('trans_stopped_velocity'), 0.0)
-        self.assertLess(dwb.get('trans_stopped_velocity'), dwb.get('max_vel_x'))
 
         smoother = params.get('velocity_smoother', {}).get('ros__parameters', {})
         max_vel = smoother.get('max_velocity')
@@ -156,14 +170,10 @@ class TestNav2Params(unittest.TestCase):
         self.assertLess(max_decel[0], 0.0)
         self.assertLess(max_decel[2], 0.0)
 
-        # N3QA10-2 params envelope
-        self.assertGreaterEqual(dwb.get('min_speed_xy'), 0.0)
-        self.assertLessEqual(dwb.get('min_speed_xy'), dwb.get('max_speed_xy'))
-        self.assertEqual(dwb.get('max_speed_xy'), dwb.get('max_vel_x'))
-        self.assertGreaterEqual(dwb.get('min_speed_theta'), 0.0)
-        self.assertLessEqual(dwb.get('min_speed_theta'), dwb.get('max_vel_theta'))
-        self.assertEqual(max_vel[2], dwb.get('max_vel_theta'))
-        self.assertEqual(min_vel[2], -dwb.get('max_vel_theta'))
+        self.assertEqual(max_vel[0], rpp['desired_linear_vel'])
+        self.assertEqual(min_vel[2], -max_vel[2])
+        self.assertEqual(max_vel[2], rpp['rotate_to_heading_angular_vel'])
+        self.assertEqual(max_accel[2], rpp['max_angular_accel'])
 
         behaviors = params.get('behavior_server', {}).get('ros__parameters', {})
         for k in ['max_rotational_vel', 'min_rotational_vel', 'rotational_acc_lim']:
@@ -176,59 +186,62 @@ class TestNav2Params(unittest.TestCase):
         )
         self.assertGreater(behaviors.get('rotational_acc_lim'), 0.0)
 
-        # Consistency between controller, smoother, behavior
-        self.assertEqual(dwb.get('max_vel_x'), max_vel[0])
-        self.assertEqual(dwb.get('min_vel_x'), min_vel[0])
-        self.assertEqual(dwb.get('max_vel_theta'), max_vel[2])
-        self.assertEqual(dwb.get('max_vel_theta'), behaviors.get('max_rotational_vel'))
-        self.assertEqual(dwb.get('acc_lim_x'), max_accel[0])
-        self.assertEqual(dwb.get('acc_lim_theta'), max_accel[2])
-        self.assertEqual(dwb.get('acc_lim_theta'), behaviors.get('rotational_acc_lim'))
-        self.assertEqual(dwb.get('decel_lim_x'), max_decel[0])
-        self.assertEqual(dwb.get('decel_lim_theta'), max_decel[2])
+        # Consistency between RPP, smoother and recovery Spin.
+        self.assertEqual(rpp['desired_linear_vel'], max_vel[0])
+        self.assertEqual(rpp['rotate_to_heading_angular_vel'], max_vel[2])
+        self.assertEqual(max_vel[2], behaviors['max_rotational_vel'])
+        self.assertEqual(rpp['max_angular_accel'], max_accel[2])
+        self.assertEqual(max_accel[2], behaviors['rotational_acc_lim'])
+
+        planner = params.get('planner_server', {}).get('ros__parameters', {})
+        self.assertEqual(planner.get('expected_planner_frequency'), 2.0)
+        self.assertEqual(global_cm_p.get('update_frequency'), 2.0)
+        self.assertEqual(global_cm_p.get('publish_frequency'), 2.0)
 
         # Check plugin validity (must be strings)
-        self.assertTrue(isinstance(dwb.get('plugin'), str))
+        self.assertTrue(isinstance(rpp.get('plugin'), str))
 
     def test_baseline(self):
         self._validate_params(self.params)
 
-    def test_hardware_validated_motion_envelope(self):
+    def test_operator_approved_motion_envelope(self):
         controller = self.params['controller_server']['ros__parameters']
-        dwb = controller['FollowPath']
+        rpp = controller['FollowPath']
         goal_checker = controller['general_goal_checker']
         progress_checker = controller['progress_checker']
         behaviors = self.params['behavior_server']['ros__parameters']
         smoother = self.params['velocity_smoother']['ros__parameters']
 
-        self.assertEqual(dwb['min_speed_xy'], 0.05)
-        self.assertEqual(dwb['max_vel_x'], 0.08)
-        self.assertEqual(dwb['max_speed_xy'], 0.08)
-        self.assertEqual(dwb['min_speed_theta'], 0.4)
-        self.assertEqual(dwb['max_vel_theta'], 0.5)
-        self.assertEqual(dwb['trans_stopped_velocity'], 0.03)
-        self.assertEqual(dwb['xy_goal_tolerance'], 0.08)
+        self.assertEqual(controller['controller_frequency'], 10.0)
+        self.assertEqual(rpp['desired_linear_vel'], 0.10)
+        self.assertEqual(rpp['rotate_to_heading_angular_vel'], 1.0)
+        self.assertEqual(rpp['rotate_to_heading_min_angle'], 0.174533)
+        self.assertEqual(rpp['lookahead_dist'], 0.20)
+        self.assertEqual(rpp['min_lookahead_dist'], 0.15)
+        self.assertEqual(rpp['max_lookahead_dist'], 0.25)
+        self.assertIs(rpp['use_collision_detection'], True)
+        self.assertIs(rpp['allow_reversing'], False)
         self.assertEqual(goal_checker['xy_goal_tolerance'], 0.08)
         self.assertEqual(goal_checker['yaw_goal_tolerance'], 0.15)
         self.assertEqual(progress_checker['required_movement_radius'], 0.05)
-        self.assertEqual(behaviors['min_rotational_vel'], 0.4)
-        self.assertEqual(behaviors['max_rotational_vel'], 0.5)
-        self.assertEqual(smoother['max_velocity'], [0.08, 0.0, 0.5])
-        self.assertEqual(smoother['min_velocity'], [0.0, 0.0, -0.5])
+        self.assertEqual(progress_checker['movement_time_allowance'], 25.0)
+        self.assertEqual(behaviors['min_rotational_vel'], 0.8)
+        self.assertEqual(behaviors['max_rotational_vel'], 1.0)
+        self.assertEqual(smoother['max_velocity'], [0.10, 0.0, 1.0])
+        self.assertEqual(smoother['min_velocity'], [0.0, 0.0, -1.0])
 
     def test_qa10_mutations(self):
         import copy
 
-        # QA10-2: max_speed_xy violated
+        # RPP: desired speed outside the velocity smoother envelope.
         p = copy.deepcopy(self.params)
-        p['controller_server']['ros__parameters']['FollowPath']['max_speed_xy'] = 0.0
-        p['controller_server']['ros__parameters']['FollowPath']['min_speed_xy'] = 1.0
+        p['controller_server']['ros__parameters']['FollowPath']['desired_linear_vel'] = 1.0
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
-        # QA10-2: min_speed_theta violated
+        # RPP: collision detection must remain enabled.
         p = copy.deepcopy(self.params)
-        p['controller_server']['ros__parameters']['FollowPath']['min_speed_theta'] = 999.0
+        p['controller_server']['ros__parameters']['FollowPath']['use_collision_detection'] = False
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
@@ -238,15 +251,15 @@ class TestNav2Params(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
-        # 1. Negative DWB tolerance (QA9)
+        # 1. Negative RPP lookahead
         p = copy.deepcopy(self.params)
-        p['controller_server']['ros__parameters']['FollowPath']['xy_goal_tolerance'] = -0.1
+        p['controller_server']['ros__parameters']['FollowPath']['lookahead_dist'] = -0.1
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
-        # 2. NaN DWB tolerance (QA9)
+        # 2. NaN RPP lookahead
         p = copy.deepcopy(self.params)
-        p['controller_server']['ros__parameters']['FollowPath']['xy_goal_tolerance'] = float('nan')
+        p['controller_server']['ros__parameters']['FollowPath']['lookahead_dist'] = float('nan')
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
@@ -275,9 +288,10 @@ class TestNav2Params(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
-        # 7. threshold > max speed (QA8)
+        # 7. minimum approach velocity > desired velocity
         p = copy.deepcopy(self.params)
-        p['controller_server']['ros__parameters']['FollowPath']['trans_stopped_velocity'] = 999.0
+        p['controller_server']['ros__parameters']['FollowPath'][
+            'min_approach_linear_velocity'] = 999.0
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
@@ -287,17 +301,16 @@ class TestNav2Params(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
-        # 9. negative shared acceleration (QA8)
+        # 9. negative RPP angular acceleration
         p = copy.deepcopy(self.params)
-        p['controller_server']['ros__parameters']['FollowPath']['acc_lim_x'] = -1.0
-        p['velocity_smoother']['ros__parameters']['max_accel'][0] = -1.0
+        p['controller_server']['ros__parameters']['FollowPath']['max_angular_accel'] = -1.0
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
-        # 10. x-acceleration mismatch (QA8)
+        # 10. angular acceleration mismatch
         p = copy.deepcopy(self.params)
-        p['controller_server']['ros__parameters']['FollowPath']['acc_lim_x'] = 1.0
-        p['velocity_smoother']['ros__parameters']['max_accel'][0] = 2.0
+        p['controller_server']['ros__parameters']['FollowPath']['max_angular_accel'] = 1.0
+        p['velocity_smoother']['ros__parameters']['max_accel'][2] = 2.0
         with self.assertRaises(AssertionError):
             self._validate_params(p)
 
@@ -315,6 +328,10 @@ class TestNav2Params(unittest.TestCase):
             root = ET.fromstring(content)
             for elem in root.iter():
                 all_tags.add(elem.tag)
+                if elem.tag == 'RateController':
+                    self.assertEqual(float(elem.attrib['hz']), 2.0)
+                if elem.tag == 'Wait':
+                    self.assertEqual(float(elem.attrib['wait_duration']), 2.0)
 
         # 2. Builtin and custom tags check
         builtins = {'root', 'BehaviorTree', 'ReactiveSequence', 'ReactiveFallback', 'Sequence'}
@@ -475,8 +492,14 @@ class TestNav2Params(unittest.TestCase):
         )
         self.assertEqual(
             controller.get('FollowPath', {}).get('plugin'),
-            'dwb_core::DWBLocalPlanner'
+            'nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController'
         )
+
+        from ament_index_python.packages import get_package_prefix
+        rpp_prefix = get_package_prefix('nav2_regulated_pure_pursuit_controller')
+        rpp_library = os.path.join(
+            rpp_prefix, 'lib', 'libnav2_regulated_pure_pursuit_controller.so')
+        self.assertTrue(os.path.exists(rpp_library), rpp_library)
 
         # planner
         planner = self.params.get('planner_server', {}).get('ros__parameters', {})
@@ -507,21 +530,10 @@ class TestNav2Params(unittest.TestCase):
         map_server = self.params.get('map_server', {}).get('ros__parameters', {})
         self.assertEqual(map_server.get('yaml_filename'), '')
 
-    def test_consistency_stopped_threshold(self):
-        controller = self.params.get('controller_server', {}).get('ros__parameters', {})
-        dwb = controller.get('FollowPath', {})
-        trans_stopped = dwb.get('trans_stopped_velocity')
-
-        # rot_stopped_velocity removed because it is not consumed by DWBLocalPlanner
-        self.assertNotIn('rot_stopped_velocity', dwb)
-        self.assertTrue(isinstance(trans_stopped, float))
-
+    def test_velocity_smoother_deadband(self):
         smoother = self.params.get('velocity_smoother', {}).get('ros__parameters', {})
         deadband = smoother.get('deadband_velocity')
-        self.assertIsNotNone(deadband)
-
-        # Deadband must be <= stopped threshold to allow the controller to declare goal reached
-        self.assertLessEqual(deadband[0], trans_stopped)
+        self.assertEqual(deadband, [0.0, 0.0, 0.0])
 
 
 if __name__ == '__main__':

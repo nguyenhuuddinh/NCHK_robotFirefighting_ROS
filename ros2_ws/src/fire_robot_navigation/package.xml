@@ -25,12 +25,8 @@
   <exec_depend>nav2_lifecycle_manager</exec_depend>
 
   <!-- Direct Plugin Runtime Dependencies (QA2-5) -->
-  <exec_depend>dwb_core</exec_depend>
-  <!-- Reason: using DWBLocalPlanner -->
-  <exec_depend>dwb_critics</exec_depend>
-  <!-- Reason: using RotateToGoal, Oscillation, BaseObstacle, GoalAlign, PathAlign, PathDist, GoalDist critics -->
-  <exec_depend>dwb_plugins</exec_depend>
-  <!-- Reason: using StandardTrajectoryGenerator in DWB -->
+  <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
+  <!-- Reason: active FollowPath plugin; DWB and Rotation Shim are historical only -->
   <exec_depend>nav2_navfn_planner</exec_depend>
   <!-- Reason: using NavfnPlanner -->
   <exec_depend>nav2_costmap_2d</exec_depend>

@@ -3293,8 +3293,10 @@ def test_first_state_grace_is_deterministic(rclpy_init):
         node.next_reconnect_mono = clock() + 0.5
         node.latest_state = None
 
+        grace = getattr(node, 'first_state_timeout_s', 8.0)
+        assert grace == pytest.approx(8.0)
         baseline_calls = clock.get_call_count()
-        clock.step(1.999)
+        clock.step(grace - 0.001)
         wait_until(lambda: clock.get_call_count()
                    > baseline_calls, timeout=2.0)
         assert clock.get_call_count() > baseline_calls
@@ -3648,7 +3650,7 @@ def test_no_first_state_progressive_backoff_is_bounded(rclpy_init):
         expected_seq = [0.1, 0.15, 0.225, 0.3375, 0.50625, 0.759375, 1.0, 1.0]
 
         for i, expected_backoff in enumerate(expected_seq):
-            clock.step(2.1)
+            clock.step(node.first_state_timeout_s + 0.1)
 
             def chk_backoff():
                 return getattr(node, '_session_state', '') == 'BACKOFF'
@@ -4712,3 +4714,22 @@ def test_pi_runtime_uses_stable_esp32_serial_path():
 
     assert stable_path in launch_text.replace("'\n            '", '')
     assert stable_path in params_text
+
+
+def test_pi_runtime_loads_odom_tf_latency_compensation():
+    """Keep the bounded TF lead active in the installed Pi launch contract."""
+    from pathlib import Path
+    import yaml
+
+    package_root = Path(__file__).resolve().parents[1]
+    launch_text = (package_root / 'launch' / 'robot.launch.py').read_text()
+    params_file = package_root / 'config' / 'pi_params.yaml'
+    params = yaml.safe_load(params_file.read_text())
+    odom_tf = params['odom_to_tf_broadcaster']['ros__parameters']
+
+    assert "pi_params_file = os.path.join" in launch_text
+    assert "pi_params_file," in launch_text
+    assert odom_tf['tf_publish_rate_hz'] == 20.0
+    assert odom_tf['odom_stale_timeout_ms'] == 300
+    assert odom_tf['tf_stamp_source'] == 'pi_receive_time'
+    assert odom_tf['tf_stamp_offset_ms'] == -100

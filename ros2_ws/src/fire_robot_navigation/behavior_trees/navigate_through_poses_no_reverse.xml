@@ -2,7 +2,7 @@
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="6" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
-        <RateController hz="0.333">
+        <RateController hz="2.0">
           <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
             <ReactiveSequence>
               <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7"/>
@@ -24,7 +24,7 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
           <Spin spin_dist="1.57"/>
-          <Wait wait_duration="5"/>
+          <Wait wait_duration="2"/>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

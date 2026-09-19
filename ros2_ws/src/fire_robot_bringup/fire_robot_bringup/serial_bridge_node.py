@@ -32,9 +32,17 @@ class SerialBridgeNode(Node):
 
         self.declare_parameter('serial_port', DEFAULT_SERIAL_PORT)
         self.declare_parameter('serial_baudrate', 115200)
+        self.declare_parameter('first_state_timeout_s', 8.0)
 
         self.port = self.get_parameter('serial_port').value
         self.baudrate = self.get_parameter('serial_baudrate').value
+        self.first_state_timeout_s = float(
+            self.get_parameter('first_state_timeout_s').value)
+        if (not math.isfinite(self.first_state_timeout_s)
+                or self.first_state_timeout_s <= 0.0):
+            self.get_logger().warning(
+                'Invalid first_state_timeout_s; falling back to 8.0 s')
+            self.first_state_timeout_s = 8.0
 
         self.serial_cls = serial_cls
         if self.serial_cls is None:
@@ -737,7 +745,8 @@ class SerialBridgeNode(Node):
                     self.ser is exact_handle and self.session_epoch == gen)
                 current_state = self._session_state
                 if (same_session and current_state == 'WAIT_FIRST_STATE'
-                        and now - self.session_started_mono > 2.0):
+                        and now - self.session_started_mono
+                        > self.first_state_timeout_s):
                     self.first_state_timeout_count += 1
                     timeout_reason = 'first_state:Timeout'
                 elif (same_session and current_state == 'HEALTHY'

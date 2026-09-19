@@ -45,6 +45,7 @@ def generate_launch_description():
     bringup_dir = get_package_share_directory('fire_robot_bringup')
     description_dir = get_package_share_directory('fire_robot_description')
     safety_dir = get_package_share_directory('fire_robot_safety')
+    pi_params_file = os.path.join(bringup_dir, 'config', 'pi_params.yaml')
 
     # ── Launch Arguments (không hardcode, theo ros2_engineer.md 5.3) ──
     use_sim_time_arg = DeclareLaunchArgument(
@@ -153,6 +154,10 @@ def generate_launch_description():
         executable='odom_to_tf_broadcaster',
         name='odom_to_tf_broadcaster',
         output='screen',
+        parameters=[
+            pi_params_file,
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+        ],
     )
 
     return LaunchDescription([

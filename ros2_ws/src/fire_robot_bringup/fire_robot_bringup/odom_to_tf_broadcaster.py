@@ -22,14 +22,15 @@ Thiết kế Timer-based + Stale Guard (Bug 13 fix):
     - "odom_header": Dùng msg.header.stamp từ ESP32 (cần time sync tốt)
     - "pi_now": Giữ hành vi cũ (now() mỗi timer tick)
 
-    Thêm tf_stamp_offset_ms cho phép backdate nhẹ nếu WiFi delay /scan.
+    Thêm tf_stamp_offset_ms để dịch timestamp nhẹ. Giá trị dương backdate TF;
+    giá trị âm lead TF để bù khoảng trễ ngắn giữa odom 10 Hz và lookup Nav2.
 
 ROS 2 Parameters:
     tf_publish_rate_hz    : Tần số phát TF (default: 20.0 Hz)
     odom_stale_timeout_ms : Thời gian tối đa /odom được coi là tươi (default: 300 ms)
     odom_qos_depth        : Depth của QoS subscriber /odom (default: 10)
     tf_stamp_source       : "pi_receive_time" | "odom_header" | "pi_now"
-    tf_stamp_offset_ms    : Backdate TF stamp (ms), dương = lùi thời gian (default: 0)
+    tf_stamp_offset_ms    : Dịch TF stamp (ms), dương=lùi, âm=tiến (default: 0)
 """
 
 import signal
@@ -79,7 +80,7 @@ class OdomToTfBroadcaster(Node):
             )
             self._stamp_source = self.STAMP_PI_RECEIVE
 
-        # tf_stamp_offset_ms: dương = lùi thời gian
+        # tf_stamp_offset_ms: dương = lùi, âm = tiến timestamp
         self._stamp_offset_ns = int(
             self.get_parameter('tf_stamp_offset_ms').value * 1e6
         )

@@ -6,6 +6,10 @@ amcl:
     global_frame_id: "map"
     odom_frame_id: "odom"
     scan_topic: /scan
+    # Robot chay cham (0.08-0.10 m/s), nen default 0.25 m cua AMCL se lam
+    # laser/pose cap nhat muon. Cap nhat moi 5 cm hoac ~2.9 do quay.
+    update_min_d: 0.05
+    update_min_a: 0.05
 
 bt_navigator:
   ros__parameters:
@@ -64,17 +68,19 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 controller_server:
   ros__parameters:
     use_sim_time: True
-    controller_frequency: 20.0
+    # Telemetry odom/IMU thuc te 10 Hz. Chay controller 10 Hz tranh lap lai
+    # pose cu va giam "Control loop missed" khi laptop xu ly costmap/RViz.
+    controller_frequency: 10.0
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
 
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      # HW gate 2026-09-07: xe chay on dinh tu 0.05 m/s; 5 cm trong 10 giay
-      # phan anh dung tien trien cua goal ngan va tranh false-stuck o toc do thap.
+      # SimpleProgressChecker chi do dich chuyen XY, khong tinh tien trien quay.
+      # Cho phep 25 giay de xe quay 180 do/recovery truoc khi ket luan bi ket.
       required_movement_radius: 0.05
-      movement_time_allowance: 10.0
+      movement_time_allowance: 25.0
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -82,46 +88,37 @@ controller_server:
       xy_goal_tolerance: 0.08
       yaw_goal_tolerance: 0.15
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: True
-      # Seed Source: nav2_bringup/params/nav2_params.yaml (Humble 1.1.20)
-      # HW gate 2026-09-07: x=0.05 m/s chay duoc; Nav2 goal da chay that.
-      min_vel_x: 0.0
-      min_vel_y: 0.0
-      max_vel_x: 0.08
-      max_vel_y: 0.0
-      max_vel_theta: 0.5
-      min_speed_xy: 0.05
-      max_speed_xy: 0.08
-      min_speed_theta: 0.4
-      acc_lim_x: 2.5
-      acc_lim_y: 0.0
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.5
-      decel_lim_y: 0.0
-      decel_lim_theta: -3.2
-      vx_samples: 20
-      vy_samples: 1
-      vtheta_samples: 20
-      sim_time: 1.7
-      linear_granularity: 0.05
-      angular_granularity: 0.025
+      # RPP bam mot carrot tren global path, phu hop xe vi sai toc do thap va
+      # nhe hon DWB. Goal phia sau se quay tai cho; tuyet doi khong chay lui.
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.10
+      lookahead_dist: 0.20
+      min_lookahead_dist: 0.15
+      max_lookahead_dist: 0.25
+      lookahead_time: 2.0
+      use_velocity_scaled_lookahead_dist: true
+      # Giam dan trong 20 cm cuoi nhung khong thap hon nguong xe da chay duoc.
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.20
+      # Giam toc tai cua gap/vat can va du doan va cham toi carrot.
+      use_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 0.25
+      regulated_linear_scaling_min_speed: 0.05
+      use_cost_regulated_linear_velocity_scaling: true
+      cost_scaling_dist: 0.30
+      cost_scaling_gain: 1.0
+      inflation_cost_scaling_factor: 3.0
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      # Quay tai cho khi carrot lech tren 10 do; quay tiep den khi duoi nguong.
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.174533
+      rotate_to_heading_angular_vel: 1.0
+      max_angular_accel: 3.2
       transform_tolerance: 0.2
-      xy_goal_tolerance: 0.08
-      trans_stopped_velocity: 0.03
-      short_circuit_trajectory_evaluation: True
-      stateful: True
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 32.0
-      GoalDist.scale: 24.0
-      RotateToGoal.scale: 32.0
-      RotateToGoal.slowing_factor: 5.0
-      RotateToGoal.lookahead_time: -1.0
+      allow_reversing: false
+      max_robot_pose_search_dist: 3.0
+      use_interpolation: true
 
 local_costmap:
   local_costmap:
@@ -135,16 +132,15 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      # Derivation from full modeled URDF projection (fire_robot_description):
-      # - Chassis: 0.255x0.150 m. Modeled max radial extent = 0.1479 m.
-      # - Wheels: X=0.101, Y=0.103. Radial extent = 0.144257 m.
-      # - Pitched-Camera: Modeled max radial extent = 0.144003 m.
-      # - Lidar: Max X = 0.129 m. Extent = 0.129 m.
-      # Modeled max radial extent is Chassis corner (0.1479 m).
-      # Setting robot_radius to 0.17 m to provide a ~2.2 cm reserve on the modeled max.
-      # Note: This reserve does not assert coverage for unmeasured physical overhangs.
-      # (UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD)
-      robot_radius: 0.17
+      # Measured 2026-09-17, coordinates relative to base_link:
+      # - chassis half-size: X=0.1275 m, Y=0.0750 m;
+      # - wheel centers: X=+/-0.0675 m, Y=+/-0.0865 m;
+      # - wheel radius=0.034 m, width=0.027 m -> wheel outer bounds
+      #   X=+/-0.1015 m, Y=+/-0.1000 m.
+      # Convex hull preserves the long/narrow body instead of reserving a
+      # 0.17 m circle at both sides. Explicit 15 mm padding is still applied.
+      footprint: "[[0.1275, 0.0750], [0.1015, 0.1000], [-0.1015, 0.1000], [-0.1275, 0.0750], [-0.1275, -0.0750], [-0.1015, -0.1000], [0.1015, -0.1000], [0.1275, -0.0750]]"
+      footprint_padding: 0.015
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         # Seed Source: nav2_bringup/params/nav2_params.yaml (Humble 1.1.20)
@@ -176,14 +172,16 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 1.0
-      publish_frequency: 1.0
+      # Scan thuc te ~5.2 Hz. 2 Hz giam thoi gian phan ung voi vat can dong
+      # ma van de du tai xu ly tren laptop.
+      update_frequency: 2.0
+      publish_frequency: 2.0
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: True
-      # See derivation in local_costmap for URDF projection and unvalidated physical overhangs.
-      # (UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD)
-      robot_radius: 0.17
+      # Keep the global collision model identical to the measured local model.
+      footprint: "[[0.1275, 0.0750], [0.1015, 0.1000], [-0.1015, 0.1000], [-0.1275, 0.0750], [-0.1275, -0.0750], [-0.1015, -0.1000], [0.1015, -0.1000], [0.1275, -0.0750]]"
+      footprint_padding: 0.015
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
@@ -218,7 +216,9 @@ map_server:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 20.0
+    # Khop voi RateController 2 Hz trong behavior tree; day la tan so ky
+    # vong cua planner, khong phai controller_frequency 10 Hz.
+    expected_planner_frequency: 2.0
     use_sim_time: True
     planner_plugins: ["GridBased"]
     GridBased:
@@ -253,9 +253,9 @@ behavior_server:
     use_sim_time: true
     simulate_ahead_time: 2.0
     # Seed Source: nav2_bringup/params/nav2_params.yaml (Humble 1.1.20)
-    # HW gate 2026-09-07: Spin +/-0.35 rad thanh cong va dung ve zero.
-    max_rotational_vel: 0.5
-    min_rotational_vel: 0.4
+    # Dong bo recovery Spin voi envelope quay da duoc operator chap thuan.
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.8
     rotational_acc_lim: 3.2 # (UNVALIDATED STATIC-ONLY, ACTIVE MOTOR GATE HOLD)
 
 velocity_smoother:
@@ -265,9 +265,9 @@ velocity_smoother:
     scale_velocities: False
     feedback: "OPEN_LOOP"
     # Seed Source: nav2_bringup/params/nav2_params.yaml (Humble 1.1.20)
-    # HW gate 2026-09-07: dong bo voi envelope DWB da test tren xe that.
-    max_velocity: [0.08, 0.0, 0.5]
-    min_velocity: [0.0, 0.0, -0.5]
+    # Dong bo voi envelope DWB: tien 0.08-0.10 m/s, quay 0.8-1.0 rad/s.
+    max_velocity: [0.10, 0.0, 1.0]
+    min_velocity: [0.0, 0.0, -1.0]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: "/odom"

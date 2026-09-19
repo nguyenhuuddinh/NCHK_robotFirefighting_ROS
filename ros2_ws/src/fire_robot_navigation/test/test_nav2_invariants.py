@@ -1,9 +1,11 @@
 from launch_ros.actions import Node
+import ast
 import os
 import unittest
 import xml.etree.ElementTree as ET
 
 import importlib.util
+import yaml
 
 pkg_share = os.path.join(os.path.dirname(__file__), '..')
 launch_file = os.path.join(pkg_share, 'launch', 'nav2.launch.py')
@@ -14,6 +16,35 @@ spec.loader.exec_module(nav2_launch)
 
 
 class TestNav2Invariants(unittest.TestCase):
+    # Map scans are operator data and are not required in a code-only clone.
+    # When present locally, the installed-asset test permits these known maps.
+    optional_map_paths = {
+        'maps/fire_room_9_10_2026.pgm',
+        'maps/fire_room_9_10_2026.yaml',
+        'maps/fire_robot_map_2026_09_13.pgm',
+        'maps/fire_robot_map_2026_09_13.yaml',
+    }
+
+    def test_measured_polygon_footprint(self):
+        params_path = os.path.join(pkg_share, 'config', 'nav2_params.yaml')
+        with open(params_path, 'r') as stream:
+            params = yaml.safe_load(stream)
+
+        expected = [
+            [0.1275, 0.0750], [0.1015, 0.1000],
+            [-0.1015, 0.1000], [-0.1275, 0.0750],
+            [-0.1275, -0.0750], [-0.1015, -0.1000],
+            [0.1015, -0.1000], [0.1275, -0.0750],
+        ]
+
+        for costmap_name in ['local_costmap', 'global_costmap']:
+            costmap = params[costmap_name][costmap_name]['ros__parameters']
+            self.assertNotIn(
+                'robot_radius', costmap,
+                f'{costmap_name} must use the measured polygon, not a circle')
+            self.assertEqual(ast.literal_eval(costmap['footprint']), expected)
+            self.assertEqual(costmap['footprint_padding'], 0.015)
+
     def test_command_route(self):
         ld = nav2_launch.generate_launch_description()
         nodes = [e for e in ld.entities if isinstance(e, Node)]
@@ -94,11 +125,14 @@ class TestNav2Invariants(unittest.TestCase):
             'config/slam.rviz',
             'behavior_trees/navigate_to_pose_no_reverse.xml',
             'behavior_trees/navigate_through_poses_no_reverse.xml',
+            'NAV2_TUNING_GUIDE.md',
+            'NAV2_FUTURE_WORK.md',
             'package.xml'
         ]
         # Verify exact installed deliverables
         for p in installed_paths:
-            self.assertIn(p, expected_paths, f"Unexpected installed file: {p}")
+            self.assertIn(p, set(expected_paths) | self.optional_map_paths,
+                          f"Unexpected installed file: {p}")
         for expected in expected_paths:
             self.assertIn(
                 expected, installed_paths, f"Missing expected installed file: {expected}")
@@ -149,6 +183,8 @@ class TestNav2Invariants(unittest.TestCase):
             'config/slam.rviz',
             'behavior_trees/navigate_to_pose_no_reverse.xml',
             'behavior_trees/navigate_through_poses_no_reverse.xml',
+            'NAV2_TUNING_GUIDE.md',
+            'NAV2_FUTURE_WORK.md',
             'package.xml'
         ]
 

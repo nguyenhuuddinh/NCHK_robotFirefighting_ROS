@@ -38,7 +38,14 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
   PATTERN "*.pyc" EXCLUDE
   PATTERN "*.pyo" EXCLUDE
+  PATTERN ".gitkeep" EXCLUDE
   REGEX "(__pycache__)" EXCLUDE
+)
+
+install(FILES
+  NAV2_TUNING_GUIDE.md
+  NAV2_FUTURE_WORK.md
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()

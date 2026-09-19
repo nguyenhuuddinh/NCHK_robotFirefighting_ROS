@@ -9,6 +9,21 @@ from rclpy.signals import SignalHandlerOptions
 import pytest
 
 
+def test_pi_receive_stamp_supports_negative_offset_as_tf_lead():
+    """A -100 ms offset must lead the cached Pi receive stamp by 100 ms."""
+    from fire_robot_bringup.odom_to_tf_broadcaster import OdomToTfBroadcaster
+
+    node = object.__new__(OdomToTfBroadcaster)
+    node._stamp_source = node.STAMP_PI_RECEIVE
+    node._last_odom_time_ns = 1_000_000_000
+    node._stamp_offset_ns = -100_000_000
+
+    stamp = node._get_tf_stamp()
+
+    assert stamp.sec == 1
+    assert stamp.nanosec == 100_000_000
+
+
 def _run_subprocess_test(signal_to_send, iterations, multiple_signals=False):
     env = os.environ.copy()
     env['PYTHONUNBUFFERED'] = '1'

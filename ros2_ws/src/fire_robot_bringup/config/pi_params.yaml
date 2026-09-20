@@ -15,14 +15,14 @@ camsense_x1_node:
 # --- USB Camera ---
 # Node name: usb_cam (mặc định của package usb_cam)
 # Executable: usb_cam_node_exe
-# MJPEG trực tiếp, sau launch remap qua relay Best Effort lên /image_raw/compressed.
+# usb_cam xuất raw nội bộ Pi; image_transport nén JPEG rồi relay Best Effort.
 usb_cam:
   ros__parameters:
     video_device: "/dev/video0"
     image_width: 640
     image_height: 480
     framerate: 10.0               # Mức khởi đầu bảo thủ; đo WiFi + scan/odom/IMU trước khi tăng
-    pixel_format: "mjpeg"          # Driver gửi JPEG trực tiếp, không encode lại trên Pi
+    pixel_format: "yuyv2rgb"       # Hỗ trợ trên usb_cam 0.8.1; JPEG nén trên Pi
     io_method: "mmap"
     camera_name: "fire_robot_cam"
     frame_id: "camera_frame"       # Tham số usb_cam; khớp URDF (base_link → camera_frame)

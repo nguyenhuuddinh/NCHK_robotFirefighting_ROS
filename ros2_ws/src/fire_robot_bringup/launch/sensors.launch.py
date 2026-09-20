@@ -5,7 +5,8 @@ Chạy trên: 🟢 PI
 Topic output:
   - /scan                   (sensor_msgs/LaserScan)        — Best Effort qua scan_qos_relay
   - /scan_raw               (sensor_msgs/LaserScan)        — Reliable nội bộ Pi từ Camsense
-  - /image_raw/compressed_local (sensor_msgs/CompressedImage) — MJPEG trên Pi
+  - /camera_raw_local          (sensor_msgs/Image)           — raw nội bộ Pi
+  - /image_raw/compressed_local (sensor_msgs/CompressedImage) — JPEG nén trên Pi
   - /image_raw/compressed       (sensor_msgs/CompressedImage) — Best Effort qua WiFi
 
 [QA5 FIX] Driver Camsense publish /scan với QoS mặc định (Reliable).
@@ -60,14 +61,17 @@ def generate_launch_description():
 
     # ── USB Camera Node ──
     # Package: usb_cam (cài bằng: sudo apt install ros-humble-usb-cam)
-    # pixel_format=mjpeg: driver publish JPEG trực tiếp, không encode lại.
-    # Remap Reliable mặc định vào topic riêng; chỉ relay Best Effort đi WiFi.
+    # usb_cam 0.8.1 không hỗ trợ pixel_format=mjpeg; yuyv2rgb đã thử trên Pi.
+    # Raw chỉ dùng nội bộ; image_transport nén JPEG trước khi relay qua WiFi.
     usb_cam_node = Node(
         package='usb_cam',
         executable='usb_cam_node_exe',
         name='usb_cam',
         parameters=[pi_params_file],
-        remappings=[('image_raw/compressed', '/image_raw/compressed_local')],
+        remappings=[
+            ('image_raw', '/camera_raw_local'),
+            ('image_raw/compressed', '/image_raw/compressed_local'),
+        ],
         output='screen',
         condition=IfCondition(LaunchConfiguration('use_camera')),
     )

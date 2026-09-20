@@ -53,6 +53,7 @@ def test_camera_launch_has_fast_disable_switch():
          perform_substitutions(context, target))
         for source, target in camera_node._Node__remappings
     ]
+    assert ('image_raw', '/camera_raw_local') in remappings
     assert ('image_raw/compressed', '/image_raw/compressed_local') in remappings
 
 
@@ -78,15 +79,15 @@ def test_robot_launch_forwards_camera_switch():
     )
 
 
-def test_camera_starts_with_bounded_direct_mjpeg_stream():
-    """Không vô tình bật raw video hoặc nâng FPS khi test WiFi."""
+def test_camera_starts_with_bounded_local_jpeg_stream():
+    """Raw chỉ ở topic nội bộ; giữ FPS và ngân sách JPEG qua WiFi."""
     params = yaml.safe_load((PACKAGE_DIR / 'config' / 'pi_params.yaml').read_text())
     camera = params['usb_cam']['ros__parameters']
 
     assert camera['video_device'] == '/dev/video0'
     assert (camera['image_width'], camera['image_height']) == (640, 480)
     assert camera['framerate'] == 10.0
-    assert camera['pixel_format'] == 'mjpeg'
+    assert camera['pixel_format'] == 'yuyv2rgb'
     assert camera['frame_id'] == 'camera_frame'
     assert params['camera_qos_relay']['ros__parameters']['max_bytes_per_sec'] == 750000
 

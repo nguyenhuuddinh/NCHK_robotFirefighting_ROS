@@ -5,8 +5,8 @@ Chạy trên: 🟢 PI
 Topic output:
   - /scan                   (sensor_msgs/LaserScan)        — Best Effort qua scan_qos_relay
   - /scan_raw               (sensor_msgs/LaserScan)        — Reliable nội bộ Pi từ Camsense
-  - /image_raw              (sensor_msgs/Image)            — từ USB Camera
-  - /image_raw/compressed   (sensor_msgs/CompressedImage)  — tự động bởi image_transport
+  - /image_raw/compressed_local (sensor_msgs/CompressedImage) — MJPEG trên Pi
+  - /image_raw/compressed       (sensor_msgs/CompressedImage) — Best Effort qua WiFi
 
 [QA5 FIX] Driver Camsense publish /scan với QoS mặc định (Reliable).
     Reliable qua WiFi gây tích lũy retransmission delay → SLAM drop scan.
@@ -18,6 +18,9 @@ Tham số: Đọc từ config/pi_params.yaml, KHÔNG hardcode.
 
 import os
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -26,6 +29,12 @@ def generate_launch_description():
     # Đường dẫn đến file tham số
     bringup_dir = get_package_share_directory('fire_robot_bringup')
     pi_params_file = os.path.join(bringup_dir, 'config', 'pi_params.yaml')
+
+    use_camera_arg = DeclareLaunchArgument(
+        'use_camera',
+        default_value='true',
+        description='Bật USB camera; use_camera:=false để ngắt stream nếu WiFi nghẽn',
+    )
 
     # ── Camsense X1 Lidar Node ──
     # Package: camsense_x1 (clone từ GitHub)
@@ -51,19 +60,31 @@ def generate_launch_description():
 
     # ── USB Camera Node ──
     # Package: usb_cam (cài bằng: sudo apt install ros-humble-usb-cam)
-    # Publish: /image_raw (Image) + /image_raw/compressed (CompressedImage)
-    # image_transport tự động tạo topic /compressed khi usb_cam chạy
-    # usb_cam_node = Node(
-    #     package='usb_cam',
-    #     executable='usb_cam_node_exe',
-    #     name='usb_cam',
-    #     parameters=[pi_params_file],
-    #     output='screen',
-    # )
+    # pixel_format=mjpeg: driver publish JPEG trực tiếp, không encode lại.
+    # Remap Reliable mặc định vào topic riêng; chỉ relay Best Effort đi WiFi.
+    usb_cam_node = Node(
+        package='usb_cam',
+        executable='usb_cam_node_exe',
+        name='usb_cam',
+        parameters=[pi_params_file],
+        remappings=[('image_raw/compressed', '/image_raw/compressed_local')],
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('use_camera')),
+    )
+
+    camera_qos_relay_node = Node(
+        package='fire_robot_bringup',
+        executable='camera_qos_relay',
+        name='camera_qos_relay',
+        parameters=[pi_params_file],
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('use_camera')),
+    )
 
     return LaunchDescription([
+        use_camera_arg,
         camsense_x1_node,
         scan_qos_relay_node,
-        # Tạm thời TẮT camera khi chạy SLAM để tránh nghẽn băng thông WiFi
-        # usb_cam_node,
+        usb_cam_node,
+        camera_qos_relay_node,
     ])

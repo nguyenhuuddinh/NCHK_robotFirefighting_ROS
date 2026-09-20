@@ -6,7 +6,7 @@ Lệnh:     ros2 launch fire_robot_bringup robot.launch.py
 
 Khởi chạy toàn bộ stack trên Pi bằng 1 lệnh duy nhất:
     1. fire_robot_description  → robot_state_publisher (TF tree: base_link → sensor frames)
-    2. sensors.launch.py       → Camsense X1 Lidar (/scan_raw → /scan qua relay)
+    2. sensors.launch.py       → Camsense X1 Lidar + USB camera MJPEG
     3. serial_bridge_node      → Cầu nối Raw Serial V2 (ESP32-S3 ↔ ROS 2)
     4. safety.launch.py        → Safety Command Gate (/cmd_vel_raw → /cmd_vel)
     5. dashboard.launch.py     → Rosbridge WebSocket (Web Dashboard)
@@ -14,6 +14,7 @@ Khởi chạy toàn bộ stack trên Pi bằng 1 lệnh duy nhất:
 
 Arguments (theo ros2_engineer.md Section 7.1):
     - use_sim_time           : false (mặc định, Pi chạy phần cứng thực)
+    - use_camera             : true (có thể tắt khi WiFi nghẽn)
     - serial_port            : /dev/serial/by-id/usb-Espressif_...-if00
     - serial_baudrate        : 115200
     - cmd_vel_input_topic    : /cmd_vel_raw
@@ -52,6 +53,12 @@ def generate_launch_description():
         'use_sim_time',
         default_value='false',
         description='Dùng sim time (false cho phần cứng thực)'
+    )
+
+    use_camera_arg = DeclareLaunchArgument(
+        'use_camera',
+        default_value='true',
+        description='Bật USB camera; use_camera:=false nếu ảnh gây nghẽn WiFi'
     )
 
     serial_port_arg = DeclareLaunchArgument(
@@ -111,6 +118,9 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(bringup_dir, 'launch', 'sensors.launch.py')
         ),
+        launch_arguments={
+            'use_camera': LaunchConfiguration('use_camera'),
+        }.items(),
     )
 
     # ── 3. Serial Bridge Node (ESP32-S3 ↔ ROS 2 via Raw Serial V2) ──
@@ -163,6 +173,7 @@ def generate_launch_description():
     return LaunchDescription([
         # Arguments
         use_sim_time_arg,
+        use_camera_arg,
         serial_port_arg,
         serial_baudrate_arg,
         cmd_vel_input_arg,

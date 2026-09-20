@@ -15,18 +15,22 @@ camsense_x1_node:
 # --- USB Camera ---
 # Node name: usb_cam (mặc định của package usb_cam)
 # Executable: usb_cam_node_exe
-# Publish: /image_raw (sensor_msgs/Image)
-#          /image_raw/compressed (sensor_msgs/CompressedImage) — qua image_transport
+# MJPEG trực tiếp, sau launch remap qua relay Best Effort lên /image_raw/compressed.
 usb_cam:
   ros__parameters:
     video_device: "/dev/video0"
     image_width: 640
     image_height: 480
-    framerate: 15.0               # PHẢI là float, không phải int
-    pixel_format: "mjpeg"          # [Finding 5 FIX] Dùng mjpeg để giảm băng thông WiFi/CPU
+    framerate: 10.0               # Mức khởi đầu bảo thủ; đo WiFi + scan/odom/IMU trước khi tăng
+    pixel_format: "mjpeg"          # Driver gửi JPEG trực tiếp, không encode lại trên Pi
     io_method: "mmap"
     camera_name: "fire_robot_cam"
-    camera_frame_id: "camera_frame"  # Khớp với URDF (base_link → camera_frame)
+    frame_id: "camera_frame"       # Tham số usb_cam; khớp URDF (base_link → camera_frame)
+
+# Chỉ giới hạn ảnh qua WiFi; 750 kB/s payload trung bình, bỏ frame dư thay vì backlog.
+camera_qos_relay:
+  ros__parameters:
+    max_bytes_per_sec: 750000
 
 # --- Serial Bridge Node (Raw Serial V2) ---
 serial_bridge_node:

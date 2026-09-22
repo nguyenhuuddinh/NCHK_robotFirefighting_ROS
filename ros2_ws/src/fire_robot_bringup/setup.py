@@ -33,6 +33,7 @@ setup(
             'odom_to_tf_broadcaster = fire_robot_bringup.odom_to_tf_broadcaster:main',
             'scan_qos_relay = fire_robot_bringup.scan_qos_relay:main',
             'camera_qos_relay = fire_robot_bringup.camera_qos_relay:main',
+            'native_mjpeg_camera = fire_robot_bringup.native_mjpeg_camera:main',
             'camera_diagnostics = fire_robot_bringup.camera_diagnostics:main',
             'serial_bridge_node = fire_robot_bringup.serial_bridge_node:main',
         ],

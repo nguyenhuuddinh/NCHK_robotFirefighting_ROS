@@ -17,16 +17,29 @@ def test_image_stats_do_not_keep_payloads():
     msg = CompressedImage()
     msg.header.frame_id = 'camera_frame'
     msg.header.stamp.sec = 42
-    msg.data = [1, 2, 3, 4]
-    stats.record(msg, now=1.0)
-    stats.record(msg, now=1.2)
+    msg.data = [0xff, 0xd8, 3, 4, 0xff, 0xd9]
+    stats.record(msg, now=1.0, wall_time=42.1)
+    stats.record(msg, now=1.2, wall_time=42.2)
 
     summary = stats.summary(2.0)
     assert 'frames=2' in summary
     assert 'rx_hz=5.00' in summary
     assert 'max_gap_s=0.200' in summary
-    assert 'avg_jpeg_bytes=4' in summary
-    assert 'payload_Bps=4' in summary
+    assert 'avg_jpeg_bytes=6' in summary
+    assert 'payload_Bps=6' in summary
+    assert 'valid_jpeg=2/2' in summary
+    assert 'wall_age_ms_avg=150.0' in summary
+    assert 'wall_age_ms_max=200.0' in summary
     assert 'frame_id=camera_frame' in summary
     assert 'last_stamp=42.000000000' in summary
     assert not hasattr(stats, 'messages')
+
+
+def test_invalid_jpeg_is_counted_without_retaining_payload():
+    """A malformed camera message remains visible in the summary."""
+    stats = TopicStats(image=True)
+    msg = CompressedImage()
+    msg.data = [0xff, 0xd8, 1, 2]
+    stats.record(msg, now=1.0)
+
+    assert 'valid_jpeg=0/1' in stats.summary(1.0)

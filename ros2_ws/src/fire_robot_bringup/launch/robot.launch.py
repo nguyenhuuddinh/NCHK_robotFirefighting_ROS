@@ -15,6 +15,9 @@ Khởi chạy toàn bộ stack trên Pi bằng 1 lệnh duy nhất:
 Arguments (theo ros2_engineer.md Section 7.1):
     - use_sim_time           : false (mặc định, Pi chạy phần cứng thực)
     - use_camera             : true (có thể tắt khi WiFi nghẽn)
+    - camera_backend         : native_mjpeg (usb_cam là fallback)
+    - camera_fps             : 15 (5/10/15/20/25/30)
+    - camera_max_bytes_per_sec: 750000 (drop frame thay vì backlog)
     - serial_port            : /dev/serial/by-id/usb-Espressif_...-if00
     - serial_baudrate        : 115200
     - cmd_vel_input_topic    : /cmd_vel_raw
@@ -59,6 +62,26 @@ def generate_launch_description():
         'use_camera',
         default_value='true',
         description='Bật USB camera; use_camera:=false nếu ảnh gây nghẽn WiFi'
+    )
+
+    camera_backend_arg = DeclareLaunchArgument(
+        'camera_backend',
+        default_value='native_mjpeg',
+        choices=['native_mjpeg', 'usb_cam'],
+        description='Backend camera: native_mjpeg hoặc usb_cam fallback'
+    )
+
+    camera_fps_arg = DeclareLaunchArgument(
+        'camera_fps',
+        default_value='15',
+        choices=['5', '10', '15', '20', '25', '30'],
+        description='FPS camera; 15 đã đạt gate LAN và WiFi AP'
+    )
+
+    camera_budget_arg = DeclareLaunchArgument(
+        'camera_max_bytes_per_sec',
+        default_value='750000',
+        description='Giới hạn byte/s cho JPEG qua mạng'
     )
 
     serial_port_arg = DeclareLaunchArgument(
@@ -120,6 +143,10 @@ def generate_launch_description():
         ),
         launch_arguments={
             'use_camera': LaunchConfiguration('use_camera'),
+            'camera_backend': LaunchConfiguration('camera_backend'),
+            'camera_fps': LaunchConfiguration('camera_fps'),
+            'camera_max_bytes_per_sec': LaunchConfiguration(
+                'camera_max_bytes_per_sec'),
         }.items(),
     )
 
@@ -174,6 +201,9 @@ def generate_launch_description():
         # Arguments
         use_sim_time_arg,
         use_camera_arg,
+        camera_backend_arg,
+        camera_fps_arg,
+        camera_budget_arg,
         serial_port_arg,
         serial_baudrate_arg,
         cmd_vel_input_arg,

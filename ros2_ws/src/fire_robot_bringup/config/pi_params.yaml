@@ -12,7 +12,24 @@ camsense_x1_node:
     baud: 115200
     angle_offset: 180             # Hiệu chỉnh góc (degree, right hand)
 
-# --- USB Camera ---
+# --- Native MJPEG Camera (mặc định) ---
+# Logitech C210 xuất JPEG ngay từ webcam; Pi không decode/re-encode ảnh.
+native_mjpeg_camera:
+  ros__parameters:
+    video_device: "/dev/video0"
+    image_width: 640
+    image_height: 480
+    framerate: 15                 # Đã đạt gate LAN + WiFi AP ngày 2026-09-21
+    frame_id: "camera_frame"
+    output_topic: "/image_raw/compressed"
+    camera_info_topic: "/camera_info"
+    max_bytes_per_sec: 750000
+    disable_dynamic_framerate: true  # Giữ FPS ổn định trong cảnh tối
+    restart_delay_s: 2.0
+    frame_timeout_s: 2.0
+    stats_period_s: 10.0
+
+# --- usb_cam fallback ---
 # Node name: usb_cam (mặc định của package usb_cam)
 # Executable: usb_cam_node_exe
 # usb_cam xuất raw nội bộ Pi; image_transport nén JPEG rồi relay Best Effort.
@@ -27,7 +44,8 @@ usb_cam:
     camera_name: "fire_robot_cam"
     frame_id: "camera_frame"       # Tham số usb_cam; khớp URDF (base_link → camera_frame)
 
-# Chỉ giới hạn ảnh qua WiFi; 750 kB/s payload trung bình, bỏ frame dư thay vì backlog.
+# Chỉ dùng relay này với camera_backend:=usb_cam.
+# 750 kB/s payload trung bình, bỏ frame dư thay vì backlog.
 camera_qos_relay:
   ros__parameters:
     max_bytes_per_sec: 750000

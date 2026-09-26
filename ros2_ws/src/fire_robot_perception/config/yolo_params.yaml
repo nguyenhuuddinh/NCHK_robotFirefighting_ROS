@@ -1,0 +1,64 @@
+yolo_observer:
+  ros__parameters:
+    # Laptop-only inference. The launch argument overrides model_path.
+    model_path: ""
+    device: "0"
+    quantize: 16
+    image_size: 640
+    # Baseline observe-only after exact-center and hard-negative A/B tests.
+    confidence_threshold: 0.25
+    iou_threshold: 0.45
+    max_detections: 50
+    warmup_runs: 2
+
+    input_topic: "/image_raw/compressed"
+    detections_topic: "/yolo/detections"
+    annotated_topic: "/yolo/image_annotated/compressed"
+
+    # Disabled after it reduced exact-center fire recall. Keep parameters
+    # available for explicit A/B tests without changing source.
+    use_clahe: false
+    clahe_clip_limit: 1.0
+    clahe_tile_grid_size: 8
+
+    # Observe-only temporal evidence. This does not publish command topics.
+    fire_class_name: "fire"
+    confirmation_window_frames: 5
+    confirmation_min_detections: 3
+
+    # Keep 3/5 voting for target existence, but use a faster position filter.
+    # EMA alpha closer to 1 follows new boxes faster; closer to 0 is smoother.
+    # Set center_filter to "median" for an A/B comparison with the old method.
+    center_filter: "ema"
+    ema_alpha: 0.60
+
+    # Observe-only image-space aiming. Values use normalized coordinates
+    # [-1, 1]; they classify the target but never create a motion command.
+    aim_deadband_x: 0.10
+    aim_deadband_y: 0.10
+
+    publish_annotated: true
+    annotated_max_fps: 10.0
+    annotated_jpeg_quality: 80
+    input_timeout_s: 1.0
+    stats_period_s: 5.0
+
+fire_alignment_observer:
+  ros__parameters:
+    # Observe-only yaw preview. This node publishes JSON telemetry only.
+    input_topic: "/yolo/detections"
+    preview_topic: "/yolo/alignment_preview"
+
+    # Enter a centered state at +/-0.10 and stay centered until +/-0.13.
+    # The hysteresis prevents repeated LEFT/RIGHT changes near image center.
+    deadband_enter_x: 0.10
+    deadband_exit_x: 0.13
+
+    # Conservative preview limits for the first stationary evaluation.
+    proportional_gain: 1.0
+    max_angular_speed_rad_s: 0.50
+    max_angular_acceleration_rad_s2: 0.80
+
+    # Reject clearly old source images and zero preview on local input loss.
+    max_source_age_ms: 300.0
+    input_timeout_s: 0.50

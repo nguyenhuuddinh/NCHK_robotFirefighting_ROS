@@ -1,0 +1,28 @@
+fire_mission_supervisor:
+  ros__parameters:
+    # Laptop-only, observe-only inputs. No command or action output exists.
+    detections_topic: "/yolo/detections"
+    alignment_topic: "/yolo/alignment_preview"
+    odom_topic: "/odom"
+    nav_command_topic: "/cmd_vel_nav"
+    raw_command_topic: "/cmd_vel_raw"
+    nav_status_topic: "/navigate_to_pose/_action/status"
+    state_topic: "/fire_mission/state"
+
+    publish_rate_hz: 10.0
+    detection_timeout_s: 0.50
+    alignment_timeout_s: 0.50
+    odom_timeout_s: 0.50
+    command_timeout_s: 0.50
+
+    # A single YOLO frame is never enough to enter tracking intent.
+    fire_acquire_hold_s: 0.50
+    centered_hold_s: 0.50
+
+    # Cross-host camera timestamps outside this envelope block readiness.
+    max_source_age_ms: 300.0
+    max_future_skew_ms: 20.0
+
+    stationary_linear_speed_m_s: 0.02
+    stationary_angular_speed_rad_s: 0.05
+    turn_comparison_epsilon_rad_s: 0.03

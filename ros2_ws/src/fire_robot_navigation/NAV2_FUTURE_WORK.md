@@ -5,6 +5,27 @@ hình đang chạy và không thay thế quy trình an toàn khi thử trên xe 
 ưu tiên kiểm thử YOLO; chỉ mở lại Nav2 khi có thời gian làm từng bài A/B có
 rosbag, UART và phép đo định lượng.
 
+Cập nhật source ngày 2026-10-09: theo yêu cầu người vận hành, candidate A/B
+`global_costmap.inflation_layer.cost_scaling_factor` là `5,0`; local vẫn `3,0`,
+cả hai bán kính vẫn `0,55 m`. Mục 1-3 bên dưới giữ lịch sử baseline/kế hoạch
+cũ (`3,0 -> 4,0`), không phải kết quả nghiệm thu candidate mới. Chưa kiểm tra
+runtime/path/clearance với `5,0`. Footprint local/global đã đổi theo số đo
+ốp nhựa mới: trước `+0,19 m`, sau `-0,15 m`, hông `±0,10 m` (bao cả bánh),
+padding `0,015 m`. Chiều cao tổng `0,24 m` không tác động Nav2 2D. Trước
+goal thật phải xác nhận bình/vòi ở mọi góc không nhô ngoài footprint và thử
+path/costmap không xuất lệnh motor; footprint mới chưa nghiệm thu trên xe.
+
+Cập nhật ngày 2026-10-10: candidate tốc độ quay Nav2 là `0,8 rad/s` ở RPP,
+velocity smoother và Spin; tốc độ tiến, gia tốc và ngưỡng kết thúc goal giữ
+nguyên. Cần đo yaw lệnh/odom/IMU hai chiều trên xe thật; tăng tốc độ lệnh
+không bảo đảm giải quyết thiếu lực hay trượt bánh.
+
+Cập nhật ngày 2026-10-10: goal checker hiện dùng `xy_goal_tolerance=0,10 m`,
+`yaw_goal_tolerance=0,261799 rad` (~15°); NavFn fallback `GridBased.tolerance`
+giảm từ `0,5` xuống `0,05 m` để hạn chế endpoint cách xa goal RViz. Những
+mục baseline bên dưới là lịch sử, không phải thông số source hiện hành. Cần
+kiểm chứng đường đi, tỷ lệ goal bị từ chối gần vật cản và sai số xe thật.
+
 ## 1. Trạng thái được giữ nguyên
 
 - Nav2 chạy trên laptop; Pi giữ LiDAR, bridge, TF và safety watchdog.

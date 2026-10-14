@@ -1,4 +1,5 @@
 """Tests for node logic with mock serial."""
+import json
 import os
 import select
 import signal
@@ -54,6 +55,19 @@ def make_env(seq, ms, fire, gas, temp, batt, valid):
     payload = f"ENV,2,{seq},{fire},{gas:.1f},{temp:.1f},{batt:.1f},{valid}"
     crc = crc16_ccitt_false(payload.encode())
     return f"@{payload}*{crc:04X}\n".encode()
+
+
+def make_ir(seq, age_ms, left, center, right, valid):
+    payload = f"IR,2,{seq},{age_ms},{left},{center},{right},{valid}"
+    crc = crc16_ccitt_false(payload.encode())
+    return f"@{payload}*{crc:04X}\n".encode()
+
+
+def make_act(seq, ms, pump, phase, angle, servo_pwm, home_count, ready):
+    payload = (f'ACT,2,{seq},{ms},{pump},{phase},{angle},'
+               f'{servo_pwm},{home_count},{ready}')
+    crc = crc16_ccitt_false(payload.encode())
+    return f'@{payload}*{crc:04X}\n'.encode()
 
 
 def run_serial_bridge_signal_subprocess(signal_to_send, iterations):
@@ -456,6 +470,150 @@ def test_env_json_schema(rclpy_init):
             node.destroy_node()
 
 
+def test_ir_read_only_json_and_stale_session(rclpy_init):
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerial)
+        assert wait_until(lambda: len(registry.instances) > 0, timeout=2.0)
+        inst = registry.instances[0]
+        inst.inject_rx(make_state(1, 100, 0, 0, 0, 0, 0, 0))
+        assert wait_until(lambda: node.telemetry_healthy)
+
+        published = []
+
+        class MockPub:
+            def publish(self, msg):
+                published.append(json.loads(msg.data))
+
+        node.ir_pub = MockPub()
+        inst.inject_rx(make_ir(2, 25, 1100, 1040, 760, 1))
+        assert wait_until(lambda: node.latest_ir is not None)
+        node.telemetry_publish_callback()
+        assert len(published) == 1
+        assert published[0]['valid'] is True
+        assert [published[0][key] for key in
+                ('left', 'center', 'right')] == [1100, 1040, 760]
+        assert published[0]['sample_age_ms'] == 25
+
+        inst.inject_rx(make_ir(3, 400, 0, 0, 0, 0))
+        assert wait_until(lambda: node.latest_ir is not None)
+        node.telemetry_publish_callback()
+        assert published[-1]['valid'] is False
+        assert published[-1]['left'] is None
+
+        # A delayed slot or a slot from a previous serial session must not
+        # leak a seemingly fresh valid IR observation into ROS.
+        with node.state_lock:
+            epoch = node.session_epoch
+            frame = {'type': 'IR', 'seq': 4, 'sample_age_ms': 0,
+                     'left': 100, 'center': 100, 'right': 100, 'valid': 1}
+            node.latest_ir = (frame, epoch, time.monotonic() - 0.4)
+        node.telemetry_publish_callback()
+        assert len(published) == 2
+        with node.state_lock:
+            node.latest_ir = (frame, epoch - 1, time.monotonic())
+        node.telemetry_publish_callback()
+        assert len(published) == 2
+    finally:
+        if node:
+            node.destroy_node()
+
+
+def test_ir_interleaved_with_state_keeps_odom_imu(rclpy_init):
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerial)
+        assert wait_until(lambda: len(registry.instances) > 0, timeout=2.0)
+        inst = registry.instances[0]
+        odom_messages = []
+        imu_messages = []
+        ir_messages = []
+
+        class MockPub:
+            def __init__(self, messages):
+                self.messages = messages
+
+            def publish(self, msg):
+                self.messages.append(msg)
+
+        node.odom_pub = MockPub(odom_messages)
+        node.imu_pub = MockPub(imu_messages)
+        node.ir_pub = MockPub(ir_messages)
+        frames = (make_state(1, 100, 0, 0, 0, 0, 0, 0) +
+                  make_ir(2, 30, 1100, 1040, 760, 1) +
+                  make_state(3, 200, 0.1, 0, 0, 0, 0, 0))
+        inst.inject_rx(frames)
+        assert wait_until(lambda: node.latest_state is not None and
+                          node.latest_state[0]['seq'] == 3 and
+                          node.latest_ir is not None)
+        node.telemetry_publish_callback()
+        assert len(odom_messages) == len(imu_messages) == len(ir_messages) == 1
+        assert odom_messages[0].pose.pose.position.x == 0.1
+        assert imu_messages[0].header.frame_id == 'imu_frame'
+        assert json.loads(ir_messages[0].data)['valid'] is True
+        assert node.protocol.gap_count == 0
+    finally:
+        if node:
+            node.destroy_node()
+
+
+def test_actuator_telemetry_interleaved_and_stale_rejected(rclpy_init):
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerial)
+        assert wait_until(lambda: len(registry.instances) > 0)
+        inst = registry.instances[0]
+        odom_messages = []
+        imu_messages = []
+        actuator_messages = []
+
+        class MockPub:
+            def __init__(self, messages):
+                self.messages = messages
+
+            def publish(self, msg):
+                self.messages.append(msg)
+
+        node.odom_pub = MockPub(odom_messages)
+        node.imu_pub = MockPub(imu_messages)
+        node.actuator_pub = MockPub(actuator_messages)
+        inst.inject_rx(make_state(1, 100, 0, 0, 0, 0, 0, 0) +
+                       make_act(2, 120, 1, 1, 90, 1, 0, 1) +
+                       make_state(3, 200, 0.1, 0, 0, 0, 0, 0))
+        assert wait_until(lambda: node.latest_state is not None and
+                          node.latest_state[0]['seq'] == 3 and
+                          node.latest_actuator is not None)
+        node.telemetry_publish_callback()
+        assert len(odom_messages) == len(imu_messages) == 1
+        assert len(actuator_messages) == 1
+        assert odom_messages[0].pose.pose.position.x == 0.1
+        state = json.loads(actuator_messages[0].data)
+        assert state['pump_pwm_commanded_on'] is True
+        assert state['servo_phase'] == 'SWEEPING'
+        assert state['physical_pump_or_nozzle_verified'] is False
+        assert node.protocol.gap_count == 0
+
+        stale_frame = {'type': 'ACT', 'esp_ms': 300, 'pump_pwm': 0,
+                       'pump_ready': 1, 'servo_phase': 0,
+                       'servo_angle_deg': 255, 'servo_pwm': 0,
+                       'home_count': 1}
+        with node.state_lock:
+            epoch = node.session_epoch
+            node.latest_actuator = (stale_frame, epoch, time.monotonic() - 0.6)
+        node.telemetry_publish_callback()
+        assert len(actuator_messages) == 1
+        with node.state_lock:
+            node.latest_actuator = (stale_frame, epoch - 1, time.monotonic())
+        node.telemetry_publish_callback()
+        assert len(actuator_messages) == 1
+    finally:
+        if node:
+            node.destroy_node()
+
+
 def test_odom_imu_quaternion(rclpy_init):
     node = None
     try:
@@ -737,6 +895,43 @@ def test_latest_wins_cmd_pump_refresh(rclpy_init):
         _ = inst.snapshot_writes()
         writes = inst.snapshot_writes()
         assert not any(b'CMD' in w[1] and b'1.0' in w[1] for w in writes)
+    finally:
+        if node:
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_pump_on_without_heartbeat_forces_off(rclpy_init):
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerial)
+        assert wait_until(lambda: node.ser is not None, timeout=2.0)
+        inst = node.ser
+        inst.inject_rx(make_state(1, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        assert wait_until(lambda: node.telemetry_healthy, timeout=2.0)
+        msg = Bool()
+        msg.data = True
+        node.pump_cmd_callback(msg)
+        assert wait_until(
+            lambda: any(b'PUMP,2' in w[1] and b',1*' in w[1]
+                        for w in inst.snapshot_writes()), timeout=1.0)
+        writes_after_on = len(inst.snapshot_writes())
+
+        # The bridge deliberately reconnects if STATE stops for 0.5 s.
+        # Keep telemetry alive so this checks the pump-command lease itself.
+        state_seq = [1]
+
+        def off_received():
+            state_seq[0] += 1
+            inst.inject_rx(make_state(state_seq[0], 100 + state_seq[0] * 10,
+                                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+            return any(b'PUMP,2' in w[1] and b',0*' in w[1]
+                       for w in inst.snapshot_writes()[writes_after_on:])
+
+        assert wait_until(
+            off_received, timeout=2.0)
+        assert node.pump_state == 0
     finally:
         if node:
             node.destroy_node()
@@ -4702,16 +4897,18 @@ def test_open_failure_enters_backoff_before_retry(rclpy_init):
 def test_pi_runtime_uses_stable_esp32_serial_path():
     """Keep Pi runtime on by-id when Linux assigns another ttyACM minor."""
     from pathlib import Path
+    from fire_robot_bringup.serial_bridge_node import DEFAULT_SERIAL_PORT
 
     package_root = Path(__file__).resolve().parents[1]
     stable_path = (
         '/dev/serial/by-id/'
-        'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N16R8_'
-        '_16MB_Flash___8MB_PSRAM__9C139EAAE110-if00'
+        'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N8R2_'
+        '_8MB_Flash___2MB_PSRAM__28372F1F73C8-if00'
     )
     launch_text = (package_root / 'launch' / 'robot.launch.py').read_text()
     params_text = (package_root / 'config' / 'pi_params.yaml').read_text()
 
+    assert DEFAULT_SERIAL_PORT == stable_path
     assert stable_path in launch_text.replace("'\n            '", '')
     assert stable_path in params_text
 

@@ -1,10 +1,15 @@
 """Launch observe-only YOLO and fire-alignment preview on the laptop."""
 
 import os
+import subprocess
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    OpaqueFunction,
+)
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -13,16 +18,46 @@ DEFAULT_MODEL_PATH = (
     '/media/huudinh/New Volume/esp32/'
     'Fire_smoke_person_detection/best_final.pt'
 )
+DEFAULT_PYTHON_EXECUTABLE = (
+    '/home/huudinh/.venvs/fire_robot_yolo/bin/python'
+)
+DEPENDENCY_IMPORT_TIMEOUT_S = 60.0
 
 
 def _validate_paths(context):
     """Fail before node startup when config or model paths are invalid."""
     model_path = LaunchConfiguration('model_path').perform(context)
     params_file = LaunchConfiguration('params_file').perform(context)
+    python_executable = LaunchConfiguration(
+        'python_executable').perform(context)
     if not os.path.isfile(model_path):
         raise RuntimeError(f'YOLO model does not exist: {model_path}')
     if not os.path.isfile(params_file):
         raise RuntimeError(f'YOLO params file does not exist: {params_file}')
+    if not os.path.isfile(python_executable) or \
+            not os.access(python_executable, os.X_OK):
+        raise RuntimeError(
+            f'YOLO Python is missing or not executable: {python_executable}')
+    try:
+        dependency_check = subprocess.run(
+            [
+                python_executable,
+                '-c',
+                'import torch; import ultralytics',
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=DEPENDENCY_IMPORT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            f'cannot validate YOLO Python {python_executable}: {exc}'
+        ) from exc
+    if dependency_check.returncode != 0:
+        detail = dependency_check.stderr.strip() or 'unknown import error'
+        raise RuntimeError(
+            f'YOLO Python cannot import torch/ultralytics: {detail}')
     return []
 
 
@@ -36,6 +71,11 @@ def generate_launch_description():
         default_value=DEFAULT_MODEL_PATH,
         description='Absolute path to the trusted Ultralytics .pt checkpoint',
     )
+    python_executable_arg = DeclareLaunchArgument(
+        'python_executable',
+        default_value=DEFAULT_PYTHON_EXECUTABLE,
+        description='Python interpreter containing torch and ultralytics',
+    )
     params_file_arg = DeclareLaunchArgument(
         'params_file',
         default_value=default_params,
@@ -47,18 +87,25 @@ def generate_launch_description():
         description='Use simulation time; false for the physical robot',
     )
 
-    observer = Node(
-        package='fire_robot_perception',
-        executable='yolo_observer',
-        name='yolo_observer',
-        output='screen',
-        parameters=[
+    # The ament console-script wrapper is generated with /usr/bin/python3 on
+    # this ROS 2 Humble install. Activating a venv does not change that
+    # shebang. Run the module explicitly so inference always uses the GPU venv.
+    observer = ExecuteProcess(
+        cmd=[
+            LaunchConfiguration('python_executable'),
+            '-m',
+            'fire_robot_perception.yolo_observer',
+            '--ros-args',
+            '-r',
+            '__node:=yolo_observer',
+            '--params-file',
             LaunchConfiguration('params_file'),
-            {
-                'model_path': LaunchConfiguration('model_path'),
-                'use_sim_time': LaunchConfiguration('use_sim_time'),
-            },
+            '-p',
+            ['model_path:=', LaunchConfiguration('model_path')],
+            '-p',
+            ['use_sim_time:=', LaunchConfiguration('use_sim_time')],
         ],
+        output='screen',
     )
 
     alignment_observer = Node(
@@ -74,6 +121,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         model_path_arg,
+        python_executable_arg,
         params_file_arg,
         use_sim_time_arg,
         OpaqueFunction(function=_validate_paths),

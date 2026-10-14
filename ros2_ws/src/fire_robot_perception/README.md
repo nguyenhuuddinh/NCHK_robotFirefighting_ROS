@@ -24,7 +24,7 @@ Nếu cần tạo lại venv, dùng Python 3.10 với `--system-site-packages`, 
 
 ## Build
 
-Dùng Python của venv để console script được tạo với đúng interpreter:
+Dùng Python của venv để chạy build và test package:
 
 ```bash
 cd "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/ros2_ws"
@@ -34,15 +34,14 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 ```
 
-Kiểm tra dòng shebang:
-
-```bash
-head -n 1 install/fire_robot_perception/lib/fire_robot_perception/yolo_observer
-```
-
-Kết quả phải trỏ tới
-`/home/huudinh/.venvs/fire_robot_yolo/bin/python`, không phải
-`/usr/bin/python3`.
+Trên ROS 2 Humble hiện tại, console-script wrapper trong `install/` vẫn có thể
+giữ shebang `/usr/bin/python3` dù shell đã activate venv. Vì Python hệ thống
+không có Torch/Ultralytics, `perception.launch.py` không gọi wrapper này cho
+YOLO. Launch chạy module bằng interpreter được chỉ định bởi argument
+`python_executable`, mặc định là
+`/home/huudinh/.venvs/fire_robot_yolo/bin/python`, và kiểm tra import
+`torch`/`ultralytics` trước khi khởi động node. `fire_alignment_observer` vẫn
+dùng console script ROS bình thường vì không phụ thuộc Torch.
 
 ## Chạy với camera Pi
 
@@ -57,6 +56,7 @@ unset ROS_LOCALHOST_ONLY
 
 ros2 launch fire_robot_perception perception.launch.py \
   use_sim_time:=false \
+  python_executable:=/home/huudinh/.venvs/fire_robot_yolo/bin/python \
   model_path:="/media/huudinh/New Volume/esp32/Fire_smoke_person_detection/best_final.pt"
 ```
 
@@ -139,7 +139,8 @@ Thông số mặc định trong `config/yolo_params.yaml`:
 deadband_enter_x: 0.10
 deadband_exit_x: 0.13
 proportional_gain: 1.0
-max_angular_speed_rad_s: 0.50
+min_angular_speed_rad_s: 0.40
+max_angular_speed_rad_s: 0.60
 max_angular_acceleration_rad_s2: 0.80
 max_source_age_ms: 300.0
 input_timeout_s: 0.50
@@ -150,6 +151,8 @@ Quy ước ROS `base_link`: `angular_z > 0` là quay trái. Vì vậy target bê
 `deadband_enter_x`, preview về 0 ngay; hysteresis giữ trạng thái CENTERED cho
 tới khi target vượt `deadband_exit_x`. Khi mất target, inference lỗi, ảnh quá
 cũ hoặc telemetry timeout, preview về 0 và controller reset ngay.
+Khi IR tiến, trạng thái CENTERED chỉ được giữ tới sai số ngang ±0,13 nếu
+YOLO vẫn thấy và xác nhận lửa; mất frame không được suy diễn là vẫn ở tâm.
 
 Kiểm tra topic:
 

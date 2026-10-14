@@ -195,6 +195,12 @@ class TestNav2Params(unittest.TestCase):
 
         planner = params.get('planner_server', {}).get('ros__parameters', {})
         self.assertEqual(planner.get('expected_planner_frequency'), 2.0)
+        navfn_tolerance = planner.get('GridBased', {}).get('tolerance')
+        self.assertIsNotNone(navfn_tolerance)
+        self.assertGreaterEqual(navfn_tolerance, 0.0)
+        self.assertLessEqual(
+            navfn_tolerance, goal_checker['xy_goal_tolerance'],
+            'NavFn fallback endpoint must not be farther than goal XY tolerance')
         self.assertEqual(global_cm_p.get('update_frequency'), 2.0)
         self.assertEqual(global_cm_p.get('publish_frequency'), 2.0)
 
@@ -203,6 +209,17 @@ class TestNav2Params(unittest.TestCase):
 
     def test_baseline(self):
         self._validate_params(self.params)
+
+    def test_global_inflation_trial_is_isolated(self):
+        local = self.params['local_costmap']['local_costmap']['ros__parameters']
+        global_costmap = self.params['global_costmap']['global_costmap'][
+            'ros__parameters']
+        self.assertEqual(local['inflation_layer']['cost_scaling_factor'], 3.0)
+        self.assertEqual(global_costmap['inflation_layer']['cost_scaling_factor'], 5.0)
+        for costmap in (local, global_costmap):
+            self.assertEqual(costmap['inflation_layer']['inflation_radius'], 0.55)
+            self.assertEqual(costmap['footprint_padding'], 0.015)
+        self.assertEqual(local['footprint'], global_costmap['footprint'])
 
     def test_operator_approved_motion_envelope(self):
         controller = self.params['controller_server']['ros__parameters']
@@ -214,21 +231,24 @@ class TestNav2Params(unittest.TestCase):
 
         self.assertEqual(controller['controller_frequency'], 10.0)
         self.assertEqual(rpp['desired_linear_vel'], 0.10)
-        self.assertEqual(rpp['rotate_to_heading_angular_vel'], 1.0)
+        self.assertEqual(rpp['rotate_to_heading_angular_vel'], 0.8)
         self.assertEqual(rpp['rotate_to_heading_min_angle'], 0.174533)
         self.assertEqual(rpp['lookahead_dist'], 0.20)
         self.assertEqual(rpp['min_lookahead_dist'], 0.15)
         self.assertEqual(rpp['max_lookahead_dist'], 0.25)
         self.assertIs(rpp['use_collision_detection'], True)
         self.assertIs(rpp['allow_reversing'], False)
-        self.assertEqual(goal_checker['xy_goal_tolerance'], 0.08)
-        self.assertEqual(goal_checker['yaw_goal_tolerance'], 0.15)
+        self.assertEqual(goal_checker['xy_goal_tolerance'], 0.10)
+        self.assertEqual(goal_checker['yaw_goal_tolerance'], 0.261799)
+        self.assertEqual(
+            self.params['planner_server']['ros__parameters']['GridBased'][
+                'tolerance'], 0.05)
         self.assertEqual(progress_checker['required_movement_radius'], 0.05)
         self.assertEqual(progress_checker['movement_time_allowance'], 25.0)
-        self.assertEqual(behaviors['min_rotational_vel'], 0.8)
-        self.assertEqual(behaviors['max_rotational_vel'], 1.0)
-        self.assertEqual(smoother['max_velocity'], [0.10, 0.0, 1.0])
-        self.assertEqual(smoother['min_velocity'], [0.0, 0.0, -1.0])
+        self.assertEqual(behaviors['min_rotational_vel'], 0.7)
+        self.assertEqual(behaviors['max_rotational_vel'], 0.8)
+        self.assertEqual(smoother['max_velocity'], [0.10, 0.0, 0.8])
+        self.assertEqual(smoother['min_velocity'], [0.0, 0.0, -0.8])
 
     def test_qa10_mutations(self):
         import copy

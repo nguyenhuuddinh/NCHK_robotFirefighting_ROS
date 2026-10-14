@@ -9,6 +9,15 @@ from ament_index_python.packages import get_package_share_directory
 from nav2_common.launch import RewrittenYaml
 
 
+PRODUCTION_CMD_VEL_OUTPUT_TOPIC = '/cmd_vel_raw'
+MISSION_SHADOW_CMD_VEL_OUTPUT_TOPIC = (
+    '/fire_mission/nav2_cmd_vel_shadow')
+ALLOWED_CMD_VEL_OUTPUT_TOPICS = {
+    PRODUCTION_CMD_VEL_OUTPUT_TOPIC,
+    MISSION_SHADOW_CMD_VEL_OUTPUT_TOPIC,
+}
+
+
 def preflight_checks(context, *args, **kwargs):
     map_yaml_file = LaunchConfiguration('map').perform(context)
     params_file = LaunchConfiguration('params_file').perform(context)
@@ -62,6 +71,14 @@ def preflight_checks(context, *args, **kwargs):
     except yaml.YAMLError as e:
         raise RuntimeError(f"The params_file is malformed YAML: {e}")
 
+    cmd_vel_output_topic = context.launch_configurations.get(
+        'cmd_vel_output_topic', PRODUCTION_CMD_VEL_OUTPUT_TOPIC)
+    if cmd_vel_output_topic not in ALLOWED_CMD_VEL_OUTPUT_TOPICS:
+        allowed = ', '.join(sorted(ALLOWED_CMD_VEL_OUTPUT_TOPICS))
+        raise RuntimeError(
+            "The 'cmd_vel_output_topic' argument must be one of "
+            f"[{allowed}], got: {cmd_vel_output_topic}")
+
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('fire_robot_navigation')
@@ -74,11 +91,18 @@ def generate_launch_description():
     declare_autostart = DeclareLaunchArgument(
         'autostart', default_value='true', description='Automatically startup the nav2 stack')
     declare_rviz = DeclareLaunchArgument('rviz', default_value='false', description='Launch RViz')
+    declare_cmd_vel_output_topic = DeclareLaunchArgument(
+        'cmd_vel_output_topic',
+        default_value=PRODUCTION_CMD_VEL_OUTPUT_TOPIC,
+        description=(
+            'Final Nav2 Twist output. Use the default for robot operation; '
+            'the mission shadow wrapper forces the isolated shadow topic.'))
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     params_file = LaunchConfiguration('params_file')
     map_yaml_file = LaunchConfiguration('map')
+    cmd_vel_output_topic = LaunchConfiguration('cmd_vel_output_topic')
 
     param_substitutions = {
         'use_sim_time': use_sim_time,
@@ -128,6 +152,7 @@ def generate_launch_description():
         declare_params_file,
         declare_autostart,
         declare_rviz,
+        declare_cmd_vel_output_topic,
         OpaqueFunction(function=preflight_checks),
         start_rviz_cmd,
 
@@ -171,7 +196,7 @@ def generate_launch_description():
             name='behavior_server',
             output='screen',
             parameters=[configured_params],
-            remappings=remappings + [('cmd_vel', '/cmd_vel_raw')]),
+            remappings=remappings + [('cmd_vel', cmd_vel_output_topic)]),
         Node(
             package='nav2_bt_navigator',
             executable='bt_navigator',
@@ -186,7 +211,7 @@ def generate_launch_description():
             output='screen',
             parameters=[configured_params],
             remappings=remappings + [('cmd_vel', 'cmd_vel_nav'),
-                                     ('cmd_vel_smoothed', '/cmd_vel_raw')]),
+                                     ('cmd_vel_smoothed', cmd_vel_output_topic)]),
         Node(
             package='nav2_lifecycle_manager',
             executable='lifecycle_manager',

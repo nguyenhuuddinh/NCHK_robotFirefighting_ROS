@@ -129,6 +129,15 @@ class TestNav2Launch(unittest.TestCase):
             # Should pass without exceptions and return None
             self.assertIsNone(nav2_launch.preflight_checks(ctx))
 
+            ctx.launch_configurations['cmd_vel_output_topic'] = '/cmd_vel'
+            with self.assertRaisesRegex(
+                    RuntimeError, "The 'cmd_vel_output_topic' argument must be one of"):
+                nav2_launch.preflight_checks(ctx)
+
+            ctx.launch_configurations['cmd_vel_output_topic'] = (
+                nav2_launch.MISSION_SHADOW_CMD_VEL_OUTPUT_TOPIC)
+            self.assertIsNone(nav2_launch.preflight_checks(ctx))
+
     def test_launch_description(self):
         ld = nav2_launch.generate_launch_description()
         self.assertIsNotNone(ld)
@@ -155,6 +164,11 @@ class TestNav2Launch(unittest.TestCase):
 
         self.assertIn('rviz', declare_args)
         self.assertEqual(declare_args['rviz'].default_value[0].text, 'false')
+
+        self.assertIn('cmd_vel_output_topic', declare_args)
+        self.assertEqual(
+            declare_args['cmd_vel_output_topic'].default_value[0].text,
+            '/cmd_vel_raw')
         from launch import LaunchDescription
         self.assertIsInstance(ld, LaunchDescription)
         self._validate_launch(ld)
@@ -201,7 +215,7 @@ class TestNav2Launch(unittest.TestCase):
         type_counter = Counter(type(e) for e in all_entities)
 
         expected_action_counts = {
-            DeclareLaunchArgument: 5,
+            DeclareLaunchArgument: 6,
             OpaqueFunction: 1,
             ExecuteProcess: 1,
             Node: 10,
@@ -328,8 +342,8 @@ class TestNav2Launch(unittest.TestCase):
         all_nodes = [e for e in all_entities if type(e) is Node]
 
         self.assertEqual(
-            len(declares), 5,
-            f"Exact DeclareLaunchArgument count should be 5, found {len(declares)}")
+            len(declares), 6,
+            f"Exact DeclareLaunchArgument count should be 6, found {len(declares)}")
         self.assertEqual(
             len(opaques), 1,
             f"Exact OpaqueFunction count should be 1, found {len(opaques)}")

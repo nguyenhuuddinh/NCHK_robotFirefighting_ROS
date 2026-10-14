@@ -1,9 +1,48 @@
 # Hướng dẫn và trạng thái tinh chỉnh Nav2 cho Fire Robot
 
-Tài liệu này mô tả **source và runtime đang hoạt động tới ngày 2026-09-17**.
-Lịch sử Rotation Shim + DWB và các lần hiệu chuẩn trước được giữ tại
-`docs/codex/HANDOFF_NAV2_TUNING_2026-09-10.md`; không dùng phần lịch sử đó để
-suy ra controller đang active.
+Tài liệu này giữ lịch sử tinh chỉnh trước đây; cấu hình footprint đang dùng
+được ghi ngay bên dưới. Lịch sử Rotation Shim + DWB nằm tại
+`docs/codex/HANDOFF_NAV2_TUNING_2026-09-10.md`.
+
+## Cập nhật source ngày 2026-10-10 (cấu hình hiện hành)
+
+Theo yêu cầu người vận hành, giới hạn quay Nav2 được tăng từ `0,5` lên
+`0,8 rad/s` ở RPP, velocity smoother và recovery Spin. Gia tốc quay giữ
+`3,2 rad/s²`, tốc độ tiến giữ `0,10 m/s`; chưa kiểm chứng chuyển động thật
+với giới hạn mới. Góc `rotate_to_heading_min_angle=0,174533 rad` (~10°)
+điều khiển lúc nào RPP chọn quay tại chỗ theo tiếp tuyến đường đi, **không**
+phải điều kiện kết thúc goal. Goal checker hiện dùng dung sai vị trí `0,10 m`
+và dung sai hướng `0,261799 rad` (~15°) đối với điểm cuối đường được theo dõi.
+Planner fallback đã giảm từ `0,5` xuống `0,05 m` để tránh nhận một điểm cuối
+quá xa goal RViz. Đây vẫn là dung sai phần mềm, không bảo đảm sai số vật lý
+so với goal RViz luôn dưới 10 cm; cần đo pose thực tế sau bài chạy.
+
+## Cập nhật vỏ xe ngày 2026-10-09
+
+Người vận hành đo từ `base_link` tới đầu xe `0,19 m`, đuôi `0,15 m`,
+mép ốp trái/phải `0,0975 m`; chiều cao tổng từ sàn `0,24 m` (cần xác nhận
+điểm đo và các chi tiết nhô khi thử thật). Bánh đã đo trước đó ra tới
+`±0,10 m`, nên local/global costmap cùng dùng footprint chữ nhật:
+
+```text
+[[+0.19, +0.10], [-0.15, +0.10], [-0.15, -0.10], [+0.19, -0.10]]
+```
+
+`footprint_padding=0,015 m` giữ nguyên; biên danh nghĩa sau padding khoảng
+`+0,205/-0,165 m` theo X và `±0,115 m` theo Y. Global inflation scaling
+đang thử `5,0`, local vẫn `3,0`, cả hai radius `0,55 m`. Nav2 và bản đồ
+costmap chỉ xét hình chiếu 2D, vì vậy thay đổi chiều cao không biến RViz
+thành 3D hay làm đổi vị trí TF của LiDAR/camera/IMU/bánh. Không cập nhật
+URDF chassis cũ thành kích thước ốp nhựa vì đó là hai bộ phận khác nhau.
+
+Đây mới là candidate trong source, chưa xác nhận runtime hay kiểm chứng khoảng
+hở khi xe thật chạy. Mục 12 bên dưới là lịch sử footprint bát giác trước khi
+gắn ốp, không còn là cấu hình active.
+
+Các phần sau mô tả baseline runtime đã kiểm tra tới 2026-09-17 và cấu hình
+source cập nhật tới ngày 2026-10-10. Giới hạn quay mới chỉ có hiệu lực sau
+khi khởi động lại Nav2; chưa xác nhận bằng bài chạy xe thật.
+Không dùng lịch sử Rotation Shim + DWB để suy ra controller đang active.
 
 ## 1. Trạng thái active hiện tại
 
@@ -26,6 +65,21 @@ plugin: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
 
 Không có Rotation Shim bọc ngoài và không dùng DWB trong runtime hiện tại.
 
+### Đường test mission shadow (không chạy motor)
+
+Để kiểm tra quyền owner `NAVIGATION` của mission arbiter mà không đưa lệnh tới
+xe, dùng `nav2_motion_shadow.launch.py`. Wrapper này giữ nguyên toàn bộ Nav2
+nhưng ép đầu ra cuối của `velocity_smoother` và `behavior_server` sang:
+
+```text
+/fire_mission/nav2_cmd_vel_shadow
+```
+
+Topic này chỉ được `motion_arbiter_shadow` quan sát. Wrapper không cung cấp
+argument đổi output, vì vậy không thể vô tình nối bài test shadow vào
+`/cmd_vel_raw`. Launch `nav2.launch.py` vẫn giữ default `/cmd_vel_raw` để bảo
+toàn tương thích với quy trình Nav2 sản xuất hiện tại.
+
 | Nhóm | Tham số active | Giá trị |
 | --- | --- | ---: |
 | Controller | `controller_frequency` | `10 Hz` |
@@ -33,13 +87,13 @@ Không có Rotation Shim bọc ngoài và không dùng DWB trong runtime hiện 
 | RPP | `min/max_lookahead_dist` | `0.15/0.25 m` |
 | RPP | `use_rotate_to_heading` | `true` |
 | RPP | `rotate_to_heading_min_angle` | `0.174533 rad` = `10 deg` |
-| RPP | `rotate_to_heading_angular_vel` | `1.0 rad/s` |
+| RPP | `rotate_to_heading_angular_vel` | `0.8 rad/s` (source mới; cần test xe thật) |
 | RPP | `max_allowed_time_to_collision_up_to_carrot` | `1.0 s` |
-| Goal checker | `xy_goal_tolerance` | `0.08 m` |
-| Goal checker | `yaw_goal_tolerance` | `0.15 rad` = `8.59 deg` |
+| Goal checker | `xy_goal_tolerance` | `0.10 m` |
+| Goal checker | `yaw_goal_tolerance` | `0.261799 rad` = `15 deg` |
 | Planner | plugin | NavFn |
 | Planner | `use_astar` | `false` (Dijkstra) |
-| Planner | `tolerance` | `0.5 m` |
+| Planner | `tolerance` | `0.05 m` |
 | BT replan | `RateController` | `2 Hz` |
 | Local costmap | update | `5 Hz` |
 | Global costmap | update/publish | `2/2 Hz` |

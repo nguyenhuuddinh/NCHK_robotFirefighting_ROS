@@ -94,6 +94,75 @@ def _create_bad_frame(payload: bytes) -> bytes:
     return f"@{payload.decode()}*{crc16_ccitt_false(payload):04X}\n".encode()
 
 
+def test_ir_frames_strict_and_shared_sequence():
+    p = SerialProtocolV2()
+    state = b"STATE,2,1,1234,0.000,0.000,0.000,0.000,0.000,0.000"
+    ir = b"IR,2,2,25,1100,1040,760,1"
+    invalid_ir = b"IR,2,3,4294967295,0,0,0,0"
+    env = b"ENV,2,4,0,0.0,0.0,0.0,0"
+    frames = list(p.parse_chunk(b''.join(
+        map(_create_bad_frame, (state, ir, invalid_ir, env)))))
+    assert [frame['type'] for frame in frames] == ['STATE', 'IR', 'IR', 'ENV']
+    assert frames[1]['left'] == 1100
+    assert frames[1]['sample_age_ms'] == 25
+    assert frames[2]['valid'] == 0
+    assert p.gap_count == 0
+
+    bad = (
+        b"IR,2,5,301,1,2,3,1",        # stale marked valid
+        b"IR,2,5,0,1,0,0,0",          # invalid with stale raw data
+        b"IR,2,5,0,32768,0,0,1",      # ADS1115 signed max
+        b"IR,2,5,-1,1,2,3,1",         # signed age
+        b"IR,2,5,4294967296,1,2,3,0",  # age overflow
+        b"IR,2,5,0,1,2,3,2",          # invalid boolean
+        b"IR,2,5,0,1,2,3",            # missing field
+    )
+    for payload in bad:
+        assert list(p.parse_chunk(_create_bad_frame(payload))) == []
+    assert p.parse_fail_count >= len(bad)
+    accepted = list(p.parse_chunk(_create_bad_frame(b"IR,2,5,0,1,2,3,1")))
+    assert accepted[0]['seq'] == 5
+
+    corrupted = bytearray(_create_bad_frame(b"IR,2,6,0,1,2,3,1"))
+    corrupted[12] ^= 1
+    assert list(p.parse_chunk(bytes(corrupted))) == []
+    assert p.crc_fail_count >= 1
+
+
+def test_actuator_command_telemetry_strict_and_shared_sequence():
+    p = SerialProtocolV2()
+    state = b'STATE,2,1,1234,0.000,0.000,0.000,0.000,0.000,0.000'
+    act_on = b'ACT,2,2,1300,1,1,70,1,0,1'
+    act_home = b'ACT,2,3,1800,0,2,90,1,0,1'
+    act_idle = b'ACT,2,4,2300,0,0,255,0,1,1'
+    frames = list(p.parse_chunk(b''.join(map(
+        _create_bad_frame, (state, act_on, act_home, act_idle)))))
+    assert [frame['type'] for frame in frames] == [
+        'STATE', 'ACT', 'ACT', 'ACT']
+    assert frames[-1]['home_count'] == 1
+    assert frames[1]['pump_pwm'] == 1
+    assert p.gap_count == 0
+
+    bad = (
+        b'ACT,2,5,3000,1,2,90,1,1,1',  # pump ON while returning
+        b'ACT,2,5,3000,1,1,90,1,1,0',  # pump not ready
+        b'ACT,2,5,3000,0,3,90,1,1,1',  # locked but servo energized
+        b'ACT,2,5,3000,0,0,90,0,1,1',  # detached angle not sentinel
+        b'ACT,2,5,3000,0,0,255,1,1,1',  # active PWM missing angle
+        b'ACT,2,5,3000,0,0,255,0,1',  # truncated
+        b'ACT,2,5,-1,0,0,255,0,1,1',  # signed timestamp
+        b'ACT,2,5,3000,0,0,255,0,4294967296,1',  # count overflow
+    )
+    for payload in bad:
+        assert list(p.parse_chunk(_create_bad_frame(payload))) == []
+    assert p.parse_fail_count >= len(bad)
+
+    corrupted = bytearray(_create_bad_frame(b'ACT,2,5,3000,0,0,255,0,1,1'))
+    corrupted[15] ^= 1
+    assert list(p.parse_chunk(bytes(corrupted))) == []
+    assert p.crc_fail_count >= 1
+
+
 def test_parser_rejections():
     """Test strict lexical parsing and rejection of invalid fields."""
     p = SerialProtocolV2()

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from rclpy.qos import DurabilityPolicy, ReliabilityPolicy
 import yaml
 
@@ -36,7 +37,7 @@ def make_controller():
         deadband_enter=0.10,
         deadband_exit=0.13,
         proportional_gain=1.0,
-        max_angular_speed=0.50,
+        max_angular_speed=0.60,
         max_angular_acceleration=0.80,
     )
 
@@ -70,7 +71,7 @@ def test_right_target_requests_negative_yaw_with_slew_limit():
     first = controller.update(0.5, now=1.0)
     second = controller.update(0.5, now=1.1)
     assert first['state'] == 'ALIGNING_RIGHT'
-    assert first['target_angular_z_rad_s'] == -0.4
+    assert first['target_angular_z_rad_s'] == -0.40
     assert first['proposed_angular_z_rad_s'] == 0.0
     assert first['slew_limited'] is True
     assert second['proposed_angular_z_rad_s'] == -0.08
@@ -81,9 +82,62 @@ def test_deadband_hysteresis_prevents_center_chatter():
     controller = make_controller()
     assert controller.update(0.05, now=1.0)['state'] == 'CENTERED'
     assert controller.update(0.12, now=1.1)['state'] == 'CENTERED'
-    preview = controller.update(0.14, now=1.2)
+    assert controller.update(0.13, now=1.2)['state'] == 'CENTERED'
+    preview = controller.update(0.14, now=1.3)
     assert preview['state'] == 'ALIGNING_RIGHT'
     assert preview['proposed_angular_z_rad_s'] == -0.04
+
+
+def test_rounding_near_center_never_emits_aligning_with_zero_target():
+    controller = AlignmentPreviewController(
+        deadband_enter=0.10, deadband_exit=0.13,
+        proportional_gain=1.0, max_angular_speed=0.60,
+        max_angular_acceleration=0.80)
+    edge = controller.update(-0.10001, now=1.0)
+    assert edge['state'] == 'CENTERED'
+    assert edge['target_angular_z_rad_s'] == 0.0
+    assert edge['error_x_normalized'] == -0.1
+    assert controller.update(-0.12, now=1.1)['state'] == 'CENTERED'
+    outside = controller.update(-0.14, now=1.2)
+    assert outside['state'] == 'ALIGNING_LEFT'
+    assert outside['target_angular_z_rad_s'] > 0.0
+
+
+def test_large_error_is_capped_at_new_preview_limit():
+    controller = make_controller()
+    preview = controller.update(1.0, now=1.0)
+    assert preview['target_angular_z_rad_s'] == -0.60
+
+
+def test_minimum_turn_stays_continuous_until_centered():
+    controller = AlignmentPreviewController(
+        deadband_enter=0.10, deadband_exit=0.13,
+        proportional_gain=1.0, max_angular_speed=0.60,
+        max_angular_acceleration=0.80, min_angular_speed=0.40)
+    first = controller.update(-0.1182, now=1.0)
+    ramp = controller.update(-0.1182, now=1.1)
+    for tick in range(2, 8):
+        steady = controller.update(-0.1182, now=1.0 + tick * 0.1)
+    assert first['state'] == 'ALIGNING_LEFT'
+    assert first['target_angular_z_rad_s'] == 0.40
+    assert first['proposed_angular_z_rad_s'] == 0.0
+    assert ramp['proposed_angular_z_rad_s'] == 0.08
+    assert steady['proposed_angular_z_rad_s'] == pytest.approx(0.40)
+    assert controller.update(-0.06, now=1.9)['state'] == 'CENTERED'
+    assert controller.update(-0.12, now=2.0)['target_angular_z_rad_s'] == 0.0
+    reverse = controller.update(0.14, now=2.1)
+    assert reverse['state'] == 'ALIGNING_RIGHT'
+    assert reverse['target_angular_z_rad_s'] == -0.40
+    lost = controller.inactive_preview('NO_TARGET')
+    assert lost['target_angular_z_rad_s'] == 0.0
+
+
+def test_minimum_turn_cannot_exceed_maximum():
+    with pytest.raises(ValueError):
+        AlignmentPreviewController(
+            deadband_enter=0.07, deadband_exit=0.10,
+            proportional_gain=1.0, max_angular_speed=0.60,
+            max_angular_acceleration=0.80, min_angular_speed=0.60)
 
 
 def test_target_loss_immediately_zeroes_and_resets_preview():
@@ -107,7 +161,8 @@ def test_alignment_defaults_are_conservative_and_observe_only():
     assert params['preview_topic'] == '/yolo/alignment_preview'
     assert params['deadband_enter_x'] == 0.10
     assert params['deadband_exit_x'] == 0.13
-    assert params['max_angular_speed_rad_s'] == 0.50
+    assert params['min_angular_speed_rad_s'] == 0.40
+    assert params['max_angular_speed_rad_s'] == 0.60
     assert params['max_angular_acceleration_rad_s2'] == 0.80
 
 

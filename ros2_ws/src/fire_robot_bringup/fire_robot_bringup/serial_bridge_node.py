@@ -18,8 +18,8 @@ from fire_robot_bringup.serial_protocol import SerialProtocolV2
 
 DEFAULT_SERIAL_PORT = (
     '/dev/serial/by-id/'
-    'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N16R8_'
-    '_16MB_Flash___8MB_PSRAM__9C139EAAE110-if00'
+    'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N8R2_'
+    '_8MB_Flash___2MB_PSRAM__28372F1F73C8-if00'
 )
 
 
@@ -33,6 +33,7 @@ class SerialBridgeNode(Node):
         self.declare_parameter('serial_port', DEFAULT_SERIAL_PORT)
         self.declare_parameter('serial_baudrate', 115200)
         self.declare_parameter('first_state_timeout_s', 8.0)
+        self.declare_parameter('pump_command_timeout_s', 0.7)
 
         self.port = self.get_parameter('serial_port').value
         self.baudrate = self.get_parameter('serial_baudrate').value
@@ -43,6 +44,11 @@ class SerialBridgeNode(Node):
             self.get_logger().warning(
                 'Invalid first_state_timeout_s; falling back to 8.0 s')
             self.first_state_timeout_s = 8.0
+        self.pump_command_timeout_s = float(
+            self.get_parameter('pump_command_timeout_s').value)
+        if (not math.isfinite(self.pump_command_timeout_s)
+                or not 0.5 <= self.pump_command_timeout_s <= 1.0):
+            raise ValueError('pump_command_timeout_s must be 0.5-1.0 s')
 
         self.serial_cls = serial_cls
         if self.serial_cls is None:
@@ -63,6 +69,10 @@ class SerialBridgeNode(Node):
         self.odom_pub = self.create_publisher(Odometry, '/odom', best_effort_qos)
         self.imu_pub = self.create_publisher(Imu, '/imu/data', best_effort_qos)
         self.env_pub = self.create_publisher(String, '/env_status', best_effort_qos)
+        self.ir_pub = self.create_publisher(
+            String, '/fire_sensors/ir_raw', best_effort_qos)
+        self.actuator_pub = self.create_publisher(
+            String, '/fire_sensors/actuator_state', best_effort_qos)
 
         self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, best_effort_qos)
         self.create_subscription(Point, '/fire_target', self.fire_target_callback, reliable_qos)
@@ -105,14 +115,18 @@ class SerialBridgeNode(Node):
         self.fire_version = 0
         self.pump_written_version = 0
         self.last_pump_time = 0.0
+        self.last_pump_command_time = None
         self.session_started_mono = 0.0
         self.last_state_time_mono = 0.0
         self.last_env_time_mono = 0.0
+        self.last_ir_time_mono = 0.0
 
         self.reconnect_backoff = 0.0
         self.next_reconnect_mono = 0.0
         self.latest_state = None
         self.latest_env = None
+        self.latest_ir = None
+        self.latest_actuator = None
 
         self.tx_fail_count = 0
         self.tx_partial_count = 0
@@ -207,6 +221,7 @@ class SerialBridgeNode(Node):
                 return
             self.pump_version += 1
             self.pending_pump = (pump_req, self.session_epoch, self.pump_version)
+            self.last_pump_command_time = time.monotonic()
 
     def close_serial(self):
         """Initiate or reap a serial close task."""
@@ -216,6 +231,7 @@ class SerialBridgeNode(Node):
             self.pending_cmd = None
             self.pending_pump = None
             self.pending_fire = None
+            self.latest_actuator = None
 
             if getattr(self, '_session_state', '') not in ('CLOSING', 'SHUTTING_DOWN'):
                 self._transition_state('CLOSING')
@@ -430,6 +446,7 @@ class SerialBridgeNode(Node):
             self.pending_cmd = None
             self.pending_pump = None
             self.pending_fire = None
+            self.latest_actuator = None
 
             if self.ser is handle:
                 self.ser = None
@@ -471,6 +488,17 @@ class SerialBridgeNode(Node):
                 args, ep, ver = c_cmd
                 if ep == getattr(self, 'session_epoch', -1):
                     snapshot.append(('CMD', args, ep, ver, c_cmd))
+
+            # An abandoned ON request must never be refreshed indefinitely.
+            last_request = getattr(self, 'last_pump_command_time', None)
+            if (getattr(self, 'pump_state', 0) == 1
+                    or (self.pending_pump and self.pending_pump[0] == 1)) and (
+                    last_request is None or
+                    now_mono - last_request > self.pump_command_timeout_s):
+                if self.pending_pump is None or self.pending_pump[0] != 0:
+                    self.pump_version += 1
+                    self.pending_pump = (
+                        0, self.session_epoch, self.pump_version)
 
             c_pump = getattr(self, 'pending_pump', None)
             if c_pump:
@@ -698,6 +726,7 @@ class SerialBridgeNode(Node):
                         self.last_state_time_mono = 0.0
                         self.last_pump_time = now
                         self.pump_state = 0
+                        self.last_pump_command_time = None
                         self._transition_state('WAIT_FIRST_STATE')
 
                 if reject_reason is not None:
@@ -775,6 +804,11 @@ class SerialBridgeNode(Node):
             elif frame['type'] == 'ENV':
                 self.last_env_time_mono = now_mono
                 self.latest_env = (frame, epoch, now_mono)
+            elif frame['type'] == 'IR':
+                self.last_ir_time_mono = now_mono
+                self.latest_ir = (frame, epoch, now_mono)
+            elif frame['type'] == 'ACT':
+                self.latest_actuator = (frame, epoch, now_mono)
 
     def telemetry_publish_callback(self):
         """Publish telemetry from latest slots."""
@@ -787,6 +821,10 @@ class SerialBridgeNode(Node):
             self.latest_state = None
             env_item = self.latest_env
             self.latest_env = None
+            ir_item = self.latest_ir
+            self.latest_ir = None
+            actuator_item = self.latest_actuator
+            self.latest_actuator = None
 
         if state_item:
             frame, epoch, frame_mono = state_item
@@ -885,6 +923,73 @@ class SerialBridgeNode(Node):
             else:
                 self._record_publish_result(dropped=1)
 
+        if ir_item:
+            frame, epoch, frame_mono = ir_item
+            age = time.monotonic() - frame_mono
+            with self.state_lock:
+                valid_session = (self.running and self.session_ready and
+                                 self.telemetry_healthy and
+                                 self.session_epoch == epoch)
+            if valid_session and age < 0.3:
+                try:
+                    valid_sample = frame['valid'] == 1
+                    msg = String()
+                    msg.data = json.dumps({
+                        'schema_version': 1,
+                        'valid': valid_sample,
+                        'left': frame['left'] if valid_sample else None,
+                        'center': frame['center'] if valid_sample else None,
+                        'right': frame['right'] if valid_sample else None,
+                        'sample_age_ms': frame['sample_age_ms'],
+                        'receive_age_ms': round(age * 1000, 1),
+                    })
+                    with self.publish_lock:
+                        if not getattr(self, 'node_destroyed', False):
+                            self.ir_pub.publish(msg)
+                    self._record_publish_result(published=1)
+                except Exception as e:
+                    self.get_logger().warn(f'IR publish exception: {e}')
+                    self._record_publish_result(failed=1)
+            else:
+                self._record_publish_result(dropped=1)
+
+        if actuator_item:
+            frame, epoch, frame_mono = actuator_item
+            age = time.monotonic() - frame_mono
+            with self.state_lock:
+                valid_session = (self.running and self.session_ready and
+                                 self.telemetry_healthy and
+                                 self.session_epoch == epoch)
+            if valid_session and age < 0.5:
+                try:
+                    phase = ('IDLE', 'SWEEPING', 'RETURNING_HOME', 'LOCKED')
+                    msg = String()
+                    msg.data = json.dumps({
+                        'schema_version': 1,
+                        'mode': 'COMMAND_TELEMETRY_ONLY',
+                        'esp_ms': frame['esp_ms'],
+                        'pump_pwm_commanded_on': bool(frame['pump_pwm']),
+                        'pump_pwm_ready': bool(frame['pump_ready']),
+                        'servo_phase': phase[frame['servo_phase']],
+                        'servo_pwm_commanded_on': bool(frame['servo_pwm']),
+                        'servo_commanded_angle_deg': (
+                            frame['servo_angle_deg'] if frame['servo_pwm']
+                            else None),
+                        'home_command_completed_count': frame['home_count'],
+                        'receive_age_ms': round(age * 1000, 1),
+                        'physical_pump_or_nozzle_verified': False,
+                    })
+                    with self.publish_lock:
+                        if not getattr(self, 'node_destroyed', False):
+                            self.actuator_pub.publish(msg)
+                    self._record_publish_result(published=1)
+                except Exception as e:
+                    self.get_logger().warn(
+                        f'Actuator telemetry publish exception: {e}')
+                    self._record_publish_result(failed=1)
+            else:
+                self._record_publish_result(dropped=1)
+
     def log_timer_callback(self):
         """Log diagnostics."""
         with getattr(self, 'state_lock', threading.Lock()):
@@ -959,6 +1064,8 @@ class SerialBridgeNode(Node):
                 self.pending_fire = None
                 self.latest_state = None
                 self.latest_env = None
+                self.latest_ir = None
+                self.latest_actuator = None
                 self.session_started_mono = 0.0
                 self.last_state_time_mono = 0.0
                 self.close_ownership['deadline'] = (

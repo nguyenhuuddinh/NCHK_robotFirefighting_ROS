@@ -3,7 +3,7 @@
 <package format="3">
   <name>fire_robot_mission</name>
   <version>0.1.0</version>
-  <description>Observe-only Nav2 and YOLO mission supervision.</description>
+  <description>Fire mission supervision, shadow checks and opt-in live Nav2 stop gateway.</description>
   <maintainer email="dinhnguyenhuu65@gmail.com">huudinh</maintainer>
   <license>MIT</license>
 
@@ -13,6 +13,7 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>

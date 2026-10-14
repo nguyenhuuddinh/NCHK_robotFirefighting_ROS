@@ -1,0 +1,33 @@
+ir_range_preview:
+  ros__parameters:
+    # Laptop-only observation. Never connect this topic to a motor/pump owner.
+    ir_topic: "/fire_sensors/ir_raw"
+    detection_topic: "/yolo/detections"
+    alignment_topic: "/yolo/alignment_preview"
+    preview_topic: "/fire_mission/ir_range_preview"
+    publish_rate_hz: 5.0
+
+    # Baselines from the user's 2026-10-08 no-flame log. Keep potentiometers
+    # and the candle setup unchanged; these are NOT centimetre calibration.
+    baseline_left: 26060
+    baseline_center: 26140
+    baseline_right: 25825
+    baseline_tolerance: 500
+    min_active_drop: 1000
+
+    # Provisional R-eye bands; counts are not centimetres.
+    # Entering SPRAY_RANGE needs 5 consecutive IR samples; after leaving it,
+    # re-entry needs R <= 1050. Transitions stay UNKNOWN until confirmed.
+    # Even SPRAY_RANGE is telemetry only, never permission to spray.
+    right_too_close_max: 850
+    right_spray_max: 1100
+    right_approach_max: 1850
+
+    median_window: 5
+    stable_samples: 3
+    spray_confirm_samples: 5
+    spray_reentry_margin_counts: 50
+    ir_timeout_s: 0.6
+    vision_timeout_s: 0.5
+    max_ir_age_ms: 300.0
+    max_image_age_ms: 300.0

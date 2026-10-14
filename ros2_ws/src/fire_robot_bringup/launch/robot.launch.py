@@ -88,8 +88,8 @@ def generate_launch_description():
         'serial_port',
         default_value=(
             '/dev/serial/by-id/'
-            'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N16R8_'
-            '_16MB_Flash___8MB_PSRAM__9C139EAAE110-if00'
+            'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N8R2_'
+            '_8MB_Flash___2MB_PSRAM__28372F1F73C8-if00'
         ),
         description='Stable USB serial path của ESP32-S3'
     )

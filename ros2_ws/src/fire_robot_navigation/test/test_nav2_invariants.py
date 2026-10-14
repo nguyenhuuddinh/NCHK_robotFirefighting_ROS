@@ -1,4 +1,5 @@
 from launch_ros.actions import Node
+from launch.substitutions import LaunchConfiguration
 import ast
 import os
 import unittest
@@ -31,10 +32,8 @@ class TestNav2Invariants(unittest.TestCase):
             params = yaml.safe_load(stream)
 
         expected = [
-            [0.1275, 0.0750], [0.1015, 0.1000],
-            [-0.1015, 0.1000], [-0.1275, 0.0750],
-            [-0.1275, -0.0750], [-0.1015, -0.1000],
-            [0.1015, -0.1000], [0.1275, -0.0750],
+            [0.19, 0.10], [-0.15, 0.10],
+            [-0.15, -0.10], [0.19, -0.10],
         ]
 
         for costmap_name in ['local_costmap', 'global_costmap']:
@@ -61,6 +60,20 @@ class TestNav2Invariants(unittest.TestCase):
                     return ''
                 return ''.join([s.text for s in subs if hasattr(s, 'text')])
 
+            def is_launch_configuration(subs, expected_name):
+                substitutions = subs if isinstance(subs, (list, tuple)) else [subs]
+                if len(substitutions) != 1:
+                    return False
+                substitution = substitutions[0]
+                if not isinstance(substitution, LaunchConfiguration):
+                    return False
+                variable_name = substitution.variable_name
+                if isinstance(variable_name, (list, tuple)):
+                    variable_name = ''.join(
+                        part.text if hasattr(part, 'text') else str(part)
+                        for part in variable_name)
+                return variable_name == expected_name
+
             str_remaps = [(get_text(r[0]), get_text(r[1])) for r in remaps]
 
             if name == 'controller_server':
@@ -72,16 +85,23 @@ class TestNav2Invariants(unittest.TestCase):
                 has_cmd_vel_nav = any(r[0] == 'cmd_vel' and r[1] ==
                                       'cmd_vel_nav' for r in str_remaps)
                 has_cmd_vel_smoothed = any(
-                    r[0] == 'cmd_vel_smoothed' and r[1] == '/cmd_vel_raw' for r in str_remaps)
+                    get_text(remap[0]) == 'cmd_vel_smoothed'
+                    and is_launch_configuration(
+                        remap[1], 'cmd_vel_output_topic')
+                    for remap in remaps)
                 self.assertTrue(has_cmd_vel_nav,
                                 "velocity_smoother must take cmd_vel_nav as cmd_vel")
                 self.assertTrue(has_cmd_vel_smoothed,
-                                "velocity_smoother must remap cmd_vel_smoothed to /cmd_vel_raw")
+                                "velocity_smoother output must use cmd_vel_output_topic")
             elif name == 'behavior_server':
-                has_cmd_vel_raw = any(r[0] == 'cmd_vel' and r[1] ==
-                                      '/cmd_vel_raw' for r in str_remaps)
-                self.assertTrue(has_cmd_vel_raw,
-                                "behavior_server must remap cmd_vel to /cmd_vel_raw")
+                has_configured_output = any(
+                    get_text(remap[0]) == 'cmd_vel'
+                    and is_launch_configuration(
+                        remap[1], 'cmd_vel_output_topic')
+                    for remap in remaps)
+                self.assertTrue(
+                    has_configured_output,
+                    "behavior_server output must use cmd_vel_output_topic")
 
             if name in ['controller_server', 'velocity_smoother', 'behavior_server']:
                 has_direct_cmd_vel = any(r[0] == 'cmd_vel' and r[1] ==
@@ -119,6 +139,7 @@ class TestNav2Invariants(unittest.TestCase):
     def _validate_artifacts(self, installed_paths):
         expected_paths = [
             'launch/nav2.launch.py',
+            'launch/nav2_motion_shadow.launch.py',
             'launch/slam.launch.py',
             'config/nav2_params.yaml',
             'config/mapper_params_online_async.yaml',
@@ -177,6 +198,7 @@ class TestNav2Invariants(unittest.TestCase):
         # QA8 & QA16: Prove unexpected artifacts are caught
         expected_paths = [
             'launch/nav2.launch.py',
+            'launch/nav2_motion_shadow.launch.py',
             'launch/slam.launch.py',
             'config/nav2_params.yaml',
             'config/mapper_params_online_async.yaml',

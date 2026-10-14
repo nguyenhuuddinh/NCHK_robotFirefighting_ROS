@@ -68,17 +68,25 @@ def _age_seconds(received_at, now):
     return max(0.0, float(now) - float(received_at))
 
 
+def _valid_goal_uuid(value):
+    return (isinstance(value, str) and len(value) == 32 and
+            value != '0' * 32 and
+            all(char in '0123456789abcdef' for char in value.lower()))
+
+
 class MissionSupervisorCore:
     """Pure state machine used by the ROS node and unit tests."""
 
     def __init__(
             self, detection_timeout_s=0.5, alignment_timeout_s=0.5,
             odom_timeout_s=0.5, command_timeout_s=0.5,
-            fire_acquire_hold_s=0.5, centered_hold_s=0.5,
+            fire_acquire_hold_s=0.5, fire_reacquire_hold_s=None,
+            centered_hold_s=0.5,
             max_source_age_ms=300.0, max_future_skew_ms=20.0,
             stationary_linear_speed_m_s=0.02,
             stationary_angular_speed_rad_s=0.05,
-            turn_comparison_epsilon_rad_s=0.03):
+            turn_comparison_epsilon_rad_s=0.03,
+            review_timeout_s=0.6, actuator_timeout_s=0.35):
         positive = {
             'detection_timeout_s': detection_timeout_s,
             'alignment_timeout_s': alignment_timeout_s,
@@ -93,6 +101,8 @@ class MissionSupervisorCore:
                 stationary_angular_speed_rad_s),
             'turn_comparison_epsilon_rad_s': (
                 turn_comparison_epsilon_rad_s),
+            'review_timeout_s': review_timeout_s,
+            'actuator_timeout_s': actuator_timeout_s,
         }
         invalid = [name for name, value in positive.items() if value <= 0.0]
         if invalid:
@@ -100,17 +110,27 @@ class MissionSupervisorCore:
                 'mission supervisor parameters must be positive: '
                 + ', '.join(invalid)
             )
+        if fire_reacquire_hold_s is None:
+            fire_reacquire_hold_s = min(0.2, fire_acquire_hold_s)
+        if fire_reacquire_hold_s <= 0.0:
+            raise ValueError('fire_reacquire_hold_s must be positive')
         self.detection_timeout = float(detection_timeout_s)
         self.alignment_timeout = float(alignment_timeout_s)
         self.odom_timeout = float(odom_timeout_s)
         self.command_timeout = float(command_timeout_s)
         self.fire_acquire_hold = float(fire_acquire_hold_s)
+        self.fire_reacquire_hold = float(fire_reacquire_hold_s)
+        if self.fire_reacquire_hold > self.fire_acquire_hold:
+            raise ValueError('fire_reacquire_hold_s must not exceed '
+                             'fire_acquire_hold_s')
         self.centered_hold = float(centered_hold_s)
         self.max_source_age = float(max_source_age_ms)
         self.max_future_skew = float(max_future_skew_ms)
         self.stationary_linear = float(stationary_linear_speed_m_s)
         self.stationary_angular = float(stationary_angular_speed_rad_s)
         self.turn_epsilon = float(turn_comparison_epsilon_rad_s)
+        self.review_timeout = float(review_timeout_s)
+        self.actuator_timeout = float(actuator_timeout_s)
 
         self._detection = None
         self._detection_received = None
@@ -125,10 +145,21 @@ class MissionSupervisorCore:
         self._raw_command = None
         self._raw_command_received = None
         self._goal_statuses = []
+        self._goal_status_records = []
         self._goal_status_received = None
+        self._review = None
+        self._review_received = None
+        self._actuator = None
+        self._actuator_received = None
         self._candidate_since = None
+        self._candidate_reacquire = False
+        self._candidate_confirmed = False
+        self._candidate_last_detection_at = None
+        self._candidate_detection_count = 0
         self._centered_since = None
         self._ever_acquired = False
+        self._acquired_goal_uuid = None
+        self._acquired_goal_canceled = False
         self._last_state = None
         self._state_since = None
 
@@ -172,9 +203,104 @@ class MissionSupervisorCore:
         self._raw_command_received = float(now)
 
     def update_goal_statuses(self, statuses, now):
-        """Store integer status values from NavigateToPose."""
-        self._goal_statuses = [int(status) for status in statuses]
+        """Store action statuses and their UUIDs when supplied by Nav2."""
+        records = []
+        for item in statuses:
+            if isinstance(item, (tuple, list)) and len(item) == 2:
+                uuid, status = item
+            else:
+                uuid, status = None, item
+            records.append((str(uuid).lower() if uuid is not None else None,
+                            int(status)))
+        self._goal_status_records = records
+        self._goal_statuses = [status for _, status in records]
         self._goal_status_received = float(now)
+        if _valid_goal_uuid(self._acquired_goal_uuid):
+            if any(uuid != self._acquired_goal_uuid and
+                   status in ACTIVE_GOAL_STATUSES and
+                   _valid_goal_uuid(uuid) for uuid, status in records):
+                self._acquired_goal_canceled = False
+                self._reset_candidate()
+            elif any(uuid == self._acquired_goal_uuid and status == 5
+                     for uuid, status in records):
+                self._acquired_goal_canceled = True
+            elif any(uuid == self._acquired_goal_uuid and status != 5
+                     for uuid, status in records):
+                self._acquired_goal_canceled = False
+
+    def update_review(self, payload, now):
+        """Store subscriber-only post-spray evidence for this goal."""
+        self._review = payload
+        self._review_received = float(now)
+
+    def update_actuator(self, payload, now):
+        """Store Pi bridge telemetry; never command the actuator."""
+        self._actuator = payload
+        self._actuator_received = float(now)
+
+    def _active_goal_uuid(self):
+        active = {uuid for uuid, status in self._goal_status_records
+                  if status in ACTIVE_GOAL_STATUSES and
+                  _valid_goal_uuid(uuid)}
+        return next(iter(active)) if len(active) == 1 else None
+
+    def _same_goal_reacquisition(self, nav_active):
+        """Only shorten confirmation for the already acquired Nav2 goal."""
+        if not self._ever_acquired or not _valid_goal_uuid(
+                self._acquired_goal_uuid):
+            return False
+        if nav_active:
+            return self._active_goal_uuid() == self._acquired_goal_uuid
+        return self._acquired_goal_canceled
+
+    def _reset_candidate(self):
+        self._candidate_since = None
+        self._candidate_reacquire = False
+        self._candidate_confirmed = False
+        self._candidate_last_detection_at = None
+        self._candidate_detection_count = 0
+
+    def _reviewed_clear(self, now, nav_active):
+        """Require fresh exact-goal review and stopped actuator to clear."""
+        if not self._ever_acquired or not _valid_goal_uuid(
+                self._acquired_goal_uuid) or nav_active:
+            return False
+        if _age_seconds(self._review_received, now) is None or \
+                _age_seconds(self._review_received, now) > \
+                self.review_timeout:
+            return False
+        if _age_seconds(self._actuator_received, now) is None or \
+                _age_seconds(self._actuator_received, now) > \
+                self.actuator_timeout:
+            return False
+        review = self._review if isinstance(self._review, dict) else {}
+        actuator = self._actuator if isinstance(self._actuator, dict) else {}
+        safety = review.get('safety') or {}
+        odom_fresh, stationary, _ = self._odom_status(now)
+        return (review.get('schema_version') == 1 and
+                review.get('mode') == 'SHADOW_ONLY' and
+                review.get('state') == 'NO_FIRE_EVIDENCE' and
+                review.get('goal_uuid') == self._acquired_goal_uuid and
+                type(review.get('pulse_index')) is int and
+                review['pulse_index'] >= 1 and
+                review.get('blockers') == [] and
+                safety.get('motion_command_publisher') is False and
+                safety.get('pump_command_publisher') is False and
+                safety.get('nav2_action_client') is False and
+                safety.get('actuation_authorized') is False and
+                actuator.get('schema_version') == 1 and
+                actuator.get('mode') == 'COMMAND_TELEMETRY_ONLY' and
+                actuator.get('pump_pwm_commanded_on') is False and
+                actuator.get('servo_phase') == 'IDLE' and
+                actuator.get('servo_pwm_commanded_on') is False and
+                odom_fresh and stationary and
+                self._motion_owner(False, now) !=
+                'UNKNOWN_RAW_COMMAND_SOURCE' and
+                self._acquired_goal_canceled and
+                not any(status in ACTIVE_GOAL_STATUSES
+                        for _, status in self._goal_status_records) and
+                not any(uuid == self._acquired_goal_uuid and status != 5
+                        for uuid, status in self._goal_status_records))
 
     def _nav2_goal(self):
         active = [
@@ -189,6 +315,8 @@ class MissionSupervisorCore:
             else:
                 status = 1
             return True, GOAL_STATUS_NAMES[status]
+        if self._acquired_goal_canceled:
+            return False, 'CANCELED'
         if self._goal_statuses:
             status = self._goal_statuses[-1]
             return False, GOAL_STATUS_NAMES.get(status, f'INVALID_{status}')
@@ -322,6 +450,12 @@ class MissionSupervisorCore:
         alignment_blockers = self._alignment_health(now, target_present)
         hard_blockers = detection_blockers + alignment_blockers
 
+        if not target_present and not hard_blockers and \
+                self._reviewed_clear(now, nav_active):
+            self._ever_acquired = False
+            self._acquired_goal_uuid = None
+            self._acquired_goal_canceled = False
+
         alignment_state, direction, fire_angular = (
             self._alignment_values())
         intent = 'HOLD_STOP'
@@ -330,18 +464,41 @@ class MissionSupervisorCore:
         elif hard_blockers:
             state = 'FAULT'
             intent = 'REQUEST_SAFE_STOP'
-            self._candidate_since = None
+            self._reset_candidate()
             self._centered_since = None
         elif target_present:
-            if self._candidate_since is None:
+            goal_uuid = self._active_goal_uuid() if nav_active else None
+            if (self._candidate_confirmed and goal_uuid is not None and
+                    self._acquired_goal_uuid is not None and
+                    goal_uuid != self._acquired_goal_uuid):
+                self._reset_candidate()
+            reacquire = self._same_goal_reacquisition(nav_active)
+            if self._candidate_since is None or \
+                    (not self._candidate_confirmed and
+                     self._candidate_reacquire != reacquire):
+                self._reset_candidate()
                 self._candidate_since = now
+                self._candidate_reacquire = reacquire
+            if self._candidate_last_detection_at != \
+                    self._detection_received:
+                self._candidate_last_detection_at = self._detection_received
+                self._candidate_detection_count += 1
             acquired_for = now - self._candidate_since
-            if acquired_for < self.fire_acquire_hold:
+            hold = (self.fire_reacquire_hold if reacquire else
+                    self.fire_acquire_hold)
+            enough_time = acquired_for >= hold
+            enough_samples = self._candidate_detection_count >= 2
+            if not self._candidate_confirmed and not (
+                    enough_time and enough_samples):
                 state = 'FIRE_CANDIDATE'
                 intent = 'KEEP_NAV2' if nav_active else 'HOLD_STOP'
                 self._centered_since = None
             else:
-                self._ever_acquired = True
+                self._candidate_confirmed = True
+                if goal_uuid is not None:
+                    self._ever_acquired = True
+                    self._acquired_goal_uuid = goal_uuid
+                    self._acquired_goal_canceled = False
                 if alignment_state == 'CENTERED':
                     if self._centered_since is None:
                         self._centered_since = now
@@ -361,7 +518,7 @@ class MissionSupervisorCore:
                     intent = 'REQUEST_SAFE_STOP'
                     self._centered_since = None
         else:
-            self._candidate_since = None
+            self._reset_candidate()
             self._centered_since = None
             if self._ever_acquired:
                 state = 'TARGET_LOST'
@@ -497,6 +654,10 @@ class FireMissionSupervisor(Node):
             self._on_nav_status,
             action_status_qos(),
         )
+        self.create_subscription(
+            String, self.post_spray_review_topic, self._on_review, qos)
+        self.create_subscription(
+            String, self.actuator_state_topic, self._on_actuator, qos)
         self.create_timer(1.0 / self.publish_rate, self._publish_state)
         self.get_logger().warning(
             '[MISSION] OBSERVE-ONLY: no Twist, Nav2 action or actuator '
@@ -516,6 +677,10 @@ class FireMissionSupervisor(Node):
         self.declare_parameter('raw_command_topic', '/cmd_vel_raw')
         self.declare_parameter(
             'nav_status_topic', '/navigate_to_pose/_action/status')
+        self.declare_parameter(
+            'post_spray_review_topic', '/fire_mission/post_spray_review')
+        self.declare_parameter(
+            'actuator_state_topic', '/fire_sensors/actuator_state')
         self.declare_parameter('state_topic', '/fire_mission/state')
         self.declare_parameter('publish_rate_hz', 10.0)
         self.declare_parameter('detection_timeout_s', 0.50)
@@ -523,6 +688,7 @@ class FireMissionSupervisor(Node):
         self.declare_parameter('odom_timeout_s', 0.50)
         self.declare_parameter('command_timeout_s', 0.50)
         self.declare_parameter('fire_acquire_hold_s', 0.50)
+        self.declare_parameter('fire_reacquire_hold_s', 0.20)
         self.declare_parameter('centered_hold_s', 0.50)
         self.declare_parameter('max_source_age_ms', 300.0)
         self.declare_parameter('max_future_skew_ms', 20.0)
@@ -531,6 +697,8 @@ class FireMissionSupervisor(Node):
             'stationary_angular_speed_rad_s', 0.05)
         self.declare_parameter(
             'turn_comparison_epsilon_rad_s', 0.03)
+        self.declare_parameter('review_timeout_s', 0.6)
+        self.declare_parameter('actuator_timeout_s', 0.35)
 
     def _read_parameters(self):
         topic_names = [
@@ -540,6 +708,8 @@ class FireMissionSupervisor(Node):
             'nav_command_topic',
             'raw_command_topic',
             'nav_status_topic',
+            'post_spray_review_topic',
+            'actuator_state_topic',
             'state_topic',
         ]
         for name in topic_names:
@@ -561,12 +731,15 @@ class FireMissionSupervisor(Node):
                 'odom_timeout_s',
                 'command_timeout_s',
                 'fire_acquire_hold_s',
+                'fire_reacquire_hold_s',
                 'centered_hold_s',
                 'max_source_age_ms',
                 'max_future_skew_ms',
                 'stationary_linear_speed_m_s',
                 'stationary_angular_speed_rad_s',
                 'turn_comparison_epsilon_rad_s',
+                'review_timeout_s',
+                'actuator_timeout_s',
             )
         }
 
@@ -616,7 +789,39 @@ class FireMissionSupervisor(Node):
 
     def _on_nav_status(self, message):
         self._core.update_goal_statuses(
-            [item.status for item in message.status_list], self._now())
+            [(bytes(item.goal_info.goal_id.uuid).hex(), item.status)
+             for item in message.status_list], self._now())
+
+    def _single_expected_publisher(self, topic, node_name):
+        infos = self.get_publishers_info_by_topic(topic)
+        return (len(infos) == 1 and
+                infos[0].node_namespace == '/' and
+                infos[0].node_name == node_name and
+                infos[0].topic_type == 'std_msgs/msg/String' and
+                infos[0].qos_profile.reliability ==
+                ReliabilityPolicy.BEST_EFFORT)
+
+    def _on_review(self, message):
+        if not self._single_expected_publisher(
+                self.post_spray_review_topic, 'post_spray_review'):
+            self._core.update_review(None, self._now())
+            return
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            payload = None
+        self._core.update_review(payload, self._now())
+
+    def _on_actuator(self, message):
+        if not self._single_expected_publisher(
+                self.actuator_state_topic, 'serial_bridge_node'):
+            self._core.update_actuator(None, self._now())
+            return
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            payload = None
+        self._core.update_actuator(payload, self._now())
 
     def _publish_state(self):
         payload = self._core.evaluate(self._now())

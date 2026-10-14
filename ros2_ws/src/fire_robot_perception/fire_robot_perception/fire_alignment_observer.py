@@ -68,7 +68,8 @@ class AlignmentPreviewController:
 
     def __init__(
             self, deadband_enter, deadband_exit, proportional_gain,
-            max_angular_speed, max_angular_acceleration, max_step_dt=0.25):
+            max_angular_speed, max_angular_acceleration, max_step_dt=0.25,
+            min_angular_speed=0.0):
         if not 0.0 <= deadband_enter < deadband_exit < 1.0:
             raise ValueError(
                 'deadbands must satisfy 0 <= enter < exit < 1'
@@ -77,12 +78,16 @@ class AlignmentPreviewController:
             raise ValueError('proportional_gain must be positive')
         if max_angular_speed <= 0.0 or max_angular_acceleration <= 0.0:
             raise ValueError('angular limits must be positive')
+        if not math.isfinite(min_angular_speed) or not \
+                0.0 <= min_angular_speed < max_angular_speed:
+            raise ValueError('minimum yaw speed must be below maximum')
         if max_step_dt <= 0.0:
             raise ValueError('max_step_dt must be positive')
         self.deadband_enter = float(deadband_enter)
         self.deadband_exit = float(deadband_exit)
         self.proportional_gain = float(proportional_gain)
         self.max_angular_speed = float(max_angular_speed)
+        self.min_angular_speed = float(min_angular_speed)
         self.max_angular_acceleration = float(max_angular_acceleration)
         self.max_step_dt = float(max_step_dt)
         self.reset()
@@ -135,7 +140,19 @@ class AlignmentPreviewController:
             -self.max_angular_speed,
             self.max_angular_speed,
         )
+        if self.min_angular_speed > 0.0:
+            target = math.copysign(
+                max(abs(target), self.min_angular_speed), raw_target)
         saturated = not math.isclose(target, raw_target, abs_tol=1e-9)
+        # Telemetry rounds the target to four decimals.  A value just outside
+        # the deadband can otherwise become ALIGNING_* with a zero target;
+        # the live owner correctly rejects that inconsistent direction and
+        # aborts its one-shot turn.  At this resolution it is centered.
+        if round(target, 4) == 0.0:
+            self._centered = True
+            preview = self._zero_preview(now)
+            preview['error_x_normalized'] = round(error_x, 4)
+            return preview
 
         if self._last_update is None:
             output = 0.0
@@ -190,6 +207,7 @@ class FireAlignmentObserver(Node):
             self.proportional_gain,
             self.max_angular_speed,
             self.max_angular_acceleration,
+            min_angular_speed=self.min_angular_speed,
         )
         self._publisher = self.create_publisher(
             String, self.preview_topic, telemetry_qos())
@@ -206,6 +224,7 @@ class FireAlignmentObserver(Node):
             f'[ALIGNMENT] {self.input_topic} -> {self.preview_topic}; '
             f'deadband={self.deadband_enter:.2f}/{self.deadband_exit:.2f}, '
             f'kp={self.proportional_gain:.2f}, '
+            f'min_speed={self.min_angular_speed:.2f} rad/s, '
             f'max_speed={self.max_angular_speed:.2f} rad/s, '
             f'max_accel={self.max_angular_acceleration:.2f} rad/s^2'
         )
@@ -217,7 +236,8 @@ class FireAlignmentObserver(Node):
         self.declare_parameter('deadband_enter_x', 0.10)
         self.declare_parameter('deadband_exit_x', 0.13)
         self.declare_parameter('proportional_gain', 1.0)
-        self.declare_parameter('max_angular_speed_rad_s', 0.50)
+        self.declare_parameter('min_angular_speed_rad_s', 0.0)
+        self.declare_parameter('max_angular_speed_rad_s', 0.60)
         self.declare_parameter('max_angular_acceleration_rad_s2', 0.80)
         self.declare_parameter('max_source_age_ms', 300.0)
         self.declare_parameter('input_timeout_s', 0.50)
@@ -231,6 +251,8 @@ class FireAlignmentObserver(Node):
             self.get_parameter('deadband_exit_x').value)
         self.proportional_gain = float(
             self.get_parameter('proportional_gain').value)
+        self.min_angular_speed = float(
+            self.get_parameter('min_angular_speed_rad_s').value)
         self.max_angular_speed = float(
             self.get_parameter('max_angular_speed_rad_s').value)
         self.max_angular_acceleration = float(
@@ -256,6 +278,7 @@ class FireAlignmentObserver(Node):
                 'deadband_enter_x': self.deadband_enter,
                 'deadband_exit_x': self.deadband_exit,
                 'proportional_gain': self.proportional_gain,
+                'min_angular_speed_rad_s': self.min_angular_speed,
                 'max_angular_speed_rad_s': self.max_angular_speed,
                 'max_angular_acceleration_rad_s2': (
                     self.max_angular_acceleration

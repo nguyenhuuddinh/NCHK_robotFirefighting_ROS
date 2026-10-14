@@ -1,0 +1,9 @@
+ir_range_preview:
+  ros__parameters:
+    # Temporary single-candle trial only. Same fail-closed bands as the
+    # default preview; do not use as physical distance or pump calibration.
+    right_too_close_max: 850
+    right_spray_max: 1100
+    right_approach_max: 1850
+    spray_confirm_samples: 5
+    spray_reentry_margin_counts: 50

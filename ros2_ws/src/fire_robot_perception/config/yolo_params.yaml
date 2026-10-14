@@ -49,14 +49,16 @@ fire_alignment_observer:
     input_topic: "/yolo/detections"
     preview_topic: "/yolo/alignment_preview"
 
-    # Enter a centered state at +/-0.10 and stay centered until +/-0.13.
+    # Enter centered at +/-0.10; tolerate motion jitter until +/-0.13.
     # The hysteresis prevents repeated LEFT/RIGHT changes near image center.
     deadband_enter_x: 0.10
     deadband_exit_x: 0.13
 
-    # Conservative preview limits for the first stationary evaluation.
+    # Keep turning outside the center band at a speed the robot can drive.
+    # The live owner still ramps from zero and stops on center/lost target.
     proportional_gain: 1.0
-    max_angular_speed_rad_s: 0.50
+    min_angular_speed_rad_s: 0.40
+    max_angular_speed_rad_s: 0.60
     max_angular_acceleration_rad_s2: 0.80
 
     # Reject clearly old source images and zero preview on local input loss.

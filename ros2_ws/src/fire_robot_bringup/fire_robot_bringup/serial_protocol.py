@@ -269,6 +269,51 @@ class SerialProtocolV2:
                 else:
                     self.parse_fail_count += 1
                     continue
+            elif msg_type == 'IR':
+                # IR,2,seq,sample_age_ms,left,center,right,valid
+                if (len(parts) != 8 or
+                        not all(is_strict_uint(f) for f in parts[3:])):
+                    self.parse_fail_count += 1
+                    continue
+                age_ms, left, center, right, valid = map(int, parts[3:])
+                if (age_ms > 0xFFFFFFFF or valid not in (0, 1) or
+                        any(raw > 32767 for raw in (left, center, right)) or
+                        (valid == 1 and age_ms > 300) or
+                        (valid == 0 and any((left, center, right)))):
+                    self.parse_fail_count += 1
+                    continue
+                parsed = {
+                    'type': 'IR', 'seq': seq, 'sample_age_ms': age_ms,
+                    'left': left, 'center': center, 'right': right,
+                    'valid': valid
+                }
+            elif msg_type == 'ACT':
+                # Commanded PWM state only; no flow or nozzle feedback.
+                # ACT,2,seq,esp_ms,pump_pwm,phase,angle,servo_pwm,home_count,pump_ready
+                if len(parts) != 10 or not all(
+                        is_strict_uint(f) for f in parts[3:]):
+                    self.parse_fail_count += 1
+                    continue
+                (esp_ms, pump_pwm, phase, angle, servo_pwm,
+                 home_count, pump_ready) = map(int, parts[3:])
+                if (esp_ms > 0xFFFFFFFF or home_count > 0xFFFFFFFF or
+                        pump_pwm not in (0, 1) or
+                        servo_pwm not in (0, 1) or
+                        pump_ready not in (0, 1) or phase not in (0, 1, 2, 3) or
+                        (servo_pwm == 0 and angle != 255) or
+                        (servo_pwm == 1 and not 0 <= angle <= 180) or
+                        (pump_pwm == 1 and (phase != 1 or pump_ready != 1)) or
+                        (phase == 1 and pump_pwm != 1) or
+                        (phase == 2 and (pump_pwm != 0 or servo_pwm != 1)) or
+                        (phase == 3 and (pump_pwm != 0 or servo_pwm != 0))):
+                    self.parse_fail_count += 1
+                    continue
+                parsed = {
+                    'type': 'ACT', 'seq': seq, 'esp_ms': esp_ms,
+                    'pump_pwm': pump_pwm, 'servo_phase': phase,
+                    'servo_angle_deg': angle, 'servo_pwm': servo_pwm,
+                    'home_count': home_count, 'pump_ready': pump_ready,
+                }
             else:
                 self.parse_fail_count += 1
                 continue

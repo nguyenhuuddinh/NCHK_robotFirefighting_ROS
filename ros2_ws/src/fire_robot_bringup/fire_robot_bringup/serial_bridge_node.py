@@ -104,6 +104,7 @@ class SerialBridgeNode(Node):
         self.session_epoch = 0
         self.telemetry_healthy = False
         self.state_stale_timeout_ms = 500
+        self.latest_usb_diagnostic = None
 
         self.pending_cmd = None
         self.pending_pump = None
@@ -809,6 +810,9 @@ class SerialBridgeNode(Node):
                 self.latest_ir = (frame, epoch, now_mono)
             elif frame['type'] == 'ACT':
                 self.latest_actuator = (frame, epoch, now_mono)
+            elif frame['type'] == 'USB':
+                # Do not refresh STATE time, safety readiness or reconnect state.
+                self.latest_usb_diagnostic = (frame, epoch, now_mono)
 
     def telemetry_publish_callback(self):
         """Publish telemetry from latest slots."""
@@ -825,6 +829,8 @@ class SerialBridgeNode(Node):
             self.latest_ir = None
             actuator_item = self.latest_actuator
             self.latest_actuator = None
+            usb_item = getattr(self, 'latest_usb_diagnostic', None)
+            self.latest_usb_diagnostic = None
 
         if state_item:
             frame, epoch, frame_mono = state_item
@@ -989,6 +995,17 @@ class SerialBridgeNode(Node):
                     self._record_publish_result(failed=1)
             else:
                 self._record_publish_result(dropped=1)
+
+        if usb_item:
+            frame, epoch, frame_mono = usb_item
+            with self.state_lock:
+                valid_diagnostic = (self.running and self.session_ready and
+                                    self.session_epoch == epoch)
+            if valid_diagnostic:
+                self.get_logger().info(
+                    'esp_usb_diag epoch=%d receive_age_ms=%.1f %s' % (
+                        epoch, max(0.0, time.monotonic() - frame_mono) * 1000.0,
+                        json.dumps(frame, sort_keys=True)))
 
     def log_timer_callback(self):
         """Log diagnostics."""

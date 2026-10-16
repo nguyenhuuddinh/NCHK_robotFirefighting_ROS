@@ -287,6 +287,27 @@ class SerialProtocolV2:
                     'left': left, 'center': center, 'right': right,
                     'valid': valid
                 }
+            elif msg_type == 'USB':
+                # Diagnostic-only recovery snapshot; never a STATE substitute.
+                names = (
+                    'esp_ms', 'recoveries', 'recovery_ms', 'reason', 'offset',
+                    'length', 'available', 'late_ms', 'task_gap_ms',
+                    'tx_event_age_ms', 'tx_event_seen', 'deadline_expired',
+                    'deadline_blocked', 'short_write',
+                )
+                if len(parts) != 17 or not all(
+                        is_strict_uint(f) for f in parts[3:]):
+                    self.parse_fail_count += 1
+                    continue
+                values = list(map(int, parts[3:]))
+                fields = dict(zip(names, values))
+                if (any(v > 0xFFFFFFFF for v in values) or
+                        fields['reason'] not in (0, 1, 2) or
+                        fields['tx_event_seen'] not in (0, 1) or
+                        not 0 <= fields['offset'] <= fields['length'] <= 192):
+                    self.parse_fail_count += 1
+                    continue
+                parsed = {'type': 'USB', 'seq': seq, **fields}
             elif msg_type == 'ACT':
                 # Commanded PWM state only; no flow or nozzle feedback.
                 # ACT,2,seq,esp_ms,pump_pwm,phase,angle,servo_pwm,home_count,pump_ready

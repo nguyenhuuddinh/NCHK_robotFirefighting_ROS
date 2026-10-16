@@ -614,6 +614,64 @@ def test_actuator_telemetry_interleaved_and_stale_rejected(rclpy_init):
             node.destroy_node()
 
 
+def test_usb_diagnostics_log_without_refreshing_state_or_safety(rclpy_init, monkeypatch):
+    node = None
+    try:
+        registry.instances.clear()
+        node = SerialBridgeNode(serial_cls=FakeSerial)
+        assert wait_until(lambda: node.session_ready and len(registry.instances) > 0)
+        inst = registry.instances[0]
+        logs = []
+        real_logger = node.get_logger()
+
+        class Logger:
+            def info(self, message, **kwargs):
+                logs.append(message)
+
+            def __getattr__(self, name):
+                return getattr(real_logger, name)
+
+        monkeypatch.setattr(node, 'get_logger', lambda: Logger())
+
+        def diag(seq):
+            payload = (f'USB,2,{seq},5000,1,4500,1,64,100,0,20,120,300,1,3,3,0')
+            return f'@{payload}*{crc16_ccitt_false(payload.encode()):04X}\n'.encode()
+
+        inst.inject_rx(diag(1))
+        assert wait_until(lambda: node.latest_usb_diagnostic is not None)
+        assert not node.telemetry_healthy
+        assert node.last_state_time_mono == 0
+        assert node._session_state == 'WAIT_FIRST_STATE'
+        node.telemetry_publish_callback()
+        assert sum('esp_usb_diag' in message for message in logs) == 1
+
+        inst.inject_rx(make_state(2, 5100, 0, 0, 0, 0, 0, 0))
+        assert wait_until(lambda: node.telemetry_healthy)
+        original_state_time = node.last_state_time_mono
+        original_epoch = node.session_epoch
+        inst.inject_rx(diag(3))
+        assert wait_until(lambda: node.latest_usb_diagnostic is not None)
+        assert node.last_state_time_mono == original_state_time
+        with node.state_lock:
+            frame, epoch, received = node.latest_usb_diagnostic
+            node.latest_usb_diagnostic = (frame, epoch - 1, received)
+        node.telemetry_publish_callback()
+        assert sum('esp_usb_diag' in message for message in logs) == 1
+
+        # Diagnostic traffic cannot keep STATE fresh: the real worker must
+        # still quarantine at its unchanged 500 ms deadline and reconnect.
+        for seq in range(4, 24):
+            if node.session_epoch != original_epoch:
+                break
+            inst.inject_rx(diag(seq))
+            time.sleep(0.05)
+        assert wait_until(lambda: node.session_epoch != original_epoch)
+        assert not node.telemetry_healthy
+    finally:
+        if node:
+            node.destroy_node()
+
+
 def test_odom_imu_quaternion(rclpy_init):
     node = None
     try:

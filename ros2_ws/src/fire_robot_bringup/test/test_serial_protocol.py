@@ -11,6 +11,40 @@ def test_crc_vectors():
     assert crc16_ccitt_false(b"ENV,2,2,0,0.0,0.0,0.0,0") == 0x5A2E
 
 
+def test_usb_recovery_diagnostics_fragmented_bounded_and_crc_checked():
+    payload = b'USB,2,2,5000,1,4500,1,64,100,0,20,120,300,1,3,3,0'
+    wire = _create_bad_frame(payload)
+    for chunk_size in (1, 7, 64, 192):
+        parser = SerialProtocolV2()
+        frames = []
+        for i in range(0, len(wire), chunk_size):
+            frames.extend(parser.parse_chunk(wire[i:i + chunk_size]))
+        assert len(frames) == 1
+        assert frames[0]['recoveries'] == 1
+        assert frames[0]['recovery_ms'] == 4500
+        assert frames[0]['deadline_blocked'] == 3
+        assert frames[0]['type'] == 'USB'
+        next_frame = _create_bad_frame(
+            b'STATE,2,3,5100,0.000,0.000,0.000,0.000,0.000,0.000')
+        assert list(parser.parse_chunk(next_frame))[0]['type'] == 'STATE'
+        assert parser.gap_count == 0
+
+    parser = SerialProtocolV2()
+    values = payload.decode().split(',')
+    for index, bad_value in ((3, '-1'), (4, '4294967296'), (6, '3'),
+                             (7, '101'), (8, '193'), (13, '2')):
+        bad = values.copy()
+        bad[index] = bad_value
+        assert list(parser.parse_chunk(_create_bad_frame(','.join(bad).encode()))) == []
+    assert list(parser.parse_chunk(_create_bad_frame(b','.join(payload.split(b',')[:-1])))) == []
+    corrupt = bytearray(wire)
+    corrupt[12] ^= 1
+    assert list(parser.parse_chunk(corrupt)) == []
+    assert parser.crc_fail_count == 1
+    assert parser.rx_seq == -1
+    assert list(parser.parse_chunk(wire))[0]['reason'] == 1
+
+
 def test_encode_frames_and_tx_invalid():
     """Test generating frames and rejecting invalid bounds/types."""
     p = SerialProtocolV2()

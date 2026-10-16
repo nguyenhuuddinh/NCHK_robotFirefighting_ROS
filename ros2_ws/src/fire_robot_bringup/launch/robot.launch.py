@@ -155,6 +155,8 @@ def generate_launch_description():
         package='fire_robot_bringup',
         executable='serial_bridge_node',
         name='serial_bridge_node',
+        # DDS writes must not block serial handling during AP Nav2 startup.
+        additional_env={'RMW_FASTRTPS_PUBLICATION_MODE': 'ASYNCHRONOUS'},
         output='screen',
         parameters=[{
             'serial_port': LaunchConfiguration('serial_port'),
@@ -190,6 +192,7 @@ def generate_launch_description():
         package='fire_robot_bringup',
         executable='odom_to_tf_broadcaster',
         name='odom_to_tf_broadcaster',
+        additional_env={'RMW_FASTRTPS_PUBLICATION_MODE': 'ASYNCHRONOUS'},
         output='screen',
         parameters=[
             pi_params_file,

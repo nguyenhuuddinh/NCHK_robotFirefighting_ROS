@@ -1,7 +1,7 @@
 import os
 import yaml
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, ExecuteProcess, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -16,6 +16,29 @@ ALLOWED_CMD_VEL_OUTPUT_TOPICS = {
     PRODUCTION_CMD_VEL_OUTPUT_TOPIC,
     MISSION_SHADOW_CMD_VEL_OUTPUT_TOPIC,
 }
+
+# Avoid creating all Nav2 DDS participants at once on the Pi Wi-Fi AP.
+NAV2_STARTUP_STEP_S = 8.0
+
+
+def stagger_nav2_nodes(nodes):
+    """Start localization before navigation, with bounded DDS join bursts."""
+    if len(nodes) != 10:
+        raise RuntimeError('Nav2 startup schedule requires ten nodes')
+    return [
+        TimerAction(period=0.0, actions=[nodes[0]]),  # map_server
+        TimerAction(period=NAV2_STARTUP_STEP_S, actions=[nodes[1]]),  # amcl
+        TimerAction(period=2 * NAV2_STARTUP_STEP_S,
+                    actions=[nodes[8]]),  # localization lifecycle
+        TimerAction(period=3 * NAV2_STARTUP_STEP_S,
+                    actions=[nodes[2], nodes[3]]),  # controller, smoother
+        TimerAction(period=4 * NAV2_STARTUP_STEP_S,
+                    actions=[nodes[4], nodes[5]]),  # planner, behavior
+        TimerAction(period=5 * NAV2_STARTUP_STEP_S,
+                    actions=[nodes[6], nodes[7]]),  # BT, velocity smoother
+        TimerAction(period=6 * NAV2_STARTUP_STEP_S,
+                    actions=[nodes[9]]),  # navigation lifecycle
+    ]
 
 
 def preflight_checks(context, *args, **kwargs):
@@ -146,7 +169,7 @@ def generate_launch_description():
         output='screen'
     )
 
-    return LaunchDescription([
+    launch_actions = [
         declare_use_sim_time,
         declare_map,
         declare_params_file,
@@ -228,4 +251,8 @@ def generate_launch_description():
             parameters=[{'use_sim_time': use_sim_time},
                         {'autostart': autostart},
                         {'node_names': lifecycle_nodes_navigation}]),
+    ]
+    return LaunchDescription([
+        *launch_actions[:8],
+        *stagger_nav2_nodes(launch_actions[8:]),
     ])

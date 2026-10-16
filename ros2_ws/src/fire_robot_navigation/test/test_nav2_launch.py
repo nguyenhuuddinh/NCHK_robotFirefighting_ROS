@@ -175,7 +175,8 @@ class TestNav2Launch(unittest.TestCase):
 
     def _validate_launch(self, ld):
         from launch.actions import (
-            ExecuteProcess, IncludeLaunchDescription, DeclareLaunchArgument, OpaqueFunction
+            ExecuteProcess, IncludeLaunchDescription, DeclareLaunchArgument,
+            OpaqueFunction, TimerAction
         )
         from launch_ros.actions import Node
         from launch.conditions import IfCondition
@@ -218,6 +219,7 @@ class TestNav2Launch(unittest.TestCase):
             DeclareLaunchArgument: 6,
             OpaqueFunction: 1,
             ExecuteProcess: 1,
+            TimerAction: 7,
             Node: 10,
         }
         self.assertEqual(
@@ -227,6 +229,18 @@ class TestNav2Launch(unittest.TestCase):
         )
 
         nodes = [e for e in all_entities if type(e) is Node]
+
+        startup = [e for e in ld.entities if type(e) is TimerAction]
+        self.assertEqual([e.period for e in startup],
+                         [0.0, 8.0, 16.0, 24.0, 32.0, 40.0, 48.0])
+        self.assertEqual(
+            [[node.node_executable for node in timer.actions]
+             for timer in startup],
+            [['map_server'], ['amcl'], ['lifecycle_manager'],
+             ['controller_server', 'smoother_server'],
+             ['planner_server', 'behavior_server'],
+             ['bt_navigator', 'velocity_smoother'],
+             ['lifecycle_manager']])
 
         def extract_text(obj):
             if hasattr(obj, 'text'):

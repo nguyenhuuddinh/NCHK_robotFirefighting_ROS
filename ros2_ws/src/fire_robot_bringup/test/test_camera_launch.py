@@ -197,6 +197,7 @@ def test_camera_relay_keeps_original_stamp_and_jpeg():
     class FakeNode:
         _pub = Publisher()
         _budget = ByteRateLimiter(750000)
+        enable_diagnostics = True
         _dropped_frames = 0
         _published_frames = 0
 

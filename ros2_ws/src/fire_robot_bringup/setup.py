@@ -36,6 +36,7 @@ setup(
             'native_mjpeg_camera = fire_robot_bringup.native_mjpeg_camera:main',
             'camera_diagnostics = fire_robot_bringup.camera_diagnostics:main',
             'serial_bridge_node = fire_robot_bringup.serial_bridge_node:main',
+            'runtime_diagnostics = fire_robot_bringup.runtime_diagnostics:main',
         ],
     },
 )

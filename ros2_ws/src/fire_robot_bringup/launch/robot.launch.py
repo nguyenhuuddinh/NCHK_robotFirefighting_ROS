@@ -38,9 +38,11 @@ Arguments (theo ros2_engineer.md Section 7.1):
 import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node as LaunchNode
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -123,6 +125,12 @@ def generate_launch_description():
         default_value='10.0',
         description='Tần suất publish /cmd_vel (Hz)'
     )
+    diagnostics_arg = DeclareLaunchArgument(
+        'enable_diagnostics', default_value='true',
+        description='Collect optional per-node timing and periodic statistics')
+    dashboard_arg = DeclareLaunchArgument(
+        'use_dashboard', default_value='true',
+        description='Start rosbridge WebSocket for the operator dashboard')
 
     # ── 1. Robot Description (TF tree) ──
     # Pi cần TF tree để micro-ROS Agent có thể publish odom → base_link,
@@ -147,6 +155,7 @@ def generate_launch_description():
             'camera_fps': LaunchConfiguration('camera_fps'),
             'camera_max_bytes_per_sec': LaunchConfiguration(
                 'camera_max_bytes_per_sec'),
+            'enable_diagnostics': LaunchConfiguration('enable_diagnostics'),
         }.items(),
     )
 
@@ -161,6 +170,8 @@ def generate_launch_description():
         parameters=[{
             'serial_port': LaunchConfiguration('serial_port'),
             'serial_baudrate': LaunchConfiguration('serial_baudrate'),
+            'enable_diagnostics': ParameterValue(
+                LaunchConfiguration('enable_diagnostics'), value_type=bool),
         }],
         respawn=True,
         respawn_delay=2.0,
@@ -184,6 +195,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(bringup_dir, 'launch', 'dashboard.launch.py')
         ),
+        condition=IfCondition(LaunchConfiguration('use_dashboard')),
     )
 
     # ── 6. Odom-to-TF Broadcaster ──
@@ -197,6 +209,8 @@ def generate_launch_description():
         parameters=[
             pi_params_file,
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
+            {'enable_diagnostics': ParameterValue(
+                LaunchConfiguration('enable_diagnostics'), value_type=bool)},
         ],
     )
 
@@ -213,6 +227,8 @@ def generate_launch_description():
         cmd_vel_output_arg,
         heartbeat_timeout_arg,
         cmd_vel_rate_arg,
+        diagnostics_arg,
+        dashboard_arg,
         # Sub-launches & Nodes
         description_launch,
         sensors_launch,

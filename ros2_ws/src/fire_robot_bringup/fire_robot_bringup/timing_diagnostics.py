@@ -12,10 +12,11 @@ class TimingDiagnostics:
     clear window statistics but retain event timestamps across window edges.
     """
 
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._last = {}
-        self._values = {}
+    def __init__(self, enabled=True):
+        self.enabled = bool(enabled)
+        self._lock = threading.Lock() if self.enabled else None
+        self._last = {} if self.enabled else None
+        self._values = {} if self.enabled else None
 
     def _observe_locked(self, name, milliseconds):
         values = self._values
@@ -30,11 +31,15 @@ class TimingDiagnostics:
 
     def observe(self, name, milliseconds):
         """Record a duration or signed age without controlling runtime behavior."""
+        if not self.enabled:
+            return
         with self._lock:
             self._observe_locked(name, milliseconds)
 
     def mark(self, name, now=None):
         """Record an event and the gap from its previous occurrence, if any."""
+        if not self.enabled:
+            return
         if now is None:
             now = time.monotonic()
         with self._lock:
@@ -47,11 +52,15 @@ class TimingDiagnostics:
 
     def increment(self, name):
         """Count an event separately from timing observations."""
+        if not self.enabled:
+            return
         with self._lock:
             self._values[name] = self._values.get(name, 0) + 1
 
     def snapshot(self):
         """Consume window statistics; an absent metric means no observations."""
+        if not self.enabled:
+            return {}
         with self._lock:
             values = self._values
             self._values = {}

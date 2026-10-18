@@ -78,7 +78,9 @@ class ProcessTransport(SerialTransportCore):
         self.logger = logging.getLogger('serial_transport')
         self.init_transport(config['port'], config['baudrate'],
                             config['first_state_timeout_s'],
-                            config['pump_command_timeout_s'], serial_cls)
+                            config['pump_command_timeout_s'], serial_cls,
+                            diagnostics_enabled=config.get(
+                                'enable_diagnostics', True))
         self.ipc_fault = ''
         self.last_heartbeat = time.monotonic()
         self.deadlines = {}
@@ -219,7 +221,8 @@ def worker_main(endpoint, config, serial_cls=None):
     signal.signal(signal.SIGINT, stop)
     transport.worker_thread = threading.Thread(target=transport.serial_worker, daemon=True)
     sequence, awaiting_ack, next_status = 0, None, 0.0
-    next_log = time.monotonic() + 10
+    next_log = (time.monotonic() + 10
+                if config.get('enable_diagnostics', True) else None)
     transport.worker_thread.start()
     try:
         while not stopping:
@@ -261,7 +264,7 @@ def worker_main(endpoint, config, serial_cls=None):
                             if getattr(transport, name) is item:
                                 setattr(transport, name, None)
                 next_status = now + 0.02
-            if now >= next_log:
+            if next_log is not None and now >= next_log:
                 transport.log_timer_callback()
                 next_log = now + 10
             time.sleep(0.005)

@@ -35,6 +35,10 @@ class SerialBridgeNode(SerialTransportCore, Node):
         self.declare_parameter('serial_baudrate', 115200)
         self.declare_parameter('first_state_timeout_s', 8.0)
         self.declare_parameter('pump_command_timeout_s', 0.7)
+        self.declare_parameter('enable_diagnostics', True)
+        self.enable_diagnostics = self.get_parameter('enable_diagnostics').value
+        if not isinstance(self.enable_diagnostics, bool):
+            raise ValueError('enable_diagnostics must be a boolean')
 
         self.port = self.get_parameter('serial_port').value
         self.baudrate = self.get_parameter('serial_baudrate').value
@@ -80,11 +84,13 @@ class SerialBridgeNode(SerialTransportCore, Node):
         self.create_subscription(Bool, '/pump_cmd', self.pump_cmd_callback, reliable_qos)
 
         self.init_transport(self.port, self.baudrate, self.first_state_timeout_s,
-                            self.pump_command_timeout_s, self.serial_cls)
+                            self.pump_command_timeout_s, self.serial_cls,
+                            diagnostics_enabled=self.enable_diagnostics)
         self.transport_process = None
         self._ipc_seen = {}
         self._ipc_fault_logged = False
-        self.log_timer = self.create_timer(10.0, self.log_timer_callback)
+        self.log_timer = (self.create_timer(10.0, self.log_timer_callback)
+                          if self.enable_diagnostics else None)
         self.telemetry_timer = self.create_timer(0.05, self.telemetry_publish_callback)
 
         # Explicit serial dependency injection is for legacy unit tests only.
@@ -97,13 +103,15 @@ class SerialBridgeNode(SerialTransportCore, Node):
                 self.transport_process = SerialProcessClient({
                     'port': self.port, 'baudrate': self.baudrate,
                     'first_state_timeout_s': self.first_state_timeout_s,
-                    'pump_command_timeout_s': self.pump_command_timeout_s})
+                    'pump_command_timeout_s': self.pump_command_timeout_s,
+                    'enable_diagnostics': self.enable_diagnostics})
                 self.transport_process.heartbeat()
             except BaseException:
                 if self.transport_process is not None:
                     self.transport_process.close()
                 self.telemetry_timer.cancel()
-                self.log_timer.cancel()
+                if self.log_timer is not None:
+                    self.log_timer.cancel()
                 Node.destroy_node(self)
                 raise
 
@@ -154,6 +162,8 @@ class SerialBridgeNode(SerialTransportCore, Node):
     def _record_publish_result(self, *, published=0, failed=0, dropped=0,
                                state_age=None, env_age=None):
         """Update windowed publish diagnostics atomically."""
+        if not getattr(self, 'enable_diagnostics', True):
+            return
         with self.state_lock:
             self.telemetry_publish_count += published
             self.telemetry_publish_fail_count += failed
@@ -170,7 +180,8 @@ class SerialBridgeNode(SerialTransportCore, Node):
         """Publish telemetry from latest slots."""
         if getattr(self, 'transport_process', None) is not None:
             self._poll_transport()
-        self.odom_timing.mark('telemetry_timer')
+        if getattr(self, 'enable_diagnostics', True):
+            self.odom_timing.mark('telemetry_timer')
         with self.publish_lock:
             if getattr(self, 'node_destroyed', False):
                 return
@@ -221,15 +232,20 @@ class SerialBridgeNode(SerialTransportCore, Node):
 
                     with self.publish_lock:
                         if not getattr(self, 'node_destroyed', False):
-                            publish_started = time.monotonic()
-                            self.odom_timing.mark('odom_publish_start', publish_started)
-                            try:
+                            if getattr(self, 'enable_diagnostics', True):
+                                publish_started = time.monotonic()
+                                self.odom_timing.mark(
+                                    'odom_publish_start', publish_started)
+                                try:
+                                    self.odom_pub.publish(odom)
+                                finally:
+                                    self.odom_timing.observe(
+                                        'odom_publish_call',
+                                        (time.monotonic() - publish_started)
+                                        * 1000.0)
+                                self.odom_timing.mark('odom_publish_success')
+                            else:
                                 self.odom_pub.publish(odom)
-                            finally:
-                                self.odom_timing.observe(
-                                    'odom_publish_call',
-                                    (time.monotonic() - publish_started) * 1000.0)
-                            self.odom_timing.mark('odom_publish_success')
                     self._record_publish_result(
                         published=1, state_age=age)
                 except Exception as e:
@@ -368,7 +384,7 @@ class SerialBridgeNode(SerialTransportCore, Node):
             with self.state_lock:
                 valid_diagnostic = (self.running and self.session_ready and
                                     self.session_epoch == epoch)
-            if valid_diagnostic:
+            if valid_diagnostic and getattr(self, 'enable_diagnostics', True):
                 self.get_logger().info(
                     'esp_usb_diag epoch=%d receive_age_ms=%.1f %s' % (
                         epoch, max(0.0, time.monotonic() - frame_mono) * 1000.0,
@@ -381,7 +397,8 @@ class SerialBridgeNode(SerialTransportCore, Node):
         process = getattr(self, 'transport_process', None)
         if process is not None:
             self.telemetry_timer.cancel()
-            self.log_timer.cancel()
+            if self.log_timer is not None:
+                self.log_timer.cancel()
             self.session_ready = self.telemetry_healthy = False
             process.close()
         elif not self.shutdown_transport():

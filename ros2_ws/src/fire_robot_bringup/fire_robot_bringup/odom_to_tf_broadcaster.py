@@ -66,6 +66,10 @@ class OdomToTfBroadcaster(Node):
         self.declare_parameter('odom_qos_depth', 10)
         self.declare_parameter('tf_stamp_source', self.STAMP_PI_RECEIVE)
         self.declare_parameter('tf_stamp_offset_ms', 0)
+        self.declare_parameter('enable_diagnostics', True)
+        self.enable_diagnostics = self.get_parameter('enable_diagnostics').value
+        if not isinstance(self.enable_diagnostics, bool):
+            raise ValueError('enable_diagnostics must be a boolean')
 
         tf_rate = self.get_parameter('tf_publish_rate_hz').value
         self._stale_timeout_ns = int(
@@ -97,7 +101,7 @@ class OdomToTfBroadcaster(Node):
 
         # --- Stale warning throttle ---
         self._stale_warned = False
-        self._timing = TimingDiagnostics()
+        self._timing = TimingDiagnostics(enabled=self.enable_diagnostics)
         self._odom_stamp_guard = OdomStampGuard()
         self._odom_sample_mono = None
 
@@ -135,16 +139,19 @@ class OdomToTfBroadcaster(Node):
 
     def _odom_callback(self, msg: Odometry):
         """Cache only increasing, fresh odometry from the ROS clock domain."""
-        self._timing.mark('odom_callback')
+        if getattr(self, 'enable_diagnostics', True):
+            self._timing.mark('odom_callback')
         now_ns = self.get_clock().now().nanoseconds
         header_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
         # Signed ROS-clock age, distinct from monotonic event gaps. This is
         # bridge-stamp age, not the original ESP sensor sample age.
-        self._timing.observe(
-            'odom_header_age', (now_ns - header_ns) / 1e6)
+        if getattr(self, 'enable_diagnostics', True):
+            self._timing.observe(
+                'odom_header_age', (now_ns - header_ns) / 1e6)
         received = admit_odom(self, msg, self._stale_timeout_ns / 1e9)
         if received is None:
-            self._timing.mark('odom_rejected')
+            if getattr(self, 'enable_diagnostics', True):
+                self._timing.mark('odom_rejected')
             if self._odom_stamp_guard.reason == 'ROS_CLOCK_BACKWARD':
                 self._odom_received = False
             return
@@ -161,11 +168,12 @@ class OdomToTfBroadcaster(Node):
             self._stale_warned = False
 
         # Log mỗi 100 lần (~10 giây ở 10Hz) để biết node còn sống
-        self._odom_count += 1
-        if self._odom_count % 100 == 0:
-            self.get_logger().info(
-                f'[OdomToTF] Đã nhận {self._odom_count} /odom messages'
-            )
+        if getattr(self, 'enable_diagnostics', True):
+            self._odom_count += 1
+            if self._odom_count % 100 == 0:
+                self.get_logger().info(
+                    f'[OdomToTF] Đã nhận {self._odom_count} /odom messages'
+                )
 
     def _get_tf_stamp(self):
         """Tính timestamp cho TF dựa trên tf_stamp_source và offset."""
@@ -193,7 +201,8 @@ class OdomToTfBroadcaster(Node):
 
     def _timer_callback(self):
         """Timer 20Hz — phát TF nếu /odom còn tươi."""
-        self._timing.mark('tf_timer')
+        if getattr(self, 'enable_diagnostics', True):
+            self._timing.mark('tf_timer')
         # Chưa nhận /odom lần nào → im lặng
         if not self._odom_received:
             return
@@ -214,10 +223,12 @@ class OdomToTfBroadcaster(Node):
             # Chỉ warn 1 lần để không spam log
             if not self._stale_warned:
                 age_ms = age_ns / 1e6
+                timing = (f' timing=[{self._timing.format_snapshot()}]'
+                          if getattr(self, 'enable_diagnostics', True) else '')
                 self.get_logger().warn(
                     f'[OdomToTF] /odom stale ({age_ms:.0f}ms > '
-                    f'{self._stale_timeout_ns / 1e6:.0f}ms) — dừng phát /tf '
-                    f'timing=[{self._timing.format_snapshot()}]'
+                    f'{self._stale_timeout_ns / 1e6:.0f}ms) — dừng phát /tf'
+                    f'{timing}'
                 )
                 self._stale_warned = True
             return
@@ -242,12 +253,13 @@ class OdomToTfBroadcaster(Node):
         self._tf_broadcaster.sendTransform(t)
 
         # Log mỗi 200 lần (~10 giây ở 20Hz)
-        self._tf_count += 1
-        if self._tf_count % 200 == 0:
-            self.get_logger().info(
-                f'[OdomToTF] Đã phát {self._tf_count} /tf messages '
-                f'timing=[{self._timing.format_snapshot()}]'
-            )
+        if getattr(self, 'enable_diagnostics', True):
+            self._tf_count += 1
+            if self._tf_count % 200 == 0:
+                self.get_logger().info(
+                    f'[OdomToTF] Đã phát {self._tf_count} /tf messages '
+                    f'timing=[{self._timing.format_snapshot()}]'
+                )
 
 
 def main(args=None):

@@ -74,12 +74,14 @@ class JpegStreamParser:
 class MjpegReader(threading.Thread):
     """Read JPEGs from v4l2-ctl and retain at most one pending frame."""
 
-    def __init__(self, stream, output_queue, stop_event, notify):
+    def __init__(self, stream, output_queue, stop_event, notify,
+                 collect_stats=True):
         super().__init__(name='native-mjpeg-reader', daemon=True)
         self.stream = stream
         self.output_queue = output_queue
         self.stop_event = stop_event
         self.notify = notify
+        self.collect_stats = collect_stats
         self.parser = JpegStreamParser()
         self.frames = 0
         self.queue_drops = 0
@@ -93,7 +95,8 @@ class MjpegReader(threading.Thread):
         except queue.Full:
             try:
                 self.output_queue.get_nowait()
-                self.queue_drops += 1
+                if self.collect_stats:
+                    self.queue_drops += 1
             except queue.Empty:
                 pass
             self.output_queue.put_nowait((captured_ns, frame))
@@ -106,7 +109,8 @@ class MjpegReader(threading.Thread):
                 if not chunk:
                     break
                 for frame in self.parser.feed(chunk):
-                    self.frames += 1
+                    if self.collect_stats:
+                        self.frames += 1
                     self.last_frame_time = time.monotonic()
                     self._offer_latest(frame)
         except Exception as exc:  # The health timer reports and restarts capture.
@@ -155,6 +159,10 @@ class NativeMjpegCamera(Node):
         self.declare_parameter('restart_delay_s', 2.0)
         self.declare_parameter('frame_timeout_s', 2.0)
         self.declare_parameter('stats_period_s', 10.0)
+        self.declare_parameter('enable_diagnostics', True)
+        self.enable_diagnostics = self.get_parameter('enable_diagnostics').value
+        if not isinstance(self.enable_diagnostics, bool):
+            raise ValueError('enable_diagnostics must be a boolean')
 
         self.device = str(self.get_parameter('video_device').value)
         self.width = int(self.get_parameter('image_width').value)
@@ -210,7 +218,8 @@ class NativeMjpegCamera(Node):
         if stats_period <= 0:
             raise ValueError('stats_period_s must be positive')
         self.create_timer(1.0, self._check_capture)
-        self.create_timer(stats_period, self._log_stats)
+        if self.enable_diagnostics:
+            self.create_timer(stats_period, self._log_stats)
         self._start_capture()
 
     def _notify_frame(self):
@@ -286,6 +295,7 @@ class NativeMjpegCamera(Node):
             self.frame_queue,
             self.stop_event,
             self._notify_frame,
+            collect_stats=self.enable_diagnostics,
         )
         self.stderr_reader = BoundedPipeReader(self.process.stderr)
         self.stderr_reader.start()
@@ -305,7 +315,8 @@ class NativeMjpegCamera(Node):
         if frame is None:
             return
         if not self.byte_budget.allow(len(frame), time.monotonic()):
-            self.budget_drops += 1
+            if self.enable_diagnostics:
+                self.budget_drops += 1
             return
 
         stamp = self.get_clock().now().to_msg()
@@ -324,8 +335,9 @@ class NativeMjpegCamera(Node):
         info.width = self.width
         info.height = self.height
         self.info_pub.publish(info)
-        self.published += 1
-        self.published_bytes += len(frame)
+        if self.enable_diagnostics:
+            self.published += 1
+            self.published_bytes += len(frame)
 
     def _capture_error(self):
         if self.reader and self.reader.error:
@@ -377,14 +389,16 @@ class NativeMjpegCamera(Node):
             self.get_logger().error(
                 f'MJPEG frame timeout: no frame for {frame_age:.1f}s; restarting')
             self._stop_process()
-            self.restart_count += 1
+            if self.enable_diagnostics:
+                self.restart_count += 1
         if self.process is not None:
             code = self.process.returncode
             error = self._capture_error()
             self.get_logger().error(
                 f'MJPEG capture stopped rc={code}: {error or "no stderr"}')
             self._stop_process()
-            self.restart_count += 1
+            if self.enable_diagnostics:
+                self.restart_count += 1
         if time.monotonic() - self.last_start_attempt >= self.restart_delay:
             self.get_logger().warning('Retrying MJPEG camera capture')
             self._start_capture()

@@ -57,6 +57,9 @@ def generate_launch_description():
         default_value='750000',
         description='Giới hạn payload JPEG mỗi giây; frame dư bị bỏ ngay',
     )
+    diagnostics_arg = DeclareLaunchArgument(
+        'enable_diagnostics', default_value='true',
+        description='Collect optional camera and relay statistics')
 
     native_camera_enabled = IfCondition(PythonExpression([
         "'", LaunchConfiguration('use_camera'),
@@ -107,6 +110,9 @@ def generate_launch_description():
                     LaunchConfiguration('camera_max_bytes_per_sec'),
                     value_type=int,
                 ),
+                'enable_diagnostics': ParameterValue(
+                    LaunchConfiguration('enable_diagnostics'),
+                    value_type=bool),
             },
         ],
         output='screen',
@@ -147,6 +153,9 @@ def generate_launch_description():
                     LaunchConfiguration('camera_max_bytes_per_sec'),
                     value_type=int,
                 ),
+                'enable_diagnostics': ParameterValue(
+                    LaunchConfiguration('enable_diagnostics'),
+                    value_type=bool),
             },
         ],
         output='screen',
@@ -158,6 +167,7 @@ def generate_launch_description():
         camera_backend_arg,
         camera_fps_arg,
         camera_budget_arg,
+        diagnostics_arg,
         camsense_x1_node,
         scan_qos_relay_node,
         native_mjpeg_camera_node,

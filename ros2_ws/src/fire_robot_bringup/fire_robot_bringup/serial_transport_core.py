@@ -7,7 +7,9 @@ from fire_robot_bringup.timing_diagnostics import TimingDiagnostics
 
 
 class SerialTransportCore:
-    def init_transport(self, port, baudrate, first_state_timeout_s, pump_command_timeout_s, serial_cls):
+    def init_transport(self, port, baudrate, first_state_timeout_s,
+                       pump_command_timeout_s, serial_cls,
+                       diagnostics_enabled=True):
         self.port = port
         self.baudrate = baudrate
         self.first_state_timeout_s = first_state_timeout_s
@@ -92,7 +94,8 @@ class SerialTransportCore:
 
         self.state_publish_max_age = 0.0
         self.env_publish_max_age = 0.0
-        self.odom_timing = TimingDiagnostics()
+        self.diagnostics_enabled = bool(diagnostics_enabled)
+        self.odom_timing = TimingDiagnostics(enabled=self.diagnostics_enabled)
 
         self.running = True
 
@@ -120,6 +123,8 @@ class SerialTransportCore:
 
     def _record_io_duration(self, name, started_mono):
         """Record a serial operation duration without changing its result."""
+        if not getattr(self, 'diagnostics_enabled', True):
+            return
         elapsed_ms = max(0.0, (time.monotonic() - started_mono) * 1000.0)
         with self.state_lock:
             setattr(self, name, max(getattr(self, name, 0.0), elapsed_ms))
@@ -127,6 +132,8 @@ class SerialTransportCore:
 
     def _timed_read(self, handle, size):
         """Measure read latency, including an exceptional return."""
+        if not getattr(self, 'diagnostics_enabled', True):
+            return handle.read(size)
         started_mono = time.monotonic()
         try:
             return handle.read(size)
@@ -136,6 +143,8 @@ class SerialTransportCore:
 
     def _timed_write(self, handle, frame):
         """Measure write latency without logging the command payload."""
+        if not getattr(self, 'diagnostics_enabled', True):
+            return handle.write(frame)
         started_mono = time.monotonic()
         try:
             return handle.write(frame)
@@ -616,16 +625,18 @@ class SerialTransportCore:
         while not getattr(self, 'stop_request', False):
             with self.state_lock:
                 state = getattr(self, '_session_state', 'BACKOFF')
-                loop_started_mono = time.monotonic()
-                if state in ('WAIT_FIRST_STATE', 'HEALTHY'):
-                    previous_tick = self.last_worker_tick_mono
-                    if previous_tick is not None:
-                        self.worker_gap_max_ms = max(
-                            self.worker_gap_max_ms,
-                            max(0.0, (loop_started_mono - previous_tick) * 1000.0))
-                    self.last_worker_tick_mono = loop_started_mono
-                else:
-                    self.last_worker_tick_mono = None
+                if getattr(self, 'diagnostics_enabled', True):
+                    loop_started_mono = time.monotonic()
+                    if state in ('WAIT_FIRST_STATE', 'HEALTHY'):
+                        previous_tick = self.last_worker_tick_mono
+                        if previous_tick is not None:
+                            self.worker_gap_max_ms = max(
+                                self.worker_gap_max_ms,
+                                max(0.0, (loop_started_mono - previous_tick)
+                                    * 1000.0))
+                        self.last_worker_tick_mono = loop_started_mono
+                    else:
+                        self.last_worker_tick_mono = None
                 exact_handle = self.ser
                 gen = self.session_epoch
                 has_close_task = self.close_ownership.get('task') is not None
@@ -803,7 +814,8 @@ class SerialTransportCore:
             epoch = self.session_epoch
 
             if frame['type'] == 'STATE':
-                if self.last_state_time_mono > 0.0:
+                if (getattr(self, 'diagnostics_enabled', True)
+                        and self.last_state_time_mono > 0.0):
                     self.state_gap_max_ms = max(
                         self.state_gap_max_ms,
                         max(0.0, (now_mono - self.last_state_time_mono) * 1000.0))
@@ -811,7 +823,8 @@ class SerialTransportCore:
                 self.telemetry_healthy = True
                 self.reconnect_backoff = 0.0
                 self.next_reconnect_mono = 0.0
-                if self.latest_state is not None:
+                if (self.latest_state is not None
+                        and getattr(self, 'diagnostics_enabled', True)):
                     self.odom_timing.increment('state_slot_overwrites')
                 self.latest_state = (frame, epoch, now_mono)
                 self._transition_state('HEALTHY')

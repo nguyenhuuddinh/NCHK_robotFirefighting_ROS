@@ -50,6 +50,10 @@ class CameraQosRelay(Node):
     def __init__(self):
         super().__init__('camera_qos_relay')
         self.declare_parameter('max_bytes_per_sec', 750000)
+        self.declare_parameter('enable_diagnostics', True)
+        self.enable_diagnostics = self.get_parameter('enable_diagnostics').value
+        if not isinstance(self.enable_diagnostics, bool):
+            raise ValueError('enable_diagnostics must be a boolean')
         self._budget = ByteRateLimiter(
             self.get_parameter('max_bytes_per_sec').value)
         self._dropped_frames = 0
@@ -62,15 +66,18 @@ class CameraQosRelay(Node):
         self._sub = self.create_subscription(
             CompressedImage, '/image_raw/compressed_local',
             self._relay, input_qos)
-        self._stats_timer = self.create_timer(10.0, self._log_stats)
+        self._stats_timer = (self.create_timer(10.0, self._log_stats)
+                             if self.enable_diagnostics else None)
 
     def _relay(self, msg):
         """Giữ nguyên header/stamp và JPEG gốc; không lưu hàng đợi riêng."""
         if not self._budget.allow(len(msg.data), time.monotonic()):
-            self._dropped_frames += 1
+            if self.enable_diagnostics:
+                self._dropped_frames += 1
             return
         self._pub.publish(msg)
-        self._published_frames += 1
+        if self.enable_diagnostics:
+            self._published_frames += 1
 
     def _log_stats(self):
         """Thông báo frame bị bỏ để operator biết khi cần giảm FPS/độ phân giải."""

@@ -81,12 +81,14 @@ def test_first_state_records_epoch_pair_without_changing_health_rule():
     worker._fault_trace_pending = {
         'id': 1, 'fault_epoch': 1, 'last_state': before,
     }
+    worker.fault_trace_count = 1
     worker.handle_frame({'type': 'USB', 'esp_ms': 200})
     assert not worker.telemetry_healthy
     worker.handle_frame({'type': 'STATE', 'esp_ms': 300})
     assert worker.telemetry_healthy
     assert worker._session_state == 'HEALTHY'
     assert worker._fault_trace_pending is None
+    assert worker._fault_read_window is None
     events = [json.loads(line.split('serial_fault_trace ', 1)[1])
               for line in worker.logger.messages]
     assert len(events) == 1
@@ -123,6 +125,33 @@ def test_fault_records_close_stages_after_failing_closed():
     assert by_phase['fault']['last_state']['esp_ms'] == 100_000
     assert by_phase['close_end']['result'] == 'ok'
     assert by_phase['close_end']['close_call_ms'] is not None
+
+
+def test_fault_records_bounded_reader_activity_before_quarantine():
+    worker = _transport(1)
+    worker._session_state = 'HEALTHY'
+    worker.telemetry_healthy = True
+    handle = _FakeSerial()
+    chunks = iter((b'abc', b''))
+    handle.read = lambda size: next(chunks)
+    worker.ser = handle
+
+    assert worker._read_with_fault_trace(handle, 1024, 2) == b'abc'
+    assert worker._read_with_fault_trace(handle, 1024, 2) == b''
+    worker._quarantine_handle(handle, 'healthy:Timeout')
+    worker.close_ownership['task'].join(timeout=1.0)
+
+    events = [json.loads(line.split('serial_fault_trace ', 1)[1])
+              for line in worker.logger.messages
+              if line.startswith('serial_fault_trace ')]
+    reader = next(event['reader_before_fault'] for event in events
+                  if event['phase'] == 'fault')
+    assert reader['calls'] == 2
+    assert reader['empty'] == 1
+    assert reader['errors'] == 0
+    assert reader['bytes'] == 3
+    assert reader['last_nonempty_end_age_ms'] is not None
+    assert reader['capacity'] == 128
 
 
 def test_default_off_records_no_state_samples_or_fault_events(monkeypatch):

@@ -1,4 +1,5 @@
 """ROS-independent raw serial session state machine, shared by worker and tests."""
+from collections import deque
 import json
 import threading
 import time
@@ -53,6 +54,11 @@ class SerialTransportCore:
         self.fault_trace_count = 0
         self._fault_trace_last_state = None
         self._fault_trace_pending = None
+        # Recent read calls stay in memory only while fault tracing is armed.
+        # A fault logs one bounded summary, not a stream of normal read calls.
+        self._fault_read_window = (
+            deque(maxlen=128) if fault_trace_events else None)
+        self._fault_last_nonempty_read_ns = None
 
         self.pending_cmd = None
         self.pending_pump = None
@@ -154,6 +160,69 @@ class SerialTransportCore:
             return handle.read(size)
         finally:
             self._record_io_duration('read_max_ms', started_mono)
+
+
+    def _read_with_fault_trace(self, handle, size, epoch):
+        """Keep the second before a fault, including empty reads and errors."""
+        if self._fault_read_window is None:
+            return self._timed_read(handle, size)
+        started_ns = time.monotonic_ns()
+        try:
+            data = self._timed_read(handle, size)
+        except Exception:
+            self._record_fault_read(started_ns, time.monotonic_ns(),
+                                    0, True, epoch)
+            raise
+        self._record_fault_read(started_ns, time.monotonic_ns(),
+                                len(data), False, epoch)
+        return data
+
+
+    def _record_fault_read(self, started_ns, ended_ns, byte_count,
+                           error, epoch):
+        with self.state_lock:
+            if self._fault_read_window is None or self.session_epoch != epoch:
+                return
+            self._fault_read_window.append(
+                (started_ns, ended_ns, byte_count, error))
+            if byte_count:
+                self._fault_last_nonempty_read_ns = ended_ns
+
+
+    def _fault_read_summary_locked(self, fault_ns):
+        """Summarize opt-in read activity; caller holds state_lock."""
+        window = self._fault_read_window
+        if window is None:
+            return None
+        records = list(window)
+        cutoff_ns = fault_ns - 1_000_000_000
+        calls = [sample for sample in records if sample[0] >= cutoff_ns]
+        gaps_ms = [
+            (current[0] - previous[0]) / 1e6
+            for previous, current in zip(records, records[1:])
+            if current[0] >= cutoff_ns]
+        last_data_ns = self._fault_last_nonempty_read_ns
+        return {
+            'window_ms': 1000,
+            'capacity': window.maxlen,
+            'calls': len(calls),
+            'empty': sum(not count and not error
+                         for _, _, count, error in calls),
+            'errors': sum(error for _, _, _, error in calls),
+            'bytes': sum(count for _, _, count, _ in calls),
+            'span_ms': round((calls[-1][1] - calls[0][0]) / 1e6, 3)
+                       if calls else None,
+            'max_read_ms': round(max((end - start) / 1e6
+                                     for start, end, _, _ in calls), 3)
+                           if calls else None,
+            'max_start_gap_ms': round(max(gaps_ms), 3) if gaps_ms else None,
+            'last_read_end_age_ms': round(
+                max(0, fault_ns - calls[-1][1]) / 1e6, 3)
+                if calls else None,
+            'last_nonempty_end_age_ms': round(
+                max(0, fault_ns - last_data_ns) / 1e6, 3)
+                if last_data_ns is not None else None,
+        }
 
 
     def _timed_write(self, handle, frame):
@@ -504,6 +573,8 @@ class SerialTransportCore:
                     'fault_wall_ns': time.time_ns(),
                     'last_state': self._fault_trace_last_state,
                     'reason': str(reason)[:200],
+                    'reader_before_fault': self._fault_read_summary_locked(
+                        int(now_mono * 1_000_000_000)),
                 }
                 self._fault_trace_pending = trace
                 trace_event = dict(phase='fault', **trace)
@@ -852,6 +923,9 @@ class SerialTransportCore:
                         self.telemetry_healthy = False
                         self.session_started_mono = now
                         self.last_state_time_mono = 0.0
+                        if self._fault_read_window is not None:
+                            self._fault_read_window.clear()
+                            self._fault_last_nonempty_read_ns = None
                         self.last_pump_time = now
                         self.pump_state = 0
                         self.last_pump_command_time = None
@@ -898,7 +972,7 @@ class SerialTransportCore:
                 continue
 
             try:
-                data = self._timed_read(exact_handle, 1024)
+                data = self._read_with_fault_trace(exact_handle, 1024, gen)
                 if data:
                     for frame in self.protocol.parse_chunk(data):
                         self.handle_frame(frame)
@@ -972,6 +1046,9 @@ class SerialTransportCore:
                                 before, current),
                         }
                         self._fault_trace_pending = None
+                        if self.fault_trace_count >= self.fault_trace_events:
+                            self._fault_read_window = None
+                            self._fault_last_nonempty_read_ns = None
                     self._fault_trace_last_state = current
                 if (getattr(self, 'diagnostics_enabled', True)
                         and self.last_state_time_mono > 0.0):

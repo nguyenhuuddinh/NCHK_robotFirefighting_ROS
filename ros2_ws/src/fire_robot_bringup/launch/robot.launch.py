@@ -128,6 +128,9 @@ def generate_launch_description():
     diagnostics_arg = DeclareLaunchArgument(
         'enable_diagnostics', default_value='true',
         description='Collect optional per-node timing and periodic statistics')
+    usb_recovery_capture_arg = DeclareLaunchArgument(
+        'usb_recovery_capture_s', default_value='0',
+        description='Bounded ESP USB recovery capture in seconds (0-180; 0=off)')
     dashboard_arg = DeclareLaunchArgument(
         'use_dashboard', default_value='true',
         description='Start rosbridge WebSocket for the operator dashboard')
@@ -172,6 +175,8 @@ def generate_launch_description():
             'serial_baudrate': LaunchConfiguration('serial_baudrate'),
             'enable_diagnostics': ParameterValue(
                 LaunchConfiguration('enable_diagnostics'), value_type=bool),
+            'usb_recovery_capture_s': ParameterValue(
+                LaunchConfiguration('usb_recovery_capture_s'), value_type=int),
         }],
         respawn=True,
         respawn_delay=2.0,
@@ -228,6 +233,7 @@ def generate_launch_description():
         heartbeat_timeout_arg,
         cmd_vel_rate_arg,
         diagnostics_arg,
+        usb_recovery_capture_arg,
         dashboard_arg,
         # Sub-launches & Nodes
         description_launch,

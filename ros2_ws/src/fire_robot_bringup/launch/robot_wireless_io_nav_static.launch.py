@@ -38,6 +38,8 @@ def generate_launch_description():
                               choices=['5', '10', '15', '20', '25', '30']),
         DeclareLaunchArgument('camera_max_bytes_per_sec',
                               default_value='750000'),
+        DeclareLaunchArgument('usb_recovery_capture_s', default_value='0',
+                              description='ESP USB recovery capture seconds (0-180)'),
         DeclareLaunchArgument('serial_port', default_value=(
             '/dev/serial/by-id/'
             'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N8R2_'
@@ -53,6 +55,8 @@ def generate_launch_description():
             serial_port=LaunchConfiguration('serial_port'),
             cmd_vel_input_topic='/fire_robot_static/cmd_vel_raw',
             enable_diagnostics='false',
+            usb_recovery_capture_s=LaunchConfiguration(
+                'usb_recovery_capture_s'),
             use_dashboard='false',
         ),
         # Delayed Nav2 TimerAction nodes need these launch configurations to

@@ -24,6 +24,46 @@ DEFAULT_SERIAL_PORT = (
 )
 
 
+class UsbRecoveryCapture:
+    """Bounded USB frame logging, independent of periodic timing statistics."""
+
+    MAX_FRAMES = 128
+
+    def __init__(self, duration_s):
+        if (isinstance(duration_s, bool) or not isinstance(duration_s, int)
+                or not 0 <= duration_s <= 180):
+            raise ValueError('usb_recovery_capture_s must be an integer 0-180')
+        self.duration_s = duration_s
+        self.deadline = (time.monotonic() + duration_s
+                         if duration_s else None)
+        self.count = 0
+        self.finished = False
+
+    def finish_if_due(self):
+        if self.deadline is None or self.finished:
+            return None
+        reason = ('frame_limit' if self.count >= self.MAX_FRAMES else
+                  'duration_elapsed' if time.monotonic() >= self.deadline else
+                  None)
+        if reason is None:
+            return None
+        self.finished = True
+        return {'reason': reason, 'frames': self.count}
+
+    def record(self, frame, epoch, frame_mono):
+        if (self.deadline is None or self.finished
+                or self.count >= self.MAX_FRAMES
+                or time.monotonic() >= self.deadline):
+            return None
+        self.count += 1
+        return {
+            'epoch': epoch,
+            'pi_wall_ns': time.time_ns(),
+            'receive_mono_ns': int(frame_mono * 1_000_000_000),
+            'usb': frame,
+        }
+
+
 class SerialBridgeNode(SerialTransportCore, Node):
     """Bridge Node between ROS 2 topics and raw serial."""
 
@@ -39,6 +79,10 @@ class SerialBridgeNode(SerialTransportCore, Node):
         self.enable_diagnostics = self.get_parameter('enable_diagnostics').value
         if not isinstance(self.enable_diagnostics, bool):
             raise ValueError('enable_diagnostics must be a boolean')
+        self.declare_parameter('usb_recovery_capture_s', 0)
+        capture = UsbRecoveryCapture(
+            self.get_parameter('usb_recovery_capture_s').value)
+        self._usb_capture = capture if capture.deadline is not None else None
 
         self.port = self.get_parameter('serial_port').value
         self.baudrate = self.get_parameter('serial_baudrate').value
@@ -114,6 +158,11 @@ class SerialBridgeNode(SerialTransportCore, Node):
                     self.log_timer.cancel()
                 Node.destroy_node(self)
                 raise
+        if self._usb_capture is not None:
+            self.get_logger().info(
+                'esp_usb_capture_start duration_s=%d max_frames=%d' % (
+                    self._usb_capture.duration_s,
+                    self._usb_capture.MAX_FRAMES))
 
 
     def _poll_transport(self):
@@ -180,6 +229,12 @@ class SerialBridgeNode(SerialTransportCore, Node):
         """Publish telemetry from latest slots."""
         if getattr(self, 'transport_process', None) is not None:
             self._poll_transport()
+        capture = getattr(self, '_usb_capture', None)
+        if capture is not None:
+            ended = capture.finish_if_due()
+            if ended is not None:
+                self.get_logger().info('esp_usb_capture_end ' + json.dumps(
+                    ended, sort_keys=True, separators=(',', ':')))
         if getattr(self, 'enable_diagnostics', True):
             self.odom_timing.mark('telemetry_timer')
         with self.publish_lock:
@@ -384,11 +439,18 @@ class SerialBridgeNode(SerialTransportCore, Node):
             with self.state_lock:
                 valid_diagnostic = (self.running and self.session_ready and
                                     self.session_epoch == epoch)
-            if valid_diagnostic and getattr(self, 'enable_diagnostics', True):
-                self.get_logger().info(
-                    'esp_usb_diag epoch=%d receive_age_ms=%.1f %s' % (
-                        epoch, max(0.0, time.monotonic() - frame_mono) * 1000.0,
-                        json.dumps(frame, sort_keys=True)))
+            if valid_diagnostic:
+                if capture is not None:
+                    event = capture.record(frame, epoch, frame_mono)
+                    if event is not None:
+                        self.get_logger().info(
+                            'esp_usb_capture ' + json.dumps(
+                                event, sort_keys=True, separators=(',', ':')))
+                if getattr(self, 'enable_diagnostics', True):
+                    self.get_logger().info(
+                        'esp_usb_diag epoch=%d receive_age_ms=%.1f %s' % (
+                            epoch, max(0.0, time.monotonic() - frame_mono) * 1000.0,
+                            json.dumps(frame, sort_keys=True)))
 
 
     def destroy_node(self):

@@ -8,6 +8,7 @@ from launch.actions import (
     PopLaunchConfigurations)
 from launch.launch_context import LaunchContext
 from launch.utilities import perform_substitutions
+from launch.substitutions import LaunchConfiguration
 
 
 LAUNCH = Path(__file__).resolve().parents[1] / 'launch' / 'robot_wireless_io_nav_static.launch.py'
@@ -44,6 +45,9 @@ def test_io_nav_profile_is_unarmed_and_omits_mission():
     nav_args = dict(nav2.launch_arguments)
     assert robot_args['cmd_vel_input_topic'] == '/fire_robot_static/cmd_vel_raw'
     assert robot_args['enable_diagnostics'] == 'false'
+    assert isinstance(robot_args['usb_recovery_capture_s'],
+                      LaunchConfiguration)
+    assert args['usb_recovery_capture_s'].default_value[0].text == '0'
     assert robot_args['use_dashboard'] == 'false'
     assert nav_args['rviz'] == 'false'
     assert args['camera_fps'].default_value[0].text == '10'

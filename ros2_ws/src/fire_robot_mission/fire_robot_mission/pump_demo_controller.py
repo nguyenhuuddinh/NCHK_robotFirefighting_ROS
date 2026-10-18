@@ -8,6 +8,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from fire_robot_safety.odom_freshness import OdomStampGuard, admit_odom
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
@@ -46,6 +47,7 @@ class PumpDemoController(Node):
 
     def __init__(self):
         super().__init__('pump_demo_controller')
+        self._odom_stamp_guard = OdomStampGuard()
         self.declare_parameter('enable_pump_demo', False)
         self.declare_parameter('allow_provisional_ir', False)
         self.declare_parameter('pulse_s', 5.0)
@@ -115,8 +117,11 @@ class PumpDemoController(Node):
                 twist.angular.x, twist.angular.y, twist.angular.z)
 
     def _on_odom(self, msg):
+        received = admit_odom(self, msg, self.core.input_timeout_s)
+        if received is None:
+            return
         self.core.update_odom(
-            self._twist_values(msg.twist.twist), time.monotonic())
+            self._twist_values(msg.twist.twist), received)
 
     def _on_cmd(self, msg):
         self.core.update_cmd(self._twist_values(msg), time.monotonic())

@@ -212,12 +212,12 @@ class PumpDemoCore:
                 is not False):
             reasons.append('CANCEL_GUARD_PROOF_INVALID')
 
-        status_ok = False
-        # Nav2 action status is event-driven, not a heartbeat. Its exact
-        # canceled UUID is retained while the continuously fresh guard,
-        # gateway, mission, odom and command provide liveness.
-        if (self.status_at is not None and self.statuses and uuid and
-                len(uuid) == 32):
+        # A fully pruned status array may be empty. The fresh exact-UUID
+        # cancel guard above retains proof, but any nonempty array must still
+        # identify this canceled goal as its latest event and have no active
+        # goal. An unrelated terminal UUID is not proof of our cancellation.
+        status_ok = self.status_at is not None and self.statuses is not None
+        if status_ok and self.statuses:
             valid = all(
                 isinstance(item, tuple) and len(item) == 4 and
                 isinstance(item[0], str) and
@@ -225,9 +225,11 @@ class PumpDemoCore:
                 for item in self.statuses)
             if valid:
                 latest = max(self.statuses, key=lambda item: item[2:4])
-                status_ok = (
-                    latest[0] == uuid and latest[1] == 5 and
-                    not any(item[1] in (1, 2, 3) for item in self.statuses))
+                status_ok = (latest[0] == uuid and latest[1] == 5 and
+                             not any(item[1] in (1, 2, 3)
+                                     for item in self.statuses))
+            else:
+                status_ok = False
         if not status_ok:
             reasons.append('EXACT_CANCEL_PROOF_INVALID')
 
@@ -293,6 +295,13 @@ class PumpDemoCore:
             'pump_on': on,
             'stop_reason': self.stop_reason,
             'blockers': reasons,
+            'arm': {
+                'false_seen': self.arm_false_seen,
+                'cycle_seen': self.arm_cycle_seen,
+                'heartbeat_true': self.arm,
+                'receive_fresh': fresh(self.arm_at, now, self.arm_timeout_s),
+                'publisher_count': counts.get('arm'),
+            },
             'safety': {'requires_operator_arm': True,
                        'provisional_ir_override': self.allow_provisional_ir,
                        'motion_command_publisher': False,

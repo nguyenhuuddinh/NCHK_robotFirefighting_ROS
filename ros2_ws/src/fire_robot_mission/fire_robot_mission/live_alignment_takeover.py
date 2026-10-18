@@ -19,6 +19,7 @@ from action_msgs.msg import GoalStatusArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
+from fire_robot_safety.odom_freshness import OdomStampGuard, admit_odom
 from rclpy.node import Node
 from rclpy.qos import ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
@@ -432,6 +433,22 @@ class LiveAlignmentCore:
             actuator.get('servo_phase') == 'IDLE' and
             isinstance(actuator.get('receive_age_ms'), (int, float)) and
             0 <= actuator['receive_age_ms'] < 350)
+        # Centering can drift while IR has not yet acquired raw motion.
+        # A waiting IR node cannot issue REALIGN_REQUIRED, so accept this
+        # narrow, stationary same-goal handoff before its first segment.
+        pre_ir_realign = (
+            counts.get('ir') == 1 and
+            counts.get('ir_source_ok') is True and
+            ir.get('schema_version') == 1 and
+            ir.get('state') == 'WAITING_FOR_ADMISSION' and
+            ir.get('goal_uuid') in (None, self.goal_uuid) and
+            ir.get('step_count') == 0 and
+            ir.get('publisher_owned') is False and
+            counts.get('pump') == 0 and
+            (self._input('mission', now) or {}).get('state') ==
+            'FIRE_TRACKING' and
+            (self._input('preview', now) or {}).get('state') in (
+                'ALIGNING_LEFT', 'ALIGNING_RIGHT'))
         if (self.phase == 'COMPLETE' and not publisher_owned and
                 self.stop_reason == 'TARGET_CENTERED' and self.goal_uuid and
                 ((counts.get('ir') == 1 and
@@ -445,7 +462,7 @@ class LiveAlignmentCore:
                   ir['step_count'] > self.last_realign_ir_step and
                   (ir.get('recovery_required') is not True or
                    ir.get('recovery_ready') is True)) or
-                 review_realign) and
+                 review_realign or pre_ir_realign) and
                 guard.get('state') == 'CANCEL_CONFIRMED_STOPPED' and
                 guard.get('goal_uuid') == self.goal_uuid and
                 guard.get('blockers') == [] and not raw_sources and
@@ -468,13 +485,34 @@ class LiveAlignmentCore:
             self.stalled_since = None
             self.total_rotation_rad = 0.0
         if self.phase == 'COMPLETE' and not publisher_owned and \
-                self.goal_uuid and self.stop_reason == 'TARGET_CENTERED' and \
-                self.statuses is not None:
+                self.goal_uuid and self.statuses is not None:
             active = [uuid for uuid, status in self.statuses
                       if status in ACTIVE_STATUSES]
-            if len(active) == 1 and _valid_uuid(active[0]) and \
-                    active[0] != self.goal_uuid and \
-                    active[0] not in self.used_goal_uuids:
+            mission = self._input('mission', now) or {}
+            lifecycle = mission.get('lifecycle') or {}
+            perception = mission.get('perception') or {}
+            next_goal_only = (len(active) <= 1 and all(
+                _valid_uuid(uid) and uid != self.goal_uuid and
+                uid not in self.used_goal_uuids for uid in active))
+            pre_spray_clear = (
+                counts.get('mission_source_ok') is True and
+                counts.get('pump') == 0 and
+                counts.get('actuator_source_ok') is True and
+                actuator.get('pump_pwm_commanded_on') is False and
+                actuator.get('servo_pwm_commanded_on') is False and
+                actuator.get('servo_phase') == 'IDLE' and
+                mission.get('state') in ('IDLE', 'NAV2_NAVIGATING') and
+                perception.get('detected_now') is False and
+                perception.get('confirmed') is False and
+                lifecycle.get('pre_spray_clear_goal_uuid') ==
+                self.goal_uuid and next_goal_only and not raw_sources and
+                self._cmd_zero(now) and self._stationary(now))
+            normal_next_goal = (
+                self.stop_reason == 'TARGET_CENTERED' and
+                len(active) == 1 and _valid_uuid(active[0]) and
+                active[0] != self.goal_uuid and
+                active[0] not in self.used_goal_uuids)
+            if pre_spray_clear or normal_next_goal:
                 self.used_goal_uuids.add(self.goal_uuid)
                 self.phase = 'WAITING_FOR_ADMISSION'
                 self.goal_uuid = None
@@ -543,6 +581,12 @@ class LiveAlignmentCore:
                 reason = 'NEW_OR_CHANGED_NAV_GOAL'
             else:
                 reason, target, direction = self._fire_and_direction(now)
+                mission_now = self._input('mission', now) or {}
+                lifecycle_now = mission_now.get('lifecycle') or {}
+                if (mission_now.get('state') == 'IDLE' and
+                        lifecycle_now.get('pre_spray_clear_goal_uuid') ==
+                        self.goal_uuid):
+                    reason = 'PRE_SPRAY_FIRE_CLEARED'
                 if reason in ('ALIGNMENT_DIRECTION_INVALID',
                               'MISSION_FIRE_OR_SAFETY_LOST') and \
                         self._safe_target_miss(now):
@@ -653,6 +697,7 @@ class LiveAlignmentTakeover(Node):
 
     def __init__(self):
         super().__init__('live_alignment_takeover')
+        self._odom_stamp_guard = OdomStampGuard()
         for topic in CANONICAL_TOPICS:
             if self.resolve_topic_name(topic) != topic:
                 raise ValueError(f'live alignment forbids remapping {topic}')
@@ -730,8 +775,11 @@ class LiveAlignmentTakeover(Node):
                 twist.angular.x, twist.angular.y, twist.angular.z)
 
     def _on_odom(self, message):
+        received = admit_odom(self, message, self.core.input_timeout)
+        if received is None:
+            return
         self.core.update_odom(
-            self._values(message.twist.twist), time.monotonic())
+            self._values(message.twist.twist), received)
 
     def _on_cmd(self, message):
         self.core.update_cmd(self._values(message), time.monotonic())
@@ -781,6 +829,10 @@ class LiveAlignmentTakeover(Node):
         counts['actuator_source_ok'] = self._sources(
             '/fire_sensors/actuator_state') == [
                 ('/', 'serial_bridge_node', 'std_msgs/msg/String',
+                 ReliabilityPolicy.BEST_EFFORT)]
+        counts['mission_source_ok'] = self._sources(
+            '/fire_mission/state') == [
+                ('/', 'fire_mission_supervisor', 'std_msgs/msg/String',
                  ReliabilityPolicy.BEST_EFFORT)]
         angular, payload, action = self.core.step(
             now, self._raw_publisher is not None,

@@ -10,6 +10,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from fire_robot_safety.odom_freshness import OdomStampGuard, admit_odom
 from rclpy.node import Node
 from rclpy.qos import ReliabilityPolicy
 from sensor_msgs.msg import LaserScan
@@ -18,6 +19,7 @@ from std_msgs.msg import Bool, String
 from fire_robot_mission.alignment_handoff_shadow import arm_qos
 from fire_robot_mission.ir_approach_live_core import (
     IrApproachLiveCore, VerifiedEndpointPins, verified_raw_gate,
+    vision_far_candidate,
 )
 from fire_robot_mission.mission_supervisor import (
     action_status_qos, sensor_qos,
@@ -45,6 +47,7 @@ class IrApproachLiveNode(Node):
 
     def __init__(self):
         super().__init__('ir_approach_live')
+        self._odom_stamp_guard = OdomStampGuard()
         for topic in TOPICS:
             if self.resolve_topic_name(topic) != topic:
                 raise ValueError('IR jog forbids remapping safety topics')
@@ -125,6 +128,9 @@ class IrApproachLiveNode(Node):
             msg.range_max, tuple(msg.ranges)), time.monotonic())
 
     def _on_odom(self, msg):
+        received = admit_odom(self, msg, self.core.input_timeout)
+        if received is None:
+            return
         linear = msg.twist.twist.linear
         angular = msg.twist.twist.angular
         pose = msg.pose.pose.position
@@ -132,7 +138,7 @@ class IrApproachLiveNode(Node):
             (pose.x, pose.y),
             (linear.x, linear.y, linear.z,
              angular.x, angular.y, angular.z),
-            msg.header.frame_id), time.monotonic())
+            msg.header.frame_id), received)
 
     def _on_cmd(self, msg):
         self.core.update('cmd', (
@@ -228,9 +234,11 @@ class IrApproachLiveNode(Node):
             (mission.get('health') or {}).get('status') == 'OK' and
             not (mission.get('health') or {}).get('blockers'))
         ir_zone_ok = (
-            ir.get('zone') in ('APPROACH', 'TOO_FAR', 'SPRAY_RANGE') and
-            ir.get('zone') == ir.get('ir_band') and
-            ir.get('blockers') == [])
+            (ir.get('zone') in ('APPROACH', 'TOO_FAR', 'SPRAY_RANGE') and
+             ir.get('zone') == ir.get('ir_band') and
+             ir.get('blockers') == []) or
+            (self.core.continuous_approach and
+             vision_far_candidate(ir)))
         stopped_proof = bool(
             base and ir_zone_ok and
             gateway.get('state') == 'HANDOFF_READY' and
@@ -242,8 +250,10 @@ class IrApproachLiveNode(Node):
             gateway.get('odom_stationary') is True and
             mission.get('state') in ('CENTERED_HOLD', 'ALIGNMENT_READY'))
         return (uuid if exact_goal else None,
-                bool(stopped_proof and ir.get('zone') in (
-                    'APPROACH', 'TOO_FAR')),
+                bool(stopped_proof and (
+                    ir.get('zone') in ('APPROACH', 'TOO_FAR') or
+                    (self.core.continuous_approach and
+                     vision_far_candidate(ir)))),
                 bool(base and ir_zone_ok and gateway.get('state') in (
                     'HANDOFF_READY', 'RELEASED_STOPPED') and
                      guard.get('state') in (
@@ -336,6 +346,12 @@ class IrApproachLiveNode(Node):
                 now, counts)
             counts.update(goal_uuid=uuid, handoff_ok=admission,
                           runtime_ok=runtime, range_handoff_ok=range_ready)
+            mission = self._proof('mission', now) or {}
+            lifecycle = mission.get('lifecycle') or {}
+            counts['pre_spray_clear_uuid'] = (
+                lifecycle.get('pre_spray_clear_goal_uuid')
+                if counts.get('mission_source_ok') and
+                mission.get('state') == 'IDLE' else None)
             for key, topic, owner in (
                     ('review', '/fire_mission/post_spray_review',
                      'post_spray_review'),

@@ -8,6 +8,7 @@ guard to perform the already-tested UUID-specific cancellation.
 """
 
 from collections import Counter
+from copy import deepcopy
 import json
 import math
 import signal
@@ -17,6 +18,7 @@ from action_msgs.msg import GoalStatusArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
+from fire_robot_safety.odom_freshness import OdomStampGuard, admit_odom
 from rclpy.node import Node
 from rclpy.qos import ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
@@ -38,6 +40,11 @@ SAFETY_ENDPOINT = Counter({
     ('/', 'safety_watchdog', 'geometry_msgs/msg/Twist',
      ReliabilityPolicy.BEST_EFFORT): 1,
 })
+ACTUATOR_ENDPOINT = Counter({
+    ('/', 'serial_bridge_node', 'std_msgs/msg/String',
+     ReliabilityPolicy.BEST_EFFORT): 1,
+})
+ACTUATOR_MAX_SOURCE_AGE_S = 0.5
 FIRE_STATES = {'FIRE_TRACKING', 'CENTERED_HOLD', 'ALIGNMENT_READY',
                'WAITING_FOR_ALIGNMENT', 'TARGET_LOST'}
 NAV_STATES = {'NAV2_NAVIGATING', 'FIRE_CANDIDATE'}
@@ -113,17 +120,22 @@ class LiveNavStopCore:
         self.stop_latched = False
         self.fire_latched = False
         self.stop_reason = ''
+        self.first_stop = None
         self.stop_since = None
         self.publisher_created_at = None
         self.released = False
         self.statuses = None
         self.status_at = None
         self.goal_uuid = None
+        self.normal_terminal_uuid = None
+        self.normal_terminal_status = None
         self.used_goal_uuids = set()
         self.cancel_confirmed_uuid = None
         self.alignment_completed_uuid = None
         self.pump_completed_uuid = None
         self.reviewed_clear_uuid = None
+        self.pre_spray_clear_uuid = None
+        self.pump_started_uuid = None
         self.actuator = None
         self.actuator_at = None
         self.clear_since = None
@@ -131,6 +143,18 @@ class LiveNavStopCore:
     def update_mission(self, payload, now):
         self.mission = payload
         self.mission_at = float(now)
+        lifecycle = payload.get('lifecycle') if isinstance(payload, dict) \
+            else None
+        if (isinstance(payload, dict) and
+                payload.get('schema_version') == 1 and
+                payload.get('observe_only') is True and
+                isinstance(lifecycle, dict) and
+                lifecycle.get('pre_spray_clear_goal_uuid') ==
+                self.goal_uuid and
+                self.goal_uuid is not None):
+            # This exact-goal proof persists in mission telemetry.  An IDLE
+            # sample can be lost before the next goal becomes active.
+            self.pre_spray_clear_uuid = self.goal_uuid
 
     def update_nav(self, values, now):
         self.nav = tuple(float(value) for value in values)
@@ -161,6 +185,16 @@ class LiveNavStopCore:
         self.statuses = tuple((str(uid).lower(), int(status))
                               for uid, status in statuses)
         self.status_at = float(now)
+        # Action status is event-driven and may later prune a terminal goal.
+        # Latch only the exact current UUID, never a different active goal.
+        if self.goal_uuid and not any(
+                uid == self.goal_uuid and status in ACTIVE_STATUSES
+                for uid, status in self.statuses):
+            terminal = [status for uid, status in self.statuses
+                        if uid == self.goal_uuid and status in (4, 5, 6)]
+            if len(terminal) == 1:
+                self.normal_terminal_uuid = self.goal_uuid
+                self.normal_terminal_status = terminal[0]
 
     def update_alignment(self, payload, now):
         if isinstance(payload, dict) and \
@@ -171,6 +205,11 @@ class LiveNavStopCore:
             self.alignment_completed_uuid = self.goal_uuid
 
     def update_pump(self, payload, now):
+        if (isinstance(payload, dict) and
+                payload.get('state') == 'FIRING' and
+                payload.get('pump_on') is True and
+                payload.get('goal_uuid') == self.goal_uuid):
+            self.pump_started_uuid = self.goal_uuid
         if isinstance(payload, dict) and \
                 ((payload.get('state') == 'COMPLETE' and
                   payload.get('stop_reason') == 'PULSE_TIME_LIMIT') or
@@ -194,9 +233,20 @@ class LiveNavStopCore:
         self.actuator = payload
         self.actuator_at = float(now)
 
-    def _actuator_off(self, now):
+    def _actuator_off(self, now, actuator_ok):
         state = self.actuator if isinstance(self.actuator, dict) else {}
-        return (_fresh(self.actuator_at, now, self.odom_timeout) and
+        source_age = state.get('receive_age_ms')
+        elapsed = now - self.actuator_at if self.actuator_at is not None \
+            else float('inf')
+        return (actuator_ok and
+                _fresh(self.actuator_at, now, self.odom_timeout) and
+                type(state.get('schema_version')) is int and
+                state['schema_version'] == 1 and
+                state.get('mode') == 'COMMAND_TELEMETRY_ONLY' and
+                type(source_age) in (int, float) and
+                math.isfinite(source_age) and
+                0 <= source_age / 1000.0 + elapsed <=
+                ACTUATOR_MAX_SOURCE_AGE_S and
                 state.get('pump_pwm_commanded_on') is False and
                 state.get('servo_phase') == 'IDLE' and
                 state.get('servo_pwm_commanded_on') is False)
@@ -213,40 +263,123 @@ class LiveNavStopCore:
         return active[0] if len(active) == 1 and \
             _valid_uuid(active[0]) else None
 
-    def _clear_for_next_goal(self, now, stationary, cmd_zero):
+    def _clear_for_next_goal(self, now, stationary, cmd_zero, actuator_ok):
         mission = self.mission if isinstance(self.mission, dict) else {}
         perception = mission.get('perception') or {}
         no_fire = (_fresh(self.mission_at, now, self.mission_timeout) and
-                   mission.get('state') == 'IDLE' and
+                   mission.get('state') in ('IDLE', 'NAV2_NAVIGATING') and
                    perception.get('detected_now') is False and
                    perception.get('confirmed') is False)
-        if no_fire and stationary and cmd_zero and self._actuator_off(now):
-            if self.clear_since is None:
-                self.clear_since = now
-        elif mission.get('state') in FIRE_STATES or \
-                not self._actuator_off(now):
+        if not (no_fire and stationary and cmd_zero and actuator_ok):
             self.clear_since = None
-        return self.clear_since is not None and \
-            now - self.clear_since >= 1.0
+        elif _fresh(self.actuator_at, now, self.odom_timeout):
+            # A fresh ON/invalid report breaks the proof. A gap between OFF
+            # reports does not: otherwise a slow telemetry publisher can
+            # prevent the one-second stop hold from ever completing.
+            if self._actuator_off(now, actuator_ok):
+                if self.clear_since is None:
+                    self.clear_since = now
+            else:
+                self.clear_since = None
+        return (self.clear_since is not None and
+                now - self.clear_since >= 1.0 and
+                self._actuator_off(now, actuator_ok))
 
-    def _rearm_if_new_goal(self, now, stationary, cmd_zero, raw_count):
+    def _cycle_clear_blockers(self, now, guard_count):
+        """Explain the same exact-goal proofs used for rearming."""
+        goal = self.goal_uuid
+        if not _valid_uuid(goal):
+            return ['OLD_GOAL_UUID_MISSING']
+        normal_no_fire = (not self.fire_latched and
+                          self.stop_reason == 'NAV_GOAL_TERMINAL_NO_FIRE' and
+                          self.normal_terminal_uuid == goal and
+                          self.normal_terminal_status in (4, 5, 6))
+        fire_cycle_clear = (self.fire_latched and
+                            self.cancel_confirmed_uuid == goal and
+                            self.alignment_completed_uuid == goal and
+                            self.pump_completed_uuid == goal and
+                            self.reviewed_clear_uuid == goal)
+        guard_reset = (guard_count == 1 and
+                       _fresh(self.guard_at, now, self.guard_timeout) and
+                       isinstance(self.guard, dict) and
+                       self.guard.get('state') == 'WAITING_FOR_ADMISSION' and
+                       self.guard.get('goal_uuid') is None and
+                       self.guard.get('send_count') == 0)
+        pre_spray_clear = (self.fire_latched and
+                           self.cancel_confirmed_uuid == goal and
+                           self.pre_spray_clear_uuid == goal and
+                           self.pump_started_uuid != goal and guard_reset)
+        if normal_no_fire or fire_cycle_clear or pre_spray_clear:
+            return []
+        if not self.fire_latched:
+            return ['OLD_GOAL_TERMINAL_PROOF_INVALID']
+        blockers = []
+        if self.cancel_confirmed_uuid != goal:
+            blockers.append('CANCEL_PROOF_MISSING')
+        if self.pump_started_uuid == goal:
+            if self.alignment_completed_uuid != goal:
+                blockers.append('ALIGNMENT_PROOF_MISSING')
+            if self.pump_completed_uuid != goal:
+                blockers.append('PUMP_COMPLETION_PROOF_MISSING')
+            if self.reviewed_clear_uuid != goal:
+                blockers.append('POST_SPRAY_REVIEW_PROOF_MISSING')
+        elif self.pre_spray_clear_uuid != goal:
+            blockers.append('PRE_SPRAY_CLEAR_PROOF_MISSING')
+        elif not guard_reset:
+            blockers.append('CANCEL_GUARD_RESET_PROOF_MISSING')
+        if not blockers:
+            blockers.append('FIRE_CYCLE_PROOF_INCOMPLETE')
+        return blockers
+
+    def _next_goal_blockers(self, now, stationary, cmd_zero, raw_count,
+                            pump_count, guard_count, actuator_ok,
+                            clear_ready):
+        if not self.released:
+            return []
+        blockers = []
         new_goal = self._active_goal(now)
-        if not (self.released and raw_count == 0 and self.goal_uuid and
+        if raw_count:
+            blockers.append('RAW_OWNER_PRESENT')
+        if pump_count:
+            blockers.append('PUMP_OWNER_PRESENT')
+        blockers.extend(self._cycle_clear_blockers(now, guard_count))
+        if not new_goal or new_goal == self.goal_uuid or \
+                new_goal in self.used_goal_uuids:
+            blockers.append('NEW_GOAL_UUID_MISSING_OR_REUSED')
+        if not stationary:
+            blockers.append('ODOM_NOT_STATIONARY')
+        if not cmd_zero:
+            blockers.append('CMD_VEL_NOT_ZERO')
+        if not clear_ready:
+            blockers.append('NO_FIRE_CLEAR_HOLD_INCOMPLETE')
+        if not actuator_ok:
+            blockers.append('ACTUATOR_PUBLISHER_INVALID')
+        if not self._actuator_off(now, actuator_ok):
+            blockers.append('ACTUATOR_OFF_TELEMETRY_MISSING_OR_STALE')
+        return blockers
+
+    def _rearm_if_new_goal(self, now, stationary, cmd_zero, raw_count,
+                           pump_count=0, guard_count=0,
+                           clear_ready=False, actuator_ok=False):
+        new_goal = self._active_goal(now)
+        if not (self.released and raw_count == 0 and pump_count == 0 and
+                self.goal_uuid and
                 new_goal and new_goal != self.goal_uuid and
                 new_goal not in self.used_goal_uuids and
-                self.cancel_confirmed_uuid == self.goal_uuid and
-                self.alignment_completed_uuid == self.goal_uuid and
-                self.pump_completed_uuid == self.goal_uuid and
-                self.reviewed_clear_uuid == self.goal_uuid and
-                self._clear_for_next_goal(now, stationary, cmd_zero) and
-                stationary and cmd_zero and self._actuator_off(now)):
+                not self._cycle_clear_blockers(now, guard_count) and
+                clear_ready and
+                stationary and cmd_zero and
+                self._actuator_off(now, actuator_ok)):
             return False
         self.used_goal_uuids.add(self.goal_uuid)
         self.goal_uuid = new_goal
+        self.normal_terminal_uuid = None
+        self.normal_terminal_status = None
         self.ever_forwarded = False
         self.stop_latched = False
         self.fire_latched = False
         self.stop_reason = ''
+        self.first_stop = None
         self.stop_since = None
         self.publisher_created_at = None
         self.released = False
@@ -255,6 +388,8 @@ class LiveNavStopCore:
         self.alignment_completed_uuid = None
         self.pump_completed_uuid = None
         self.reviewed_clear_uuid = None
+        self.pre_spray_clear_uuid = None
+        self.pump_started_uuid = None
         return True
 
     def publisher_created(self, now):
@@ -344,6 +479,56 @@ class LiveNavStopCore:
             blockers.append('NAV_GOAL_UUID_UNAVAILABLE')
         return blockers
 
+    def _capture_first_stop(self, now, blockers, nav_ok, raw_ok, safety_ok,
+                            status_count, mission_count, odom_count, arm_count):
+        """Freeze the first stop decision; diagnostics never grant admission."""
+        if not self.stop_latched or self.first_stop is not None:
+            return
+        mission = self.mission if isinstance(self.mission, dict) else {}
+        health = mission.get('health') or {}
+        health = health if isinstance(health, dict) else {}
+        health_blockers = health.get('blockers')
+        # Keep external text bounded; avoid retaining an entire mission payload.
+        if not isinstance(health_blockers, (list, tuple)):
+            health_blockers = []
+        def age_ms(received):
+            age = None if received is None else (now - received) * 1000.0
+            return age if age is None or math.isfinite(age) else None
+        self.first_stop = {
+            'monotonic_s': now,
+            'cycle_goal_uuid': self.goal_uuid,
+            'reason': self.stop_reason,
+            'blockers': sorted(set(blockers)),
+            'mission_state': mission.get('state'),
+            'mission_health': {
+                'status': health.get('status'),
+                'blockers': [str(v)[:128] for v in health_blockers[:32]],
+            },
+            # Callback receive ages, NOT source/header ages. Null means no
+            # currently admitted sample (including invalidated odometry).
+            'receive_age_ms': {
+                'mission': age_ms(self.mission_at),
+                'nav_command': age_ms(self.nav_at),
+                'odom_admitted': age_ms(self.odom_at),
+                'arm': age_ms(self.arm_at),
+                'cmd_vel': age_ms(self.cmd_at),
+            },
+            'timeout_ms': {
+                'mission': self.mission_timeout * 1000.0,
+                'nav_command': self.nav_timeout * 1000.0,
+                'odom_admitted': self.odom_timeout * 1000.0,
+                'arm': self.arm_timeout * 1000.0,
+            },
+            'topology': {
+                'nav_shadow_ok': nav_ok, 'raw_owner_ok': raw_ok,
+                'safety_gate_ok': safety_ok,
+                'nav_status_publishers': status_count,
+                'mission_publishers': mission_count,
+                'odom_publishers': odom_count,
+                'live_arm_publishers': arm_count,
+            },
+        }
+
     def _handoff_ready(self, now, stationary, cmd_zero, raw_count,
                        nav_ok, safety_ok, status_count, mission_count,
                        odom_count, guard_count):
@@ -389,7 +574,8 @@ class LiveNavStopCore:
     def evaluate(self, now, publisher_owned, raw_sources, nav_sources,
                  cmd_sources, status_publishers, mission_publishers=0,
                  odom_publishers=0, arm_publishers=0,
-                 guard_publishers=0):
+                 guard_publishers=0, pump_publishers=0,
+                 actuator_sources=()):
         """Return (Twist planar pair, state JSON, CREATE/RELEASE/None)."""
         now = float(now)
         raw_count = len(raw_sources)
@@ -397,6 +583,7 @@ class LiveNavStopCore:
             RAW_ENDPOINT if publisher_owned else Counter())
         nav_ok = Counter(nav_sources) == EXPECTED_SHADOW_PUBLISHERS
         safety_ok = Counter(cmd_sources) == SAFETY_ENDPOINT
+        actuator_ok = Counter(actuator_sources) == ACTUATOR_ENDPOINT
         odom_fresh, stationary = self._stationary(now)
         cmd_zero = self._cmd_zero(now, safety_ok)
         mission = self.mission if isinstance(self.mission, dict) else {}
@@ -405,9 +592,12 @@ class LiveNavStopCore:
         if not self.released and self.goal_uuid is None and active_goal and \
                 (mission.get('navigation') or {}).get('goal_active') is True:
             self.goal_uuid = active_goal
+        if pump_publishers > 0 and self.fire_latched and self.goal_uuid:
+            self.pump_started_uuid = self.goal_uuid
         # A fire seen before any Nav2 goal is not a completed handoff cycle.
         # Keep observing, but never release the gateway without goal identity.
-        if self.goal_uuid is not None and mission_state in FIRE_STATES:
+        if self.goal_uuid is not None and active_goal == self.goal_uuid and \
+                mission_state in FIRE_STATES:
             self.fire_latched = True
         blockers = self._nav_eligible(
             now, nav_ok, safety_ok, status_publishers,
@@ -416,29 +606,55 @@ class LiveNavStopCore:
         if self.goal_uuid is not None and active_goal is not None and \
                 active_goal != self.goal_uuid and not self.released:
             blockers.append('NAV_GOAL_UUID_CHANGED')
+        normal_done = (
+            not self.fire_latched and
+            self.normal_terminal_uuid == self.goal_uuid and
+            self.normal_terminal_status in (4, 5, 6) and
+            status_publishers == 1 and
+            active_goal != self.goal_uuid)
+        # Mission/nav callbacks may arrive before the action terminal event.
+        # Keep stopping, but reclassify only after exact terminal evidence.
+        if normal_done and self.stop_reason in (
+                'NAV_INPUT_OR_TOPOLOGY_LOST', 'ARMING_INPUT_LOST'):
+            self.stop_reason = 'NAV_GOAL_TERMINAL_NO_FIRE'
         action = None
         linear = angular = 0.0
+        clear_ready = False
+        rearm_blockers = []
 
         if not self.enabled:
             state = 'DISABLED'
             if publisher_owned:
                 action = 'RELEASE'
         elif self.released:
-            self._clear_for_next_goal(now, stationary, cmd_zero)
-            if self._rearm_if_new_goal(now, stationary, cmd_zero, raw_count):
+            clear_ready = self._clear_for_next_goal(
+                now, stationary, cmd_zero, actuator_ok)
+            rearm_blockers = self._next_goal_blockers(
+                now, stationary, cmd_zero, raw_count, pump_publishers,
+                guard_publishers, actuator_ok, clear_ready)
+            rearmed = self._rearm_if_new_goal(
+                now, stationary, cmd_zero, raw_count, pump_publishers,
+                guard_publishers, clear_ready, actuator_ok)
+            if rearmed:
                 state = 'WAITING_FOR_INPUT'
+                rearm_blockers = []
             else:
                 state = ('HANDOFF_READY' if self._handoff_ready(
                     now, stationary, cmd_zero, raw_count, nav_ok, safety_ok,
                     status_publishers, mission_publishers, odom_publishers,
                     guard_publishers) else 'RELEASED_STOPPED')
         else:
-            if self.fire_latched or (self.ever_forwarded and blockers):
+            if self.fire_latched or normal_done or \
+                    (self.ever_forwarded and blockers):
                 self.stop_latched = True
                 if not self.stop_reason:
                     self.stop_reason = (
                         'FIRE_ACQUIRED' if self.fire_latched else
+                        'NAV_GOAL_TERMINAL_NO_FIRE' if normal_done else
                         'NAV_INPUT_OR_TOPOLOGY_LOST')
+            if self.stop_reason == 'NAV_GOAL_TERMINAL_NO_FIRE':
+                self._clear_for_next_goal(
+                    now, stationary, cmd_zero, actuator_ok)
             if publisher_owned and not raw_ok:
                 discovery_pending = raw_count == 0 and \
                     self.publisher_created_at is not None and \
@@ -479,6 +695,9 @@ class LiveNavStopCore:
                 state = 'NAVIGATION'
                 linear, angular = self.nav[0], self.nav[5]
 
+        self._capture_first_stop(
+            now, blockers, nav_ok, raw_ok, safety_ok, status_publishers,
+            mission_publishers, odom_publishers, arm_publishers)
         payload = {
             'schema_version': 1,
             'state': state,
@@ -489,6 +708,7 @@ class LiveNavStopCore:
             'ever_forwarded': self.ever_forwarded,
             'released': self.released,
             'stop_reason': self.stop_reason,
+            'first_stop': deepcopy(self.first_stop),
             'handoff_ready': state == 'HANDOFF_READY',
             'nav_shadow_fingerprint_ok': nav_ok,
             'raw_owner_fingerprint_ok': raw_ok,
@@ -499,6 +719,7 @@ class LiveNavStopCore:
             'odom_publishers': odom_publishers,
             'live_arm_publishers': arm_publishers,
             'cancel_guard_publishers': guard_publishers,
+            'actuator_fingerprint_ok': actuator_ok,
             'arm_fresh': _fresh(self.arm_at, now, self.arm_timeout) and
             self.arm,
             'odom_fresh': odom_fresh,
@@ -509,6 +730,18 @@ class LiveNavStopCore:
             'command': {'linear_x_m_s': linear,
                         'angular_z_rad_s': angular},
             'blockers': sorted(set(blockers)),
+            'rearm_blockers': rearm_blockers,
+            'next_goal_clear_ready': bool(
+                self.released and self.stop_reason ==
+                'NAV_GOAL_TERMINAL_NO_FIRE' and not self.fire_latched and
+                self.normal_terminal_uuid == self.goal_uuid and
+                self.normal_terminal_status in (4, 5, 6) and clear_ready and
+                raw_count == 0 and pump_publishers == 0 and nav_ok and
+                safety_ok and status_publishers == 1 and
+                mission_publishers == 1 and odom_publishers == 1 and
+                arm_publishers == 1 and
+                _fresh(self.arm_at, now, self.arm_timeout) and self.arm and
+                actuator_ok),
             'safety': {
                 'raw_command_publisher': publisher_owned,
                 'actuator_command_publisher': False,
@@ -524,6 +757,7 @@ class LiveNavStopGateway(Node):
 
     def __init__(self):
         super().__init__('live_nav_stop_gateway')
+        self._odom_stamp_guard = OdomStampGuard()
         # A ROS CLI remap must not redirect this safety gate's live output or
         # make it observe a different mission/command stream.
         for topic in CANONICAL_TOPICS:
@@ -604,8 +838,11 @@ class LiveNavStopGateway(Node):
         self.core.update_nav(self._values(message), time.monotonic())
 
     def _on_odom(self, message):
+        received = admit_odom(self, message, self.core.odom_timeout)
+        if received is None:
+            return
         self.core.update_odom(
-            self._values(message.twist.twist), time.monotonic())
+            self._values(message.twist.twist), received)
 
     def _on_cmd(self, message):
         self.core.update_cmd(self._values(message), time.monotonic())
@@ -664,7 +901,9 @@ class LiveNavStopGateway(Node):
             self.count_publishers('/odom'),
             self.count_publishers('/fire_mission/live_nav_arm'),
             self.count_publishers(
-                '/fire_mission/nav2_cancel_guard_state'))
+                '/fire_mission/nav2_cancel_guard_state'),
+            self.count_publishers('/pump_cmd'),
+            self._sources('/fire_sensors/actuator_state'))
         if action == 'CREATE':
             self._raw_publisher = self.create_publisher(
                 Twist, '/cmd_vel_raw', sensor_qos())

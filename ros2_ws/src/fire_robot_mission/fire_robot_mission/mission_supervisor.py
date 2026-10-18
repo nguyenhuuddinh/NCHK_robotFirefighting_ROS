@@ -9,6 +9,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from fire_robot_safety.odom_freshness import OdomStampGuard, admit_odom
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -86,7 +87,8 @@ class MissionSupervisorCore:
             stationary_linear_speed_m_s=0.02,
             stationary_angular_speed_rad_s=0.05,
             turn_comparison_epsilon_rad_s=0.03,
-            review_timeout_s=0.6, actuator_timeout_s=0.35):
+            review_timeout_s=0.6, actuator_timeout_s=0.35,
+            pre_spray_clear_hold_s=1.5):
         positive = {
             'detection_timeout_s': detection_timeout_s,
             'alignment_timeout_s': alignment_timeout_s,
@@ -103,6 +105,7 @@ class MissionSupervisorCore:
                 turn_comparison_epsilon_rad_s),
             'review_timeout_s': review_timeout_s,
             'actuator_timeout_s': actuator_timeout_s,
+            'pre_spray_clear_hold_s': pre_spray_clear_hold_s,
         }
         invalid = [name for name, value in positive.items() if value <= 0.0]
         if invalid:
@@ -131,6 +134,7 @@ class MissionSupervisorCore:
         self.turn_epsilon = float(turn_comparison_epsilon_rad_s)
         self.review_timeout = float(review_timeout_s)
         self.actuator_timeout = float(actuator_timeout_s)
+        self.pre_spray_clear_hold = float(pre_spray_clear_hold_s)
 
         self._detection = None
         self._detection_received = None
@@ -151,6 +155,12 @@ class MissionSupervisorCore:
         self._review_received = None
         self._actuator = None
         self._actuator_received = None
+        self._ir = None
+        self._ir_received = None
+        self._pump_started_uuid = None
+        self._pump_owner_count = 0
+        self._pre_spray_clear_since = None
+        self._pre_spray_clear_uuid = None
         self._candidate_since = None
         self._candidate_reacquire = False
         self._candidate_confirmed = False
@@ -237,6 +247,80 @@ class MissionSupervisorCore:
         """Store Pi bridge telemetry; never command the actuator."""
         self._actuator = payload
         self._actuator_received = float(now)
+
+    def update_ir(self, payload, now):
+        self._ir = payload
+        self._ir_received = float(now)
+
+    def update_pump(self, payload, now):
+        if (isinstance(payload, dict) and
+                payload.get('state') == 'FIRING' and
+                payload.get('pump_on') is True and
+                payload.get('goal_uuid') == self._acquired_goal_uuid):
+            self._pump_started_uuid = self._acquired_goal_uuid
+
+    def update_pump_owner_count(self, count):
+        self._pump_owner_count = int(count)
+        if self._pump_owner_count > 0 and _valid_goal_uuid(
+                self._acquired_goal_uuid):
+            self._pump_started_uuid = self._acquired_goal_uuid
+
+    def _pre_spray_clear(self, now, nav_active):
+        """Require sustained camera and IR absence after cancellation."""
+        fire = ((self._detection or {}).get('fire') or {}) if \
+            isinstance(self._detection, dict) else {}
+        ready = (fire.get('detected_now') is False and
+                 fire.get('confirmed') is False and
+                 self._ever_acquired and
+                 _valid_goal_uuid(self._acquired_goal_uuid) and
+                 self._acquired_goal_canceled and not nav_active and
+                 self._pump_owner_count == 0 and
+                 self._pump_started_uuid != self._acquired_goal_uuid and
+                 not any(status in ACTIVE_GOAL_STATUSES
+                         for _, status in self._goal_status_records))
+        ir = self._ir if isinstance(self._ir, dict) else {}
+        actuator = self._actuator if isinstance(self._actuator, dict) else {}
+        age = _age_seconds(self._ir_received, now)
+        actuator_age = _age_seconds(self._actuator_received, now)
+        odom_fresh, stationary, _ = self._odom_status(now)
+        actuator_fresh = (actuator_age is not None and
+                          actuator_age <= self.actuator_timeout)
+        actuator_off = (actuator.get('schema_version') == 1 and
+                        actuator.get('mode') == 'COMMAND_TELEMETRY_ONLY' and
+                        actuator.get('pump_pwm_commanded_on') is False and
+                        actuator.get('servo_pwm_commanded_on') is False and
+                        actuator.get('servo_phase') == 'IDLE')
+        ready = (ready and age is not None and age <= 0.6 and
+                 ir.get('schema_version') == 1 and
+                 ir.get('mode') == 'OBSERVE_ONLY' and
+                 ir.get('observe_only') is True and
+                 ir.get('ir_band') == 'NO_FLAME_SIGNATURE' and
+                 ir.get('zone') == 'UNKNOWN' and
+                 type(ir.get('stable_samples')) is int and
+                 ir['stable_samples'] >= 3 and
+                 isinstance(ir.get('ir_receive_age_ms'), (int, float)) and
+                 0 <= ir['ir_receive_age_ms'] <= 300 and
+                 isinstance(ir.get('blockers'), list) and
+                 'NO_IR_FLAME_SIGNATURE' in ir['blockers'] and
+                 set(ir['blockers']) <= {
+                     'NO_IR_FLAME_SIGNATURE', 'FIRE_NOT_CONFIRMED',
+                     'FIRE_NOT_CENTERED'} and
+                 odom_fresh and stationary and
+                 self._motion_owner(False, now) !=
+                 'UNKNOWN_RAW_COMMAND_SOURCE')
+        # Keep the no-fire/stationary hold across gaps between OFF reports.
+        # A fresh ON or invalid report revokes it immediately; the first and
+        # final samples must both be fresh, valid OFF telemetry.
+        if not ready or (actuator_fresh and not actuator_off):
+            self._pre_spray_clear_since = None
+            return False
+        if actuator_fresh and actuator_off and \
+                self._pre_spray_clear_since is None:
+            self._pre_spray_clear_since = now
+        return (self._pre_spray_clear_since is not None and
+                actuator_fresh and actuator_off and
+                now - self._pre_spray_clear_since >=
+                self.pre_spray_clear_hold)
 
     def _active_goal_uuid(self):
         active = {uuid for uuid, status in self._goal_status_records
@@ -449,12 +533,19 @@ class MissionSupervisorCore:
         target_present = detected_now and confirmed
         alignment_blockers = self._alignment_health(now, target_present)
         hard_blockers = detection_blockers + alignment_blockers
+        if target_present or hard_blockers:
+            self._pre_spray_clear_since = None
 
+        pre_spray_clear = (not target_present and not hard_blockers and
+                           self._pre_spray_clear(now, nav_active))
         if not target_present and not hard_blockers and \
-                self._reviewed_clear(now, nav_active):
+                (self._reviewed_clear(now, nav_active) or pre_spray_clear):
+            if pre_spray_clear:
+                self._pre_spray_clear_uuid = self._acquired_goal_uuid
             self._ever_acquired = False
             self._acquired_goal_uuid = None
             self._acquired_goal_canceled = False
+            self._pre_spray_clear_since = None
 
         alignment_state, direction, fire_angular = (
             self._alignment_values())
@@ -556,6 +647,9 @@ class MissionSupervisorCore:
             'schema_version': 1,
             'observe_only': True,
             'state': state,
+            'lifecycle': {
+                'pre_spray_clear_goal_uuid': self._pre_spray_clear_uuid,
+            },
             'state_age_ms': state_age_ms,
             'perception': {
                 'detected_now': detected_now,
@@ -632,6 +726,7 @@ class FireMissionSupervisor(Node):
 
     def __init__(self):
         super().__init__('fire_mission_supervisor')
+        self._odom_stamp_guard = OdomStampGuard()
         self._declare_parameters()
         self._read_parameters()
         self._core = MissionSupervisorCore(**self._core_parameters)
@@ -658,6 +753,10 @@ class FireMissionSupervisor(Node):
             String, self.post_spray_review_topic, self._on_review, qos)
         self.create_subscription(
             String, self.actuator_state_topic, self._on_actuator, qos)
+        self.create_subscription(
+            String, self.ir_range_topic, self._on_ir_range, qos)
+        self.create_subscription(
+            String, self.pump_state_topic, self._on_pump_state, qos)
         self.create_timer(1.0 / self.publish_rate, self._publish_state)
         self.get_logger().warning(
             '[MISSION] OBSERVE-ONLY: no Twist, Nav2 action or actuator '
@@ -681,6 +780,10 @@ class FireMissionSupervisor(Node):
             'post_spray_review_topic', '/fire_mission/post_spray_review')
         self.declare_parameter(
             'actuator_state_topic', '/fire_sensors/actuator_state')
+        self.declare_parameter(
+            'ir_range_topic', '/fire_mission/ir_range_preview')
+        self.declare_parameter(
+            'pump_state_topic', '/fire_mission/pump_demo_state')
         self.declare_parameter('state_topic', '/fire_mission/state')
         self.declare_parameter('publish_rate_hz', 10.0)
         self.declare_parameter('detection_timeout_s', 0.50)
@@ -699,6 +802,7 @@ class FireMissionSupervisor(Node):
             'turn_comparison_epsilon_rad_s', 0.03)
         self.declare_parameter('review_timeout_s', 0.6)
         self.declare_parameter('actuator_timeout_s', 0.35)
+        self.declare_parameter('pre_spray_clear_hold_s', 1.5)
 
     def _read_parameters(self):
         topic_names = [
@@ -710,6 +814,8 @@ class FireMissionSupervisor(Node):
             'nav_status_topic',
             'post_spray_review_topic',
             'actuator_state_topic',
+            'ir_range_topic',
+            'pump_state_topic',
             'state_topic',
         ]
         for name in topic_names:
@@ -740,6 +846,7 @@ class FireMissionSupervisor(Node):
                 'turn_comparison_epsilon_rad_s',
                 'review_timeout_s',
                 'actuator_timeout_s',
+                'pre_spray_clear_hold_s',
             )
         }
 
@@ -773,10 +880,13 @@ class FireMissionSupervisor(Node):
         )
 
     def _on_odom(self, message):
+        received = admit_odom(self, message, self._core.odom_timeout)
+        if received is None:
+            return
         self._core.update_odom(
             message.twist.twist.linear.x,
             message.twist.twist.angular.z,
-            self._now(),
+            received,
         )
 
     def _on_nav_command(self, message):
@@ -823,7 +933,30 @@ class FireMissionSupervisor(Node):
             payload = None
         self._core.update_actuator(payload, self._now())
 
+    def _on_ir_range(self, message):
+        if not self._single_expected_publisher(
+                self.ir_range_topic, 'ir_range_preview'):
+            self._core.update_ir(None, self._now())
+            return
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            payload = None
+        self._core.update_ir(payload, self._now())
+
+    def _on_pump_state(self, message):
+        if not self._single_expected_publisher(
+                self.pump_state_topic, 'pump_demo_controller'):
+            return
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            payload = None
+        self._core.update_pump(payload, self._now())
+
     def _publish_state(self):
+        self._core.update_pump_owner_count(
+            self.count_publishers('/pump_cmd'))
         payload = self._core.evaluate(self._now())
         message = String()
         message.data = json.dumps(

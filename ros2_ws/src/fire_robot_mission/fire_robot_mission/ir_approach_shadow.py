@@ -7,6 +7,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from fire_robot_safety.odom_freshness import OdomStampGuard, admit_odom
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
@@ -20,6 +21,7 @@ class IrApproachShadowNode(Node):
 
     def __init__(self):
         super().__init__('ir_approach_shadow')
+        self._odom_stamp_guard = OdomStampGuard()
         self.declare_parameter('step_m', 0.05)
         self.declare_parameter('front_half_angle_rad', 0.35)
         self.declare_parameter('front_margin_m', 0.45)
@@ -54,11 +56,14 @@ class IrApproachShadowNode(Node):
             msg.range_max, tuple(msg.ranges)), time.monotonic())
 
     def _odom(self, msg):
+        received = admit_odom(self, msg, self.core.timeout_s)
+        if received is None:
+            return
         linear = msg.twist.twist.linear
         angular = msg.twist.twist.angular
         self.core.update('odom', (linear.x, linear.y, linear.z,
                                   angular.x, angular.y, angular.z),
-                         time.monotonic())
+                         received)
 
     def _cmd(self, msg):
         self.core.update('cmd', (msg.linear.x, msg.linear.y, msg.linear.z,

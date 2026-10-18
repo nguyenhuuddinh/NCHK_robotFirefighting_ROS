@@ -11,6 +11,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from fire_robot_safety.odom_freshness import OdomStampGuard, admit_odom
 from rclpy.node import Node
 from rclpy.qos import ReliabilityPolicy
 from std_msgs.msg import Bool, String
@@ -34,6 +35,7 @@ CANONICAL_ENDPOINTS = {
     'shadow_nav_cmd_topic': '/fire_mission/nav2_cmd_vel_shadow',
     'alignment_state_topic': '/fire_mission/live_alignment_state',
     'ir_approach_state_topic': '/fire_mission/ir_approach_live_state',
+    'mission_state_topic': '/fire_mission/state',
     'state_topic': '/fire_mission/nav2_cancel_guard_state',
 }
 ACTIVE_FIRE_STATES = {
@@ -150,6 +152,10 @@ class Nav2CancelGuardCore:
         self.ir_release_seen_at = None
         self.post_ir_zero_since = None
         self.ir_state_source_ok = False
+        self.pump_publishers = 0
+        self.mission = None
+        self.mission_received = None
+        self.mission_source_ok = False
 
     def update_intent(self, payload, now):
         self.intent = payload
@@ -166,7 +172,8 @@ class Nav2CancelGuardCore:
 
     def update_topology(
             self, status, shadow, arm, nav_shadow_sources, raw, cmd, guard,
-            service_ready, raw_sources=(), ir_state_source_ok=False):
+            service_ready, raw_sources=(), ir_state_source_ok=False,
+            pump_publishers=0):
         status = int(status)
         if status != 1:
             self.statuses = None
@@ -178,6 +185,7 @@ class Nav2CancelGuardCore:
         self.raw_publishers = int(raw)
         self.raw_sources = tuple(raw_sources)
         self.ir_state_source_ok = bool(ir_state_source_ok)
+        self.pump_publishers = int(pump_publishers)
         self.cmd_publishers = int(cmd)
         self.guard_publishers = int(guard)
         self.service_ready = bool(service_ready)
@@ -189,6 +197,65 @@ class Nav2CancelGuardCore:
     def update_ir_approach(self, payload, now):
         self.ir_approach = payload
         self.ir_approach_received = float(now)
+
+    def update_mission(self, payload, now, source_ok=True):
+        self.mission = payload
+        self.mission_received = float(now)
+        self.mission_source_ok = source_ok is True
+
+    def _pre_spray_clear_proven(self, now):
+        mission = self.mission if isinstance(self.mission, dict) else {}
+        lifecycle = mission.get('lifecycle')
+        perception = mission.get('perception') or {}
+        active = self._active_goals()
+        # The operator may submit the next goal before this node consumes the
+        # clear proof. It is safe to retire the old UUID while the new goal is
+        # still stationary; never treat the old goal as active again.
+        next_goal_only = (len(active) <= 1 and all(
+            _valid_uuid(uid) and uid != self.goal_uuid and
+            uid not in self.used_goal_uuids for uid in active))
+        return (self.mission_source_ok and
+                _age(self.mission_received, now) is not None and
+                _age(self.mission_received, now) <= self.telemetry_timeout and
+                mission.get('schema_version') == 1 and
+                mission.get('state') in ('IDLE', 'NAV2_NAVIGATING') and
+                perception.get('detected_now') is False and
+                perception.get('confirmed') is False and
+                isinstance(lifecycle, dict) and
+                lifecycle.get('pre_spray_clear_goal_uuid') ==
+                self.goal_uuid and
+                self.complete and self.canceled_at is not None and
+                self.raw_publishers == 0 and self.pump_publishers == 0 and
+                next_goal_only and
+                self.status_publishers == 1 and
+                _age(self.status_received, now) is not None and
+                _age(self.status_received, now) <= self.telemetry_timeout and
+                all(status == 5 for uid, status in self.statuses
+                    if uid == self.goal_uuid) and
+                self._cmd_zero(now) and self._odom_stationary(now))
+
+    def _clear_cycle(self):
+        self.used_goal_uuids.add(self.goal_uuid)
+        self.goal_uuid = None
+        self.sent_at = None
+        self.accepted_at = None
+        self.canceled_at = None
+        self.zero_since = None
+        self.complete = False
+        self.failure = None
+        self.send_count = 0
+        self.failure_evidence = None
+        self.alignment = None
+        self.alignment_received = None
+        self.alignment_started_at = None
+        self.post_alignment_zero_since = None
+        self.ir_approach = None
+        self.ir_approach_received = None
+        self.ir_started_at = None
+        self.ir_release_seen_at = None
+        self.post_ir_zero_since = None
+        self.intent = None
+        self.intent_received = None
 
     def _alignment_owner(self):
         return self.raw_publishers == 1 and \
@@ -432,6 +499,8 @@ class Nav2CancelGuardCore:
         # A completed cancellation belongs to one UUID only. A distinct
         # active Nav2 goal can begin a new cycle, never a failed old cycle.
         active = self._active_goals()
+        if self.goal_uuid and self._pre_spray_clear_proven(now):
+            self._clear_cycle()
         if self.complete and not self.failure and self.goal_uuid and \
                 len(active) == 1 and active[0] != self.goal_uuid and \
                 _valid_uuid(active[0]) and \
@@ -446,25 +515,7 @@ class Nav2CancelGuardCore:
                 self.alignment_started_at is None and \
                 self._cmd_zero(now) and self._odom_stationary(now) and \
                 self._arm_fresh(now):
-            self.used_goal_uuids.add(self.goal_uuid)
-            self.goal_uuid = None
-            self.sent_at = None
-            self.accepted_at = None
-            self.canceled_at = None
-            self.zero_since = None
-            self.complete = False
-            self.send_count = 0
-            self.failure_evidence = None
-            self.alignment = None
-            self.alignment_received = None
-            self.post_alignment_zero_since = None
-            self.ir_approach = None
-            self.ir_approach_received = None
-            self.ir_started_at = None
-            self.ir_release_seen_at = None
-            self.post_ir_zero_since = None
-            self.intent = None
-            self.intent_received = None
+            self._clear_cycle()
         if self.goal_uuid is None:
             blockers, candidate = self._preflight(now)
             if candidate in self.used_goal_uuids:
@@ -694,6 +745,7 @@ class Nav2CancelGuard(Node):
 
     def __init__(self):
         super().__init__('nav2_cancel_guard')
+        self._odom_stamp_guard = OdomStampGuard()
         defaults = {
             'enable_real_cancel': False,
             'intent_topic': '/fire_mission/nav2_cancel_intent_shadow',
@@ -706,6 +758,7 @@ class Nav2CancelGuard(Node):
             'shadow_nav_cmd_topic': '/fire_mission/nav2_cmd_vel_shadow',
             'alignment_state_topic': '/fire_mission/live_alignment_state',
             'ir_approach_state_topic': '/fire_mission/ir_approach_live_state',
+            'mission_state_topic': '/fire_mission/state',
             'state_topic': '/fire_mission/nav2_cancel_guard_state',
             'publish_rate_hz': 10.0,
             'intent_timeout_s': 0.35,
@@ -764,6 +817,9 @@ class Nav2CancelGuard(Node):
             String, params['ir_approach_state_topic'],
             self._on_ir_approach, sensor_qos())
         self.create_subscription(
+            String, params['mission_state_topic'],
+            self._on_mission, sensor_qos())
+        self.create_subscription(
             Bool, params['arm_topic'], self._on_arm, arm_qos())
         self.create_subscription(
             GoalStatusArray, self.status_topic, self._on_status,
@@ -801,6 +857,21 @@ class Nav2CancelGuard(Node):
             payload = None
         self.core.update_ir_approach(payload, time.monotonic())
 
+    def _on_mission(self, message):
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            payload = None
+        infos = self.get_publishers_info_by_topic(
+            CANONICAL_ENDPOINTS['mission_state_topic'])
+        source_ok = (len(infos) == 1 and
+                     infos[0].node_namespace == '/' and
+                     infos[0].node_name == 'fire_mission_supervisor' and
+                     infos[0].topic_type == 'std_msgs/msg/String' and
+                     infos[0].qos_profile.reliability ==
+                     ReliabilityPolicy.BEST_EFFORT)
+        self.core.update_mission(payload, time.monotonic(), source_ok)
+
     def _on_arm(self, message):
         self.core.update_arm(message.data, time.monotonic())
 
@@ -815,8 +886,11 @@ class Nav2CancelGuard(Node):
                 twist.angular.x, twist.angular.y, twist.angular.z)
 
     def _on_odom(self, message):
+        received = admit_odom(self, message, self.core.telemetry_timeout)
+        if received is None:
+            return
         self.core.update_odom(
-            self._twist_values(message.twist.twist), time.monotonic())
+            self._twist_values(message.twist.twist), received)
 
     def _on_cmd(self, message):
         self.core.update_cmd(self._twist_values(message), time.monotonic())
@@ -857,7 +931,8 @@ class Nav2CancelGuard(Node):
               info.qos_profile.reliability)
              for info in self.get_publishers_info_by_topic(
                  self.raw_cmd_topic)],
-            ir_state_source_ok=self._ir_state_source_ok())
+            ir_state_source_ok=self._ir_state_source_ok(),
+            pump_publishers=self.count_publishers('/pump_cmd'))
         payload, uuid_hex = self.core.step(time.monotonic())
         if uuid_hex is not None:
             try:

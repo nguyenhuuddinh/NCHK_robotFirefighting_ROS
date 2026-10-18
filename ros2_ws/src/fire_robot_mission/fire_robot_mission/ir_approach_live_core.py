@@ -95,6 +95,35 @@ MAX_CONTINUOUS_SPEED_M_S = 0.08
 SPRAY_CONFIRM_WAIT_S = 1.5
 
 
+def vision_far_candidate(payload):
+    """
+    Identify a fresh centered YOLO fire with stable baseline IR.
+
+    It is not an IR distance measurement and can never authorize spraying.
+    """
+    if not isinstance(payload, dict):
+        return False
+    safety = payload.get('safety') or {}
+    counts = payload.get('filtered_counts') or {}
+    return (payload.get('schema_version') == 1 and
+            payload.get('mode') == 'OBSERVE_ONLY' and
+            payload.get('observe_only') is True and
+            payload.get('calibration') == 'PROVISIONAL_SINGLE_FLAME' and
+            payload.get('validated_for_actuation') is False and
+            payload.get('zone') == 'UNKNOWN' and
+            payload.get('ir_band') == 'NO_FLAME_SIGNATURE' and
+            payload.get('blockers') == ['NO_IR_FLAME_SIGNATURE'] and
+            type(payload.get('stable_samples')) is int and
+            payload['stable_samples'] >= 3 and
+            _finite(payload.get('ir_receive_age_ms')) and
+            0 <= payload['ir_receive_age_ms'] <= 300 and
+            all(type(counts.get(key)) is int and
+                0 <= counts[key] <= 32767
+                for key in ('left', 'center', 'right')) and
+            safety.get('motion_command_publisher') is False and
+            safety.get('actuator_command_publisher') is False)
+
+
 def provisional_spray_candidate(payload):
     """Stop on the first valid spray candidate; never use it to start a pump."""
     if not isinstance(payload, dict):
@@ -191,13 +220,14 @@ class IrApproachLiveCore:
             raise ValueError('opt-in flags must be bool')
         values = (step_m, speed_m_s, max_duration_s,
                   continuous_distance_m,
-                  max_total_approach_m,
                   input_timeout_s,
                   arm_timeout_s, discovery_timeout_s, admission_hold_s,
                   zero_hold_s,
                   clearance_margin_m)
         if any(not _finite(v) or v <= 0 for v in values):
             raise ValueError('IR jog parameters must be positive and finite')
+        if not _finite(max_total_approach_m) or max_total_approach_m < 0:
+            raise ValueError('max_total_approach_m must be nonnegative')
         if (step_m > 0.05 or max_duration_s > 1.0 or
                 input_timeout_s > 0.35 or arm_timeout_s > 0.40 or
                 discovery_timeout_s > 0.75 or admission_hold_s < 0.3 or
@@ -208,11 +238,13 @@ class IrApproachLiveCore:
             if (not integrated_handoff or enable_reverse_jog or
                     speed_m_s > MAX_CONTINUOUS_SPEED_M_S or
                     continuous_distance_m > MAX_INTEGRATED_DISTANCE_M or
-                    max_total_approach_m >
-                    MAX_TOTAL_CONTINUOUS_DISTANCE_M):
+                    (max_total_approach_m >
+                     MAX_TOTAL_CONTINUOUS_DISTANCE_M)):
                 raise ValueError('continuous IR safety bound exceeded')
         elif speed_m_s > 0.06 or speed_m_s * max_duration_s > step_m:
             raise ValueError('IR jog hard safety bound exceeded')
+        if not continuous_approach and max_total_approach_m == 0:
+            raise ValueError('unbounded mode requires integrated approach')
         self.enabled = enabled
         self.allow_provisional_ir = allow_provisional_ir
         self.enable_reverse_jog = enable_reverse_jog
@@ -222,7 +254,8 @@ class IrApproachLiveCore:
         self.speed = float(speed_m_s)
         self.max_duration = float(max_duration_s)
         self.continuous_distance = float(continuous_distance_m)
-        self.max_total_approach = float(max_total_approach_m)
+        self.max_total_approach = (math.inf if max_total_approach_m == 0 else
+                                   float(max_total_approach_m))
         self.input_timeout = float(input_timeout_s)
         self.arm_timeout = float(arm_timeout_s)
         self.discovery_timeout = float(discovery_timeout_s)
@@ -272,6 +305,8 @@ class IrApproachLiveCore:
 
     def _motion_ir_band(self, payload):
         """Integrated motion also requires the vision-gated stable zone."""
+        if self.integrated_handoff and vision_far_candidate(payload):
+            return 'VISION_FAR'
         band = validated_ir_band(payload)
         if self.integrated_handoff and (
                 not isinstance(payload, dict) or
@@ -299,7 +334,31 @@ class IrApproachLiveCore:
             self.recovery_sample_seq = seq
             return False
         return (seq >= self.recovery_sample_seq + 2 and
-                validated_ir_band(payload) is not None)
+                self._motion_ir_band(payload) is not None)
+
+    def _clear_cycle(self):
+        self.used_goal_uuids.add(self.goal_uuid)
+        self.phase = 'WAITING_FOR_ADMISSION'
+        self.goal_uuid = None
+        self.direction = 0
+        self.step_count = 0
+        self.step_progress_m = 0.0
+        self.total_progress_m = 0.0
+        self.last_review_pulse = 0
+        self.pending_review = None
+        self.admission_since = None
+        self.pending_direction = 0
+        self.acquired_at = None
+        self.moving_at = None
+        self.start_pose = None
+        self.last_progress_m = 0.0
+        self.last_progress_at = None
+        self.stopping_at = None
+        self.zero_since = None
+        self.stop_reason = ''
+        self.stop_trigger_blockers = []
+        self.recovery_sample_seq = None
+        self.sensor_recovery_active = False
 
     def update_arm(self, armed, now):
         if armed is False:
@@ -372,7 +431,7 @@ class IrApproachLiveCore:
         band = self._motion_ir_band(ir)
         if band is None:
             blockers.append('IR_BAND_INVALID_OR_STALE')
-        direction = (1 if band in ('APPROACH', 'TOO_FAR') else
+        direction = (1 if band in ('APPROACH', 'TOO_FAR', 'VISION_FAR') else
                      -1 if band == 'TOO_CLOSE' else 0)
         if direction == 0:
             blockers.append('IR_BAND_HOLD')
@@ -475,7 +534,7 @@ class IrApproachLiveCore:
                 counts.get('handoff_ok') is True and
                 counts.get('pump') == 0 and
                 self._motion_ir_band(self._input('ir', now)) in
-                ('APPROACH', 'TOO_FAR')):
+                ('APPROACH', 'TOO_FAR', 'VISION_FAR')):
             if review_resume:
                 self.last_review_pulse = self.pending_review[0]
                 self.pending_review = None
@@ -497,32 +556,25 @@ class IrApproachLiveCore:
             self.recovery_sample_seq = None
             self.sensor_recovery_active = False
             self.step_progress_m = 0.0
+        odom_clear = self._input('odom', now)
+        clear_stationary = (
+            self._odom_valid(odom_clear) and
+            all(abs(v) <= 0.02 for v in odom_clear[1][:3]) and
+            all(abs(v) <= 0.05 for v in odom_clear[1][3:]) and
+            self._zero_twist(self._input('cmd', now), 0.001))
+        if (self.integrated_handoff and
+                self.phase in ('COMPLETE', 'ABORTED') and not owned and
+                self.goal_uuid and
+                counts.get('pre_spray_clear_uuid') == self.goal_uuid and
+                counts.get('pump') == 0 and counts.get('raw') == 0 and
+                clear_stationary):
+            self._clear_cycle()
         if (self.integrated_handoff and self.phase == 'COMPLETE' and
                 not owned and self.goal_uuid and new_uuid and
                 new_uuid != self.goal_uuid and
                 new_uuid not in self.used_goal_uuids and
                 counts.get('handoff_ok') and counts.get('pump') == 0):
-            self.used_goal_uuids.add(self.goal_uuid)
-            self.phase = 'WAITING_FOR_ADMISSION'
-            self.goal_uuid = None
-            self.step_count = 0
-            self.step_progress_m = 0.0
-            self.total_progress_m = 0.0
-            self.last_review_pulse = 0
-            self.pending_review = None
-            self.admission_since = None
-            self.pending_direction = 0
-            self.acquired_at = None
-            self.moving_at = None
-            self.start_pose = None
-            self.last_progress_m = 0.0
-            self.last_progress_at = None
-            self.stopping_at = None
-            self.zero_since = None
-            self.stop_reason = ''
-            self.stop_trigger_blockers = []
-            self.recovery_sample_seq = None
-            self.sensor_recovery_active = False
+            self._clear_cycle()
         if (self.integrated_handoff and not self.continuous_approach and
                 self.phase == 'COMPLETE' and
                 not owned and self.stop_reason != 'SPRAY_RANGE_REACHED' and
@@ -777,6 +829,16 @@ class IrApproachLiveCore:
             'recovery_required': self.sensor_recovery_active,
             'recovery_ready': self._recovery_ready(now) if
             self.phase == 'COMPLETE' else False,
+            'arm': {
+                'false_seen': self.arm_false_seen,
+                'cycle_seen': self.arm_cycle_seen,
+                'heartbeat_true': self.arm,
+                'receive_fresh': _fresh(self.arm_at, now, self.arm_timeout),
+                'receive_age_ms': (
+                    None if self.arm_at is None else
+                    round(max(0.0, now - self.arm_at) * 1000, 1)),
+                'publisher_count': counts.get('arm'),
+            },
             'blockers': blockers,
             'publisher_owned': owned,
             'safety': {'pump_command_publisher': False,

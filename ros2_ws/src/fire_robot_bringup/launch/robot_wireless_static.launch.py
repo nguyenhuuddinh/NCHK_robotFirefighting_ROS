@@ -17,16 +17,16 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
 
-def _include(package, launch_file, **arguments):
+def _include(package, launch_file, *, scoped=True, **arguments):
     path = os.path.join(
         get_package_share_directory(package), 'launch', launch_file)
-    # Child launches reuse generic names such as cmd_vel_output_topic. Scoping
-    # prevents robot.launch.py's real output argument from leaking into the
-    # Nav2 shadow wrapper, which intentionally rejects a real output override.
+    # Scope the robot and mission includes so their generic arguments cannot
+    # leak into Nav2. Nav2 is the one exception because its TimerAction nodes
+    # resolve map/params arguments after the include returns.
     return GroupAction(actions=[IncludeLaunchDescription(
         PythonLaunchDescriptionSource(path),
         launch_arguments=arguments.items(),
-    )], scoped=True)
+    )], scoped=scoped)
 
 
 def generate_launch_description():
@@ -52,12 +52,6 @@ def generate_launch_description():
             camera_max_bytes_per_sec=LaunchConfiguration(
                 'camera_max_bytes_per_sec'),
             cmd_vel_input_topic='/fire_robot_static/cmd_vel_raw',
-        ),
-        _include(
-            'fire_robot_navigation', 'nav2_motion_shadow.launch.py',
-            use_sim_time=use_sim_time,
-            map=LaunchConfiguration('map'),
-            rviz='false',
         ),
         _include(
             'fire_robot_mission',
@@ -86,4 +80,13 @@ def generate_launch_description():
             enable_live_ir_jog='false',
         ),
         _include('fire_robot_mission', 'post_spray_review.launch.py'),
+        # Start Nav2 after the scoped mission includes. Its delayed nodes need
+        # these configs to persist, and no later child can inherit them.
+        _include(
+            'fire_robot_navigation', 'nav2_motion_shadow.launch.py',
+            scoped=False,
+            use_sim_time=use_sim_time,
+            map=LaunchConfiguration('map'),
+            rviz='false',
+        ),
     ])

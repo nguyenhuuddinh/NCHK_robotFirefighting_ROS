@@ -13,6 +13,9 @@
   <test_depend>python3-pytest</test_depend>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>fire_robot_safety</exec_depend>
+  <exec_depend>fire_robot_navigation</exec_depend>
+  <exec_depend>fire_robot_mission</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>

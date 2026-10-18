@@ -45,6 +45,29 @@ def test_usb_recovery_diagnostics_fragmented_bounded_and_crc_checked():
     assert list(parser.parse_chunk(wire))[0]['reason'] == 1
 
 
+def test_usb_recovery_fault_snapshot_is_optional_and_diagnostic_only():
+    parser = SerialProtocolV2()
+    legacy = b'USB,2,2,5000,1,4500,1,64,100,0,20,120,300,1,3,3,0'
+    old = list(parser.parse_chunk(_create_bad_frame(legacy)))[0]
+    assert 'fault_snapshot_valid' not in old
+
+    extended = legacy.replace(b'USB,2,2,', b'USB,2,3,') + b',1,1,3,0,1'
+    snapshot = list(parser.parse_chunk(_create_bad_frame(extended)))[0]
+    assert snapshot['fault_snapshot_valid'] == 1
+    assert snapshot['fault_cdc_connected'] == 1
+    assert snapshot['fault_cdc_line_state'] == 3
+    assert snapshot['fault_raw_write_available'] == 0
+    assert snapshot['fault_cached_dtr'] == 1
+    assert list(parser.parse_chunk(_create_bad_frame(
+        b'STATE,2,4,5100,0.000,0.000,0.000,0.000,0.000,0.000')))[0]['type'] == 'STATE'
+    assert parser.gap_count == 0
+
+    for suffix in (b'2,1,3,0,1', b'1,2,3,0,1', b'1,1,4,0,1',
+                   b'0,1,0,0,0', b'1,1,3,4294967296,1', b'1,1,3,0,2'):
+        bad = legacy.replace(b'USB,2,2,', b'USB,2,5,') + b',' + suffix
+        assert list(parser.parse_chunk(_create_bad_frame(bad))) == []
+
+
 def test_boot_identity_is_strict_diagnostic_and_keeps_sequence():
     sha = b'a' * 64
     payload = b'BOOT,2,10,12345,9,' + sha

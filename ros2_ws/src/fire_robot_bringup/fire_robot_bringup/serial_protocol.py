@@ -4,6 +4,7 @@ import re
 
 UINT_PATTERN = re.compile(r"^[0-9]+$")
 FLOAT_PATTERN = re.compile(r"^-?[0-9]+\.[0-9]+$")
+ELF_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def is_strict_uint(s: str) -> bool:
@@ -286,6 +287,24 @@ class SerialProtocolV2:
                     'type': 'IR', 'seq': seq, 'sample_age_ms': age_ms,
                     'left': left, 'center': center, 'right': right,
                     'valid': valid
+                }
+            elif msg_type == 'BOOT':
+                # One-shot diagnostic, never substitutes for STATE freshness.
+                if (len(parts) != 6 or
+                        not is_strict_uint(parts[3]) or
+                        not is_strict_uint(parts[4]) or
+                        (parts[5] != 'unknown' and
+                         not ELF_SHA256_PATTERN.fullmatch(parts[5]))):
+                    self.parse_fail_count += 1
+                    continue
+                esp_ms = int(parts[3])
+                reset_reason = int(parts[4])
+                if esp_ms > 0xFFFFFFFF or reset_reason > 0xFFFFFFFF:
+                    self.parse_fail_count += 1
+                    continue
+                parsed = {
+                    'type': 'BOOT', 'seq': seq, 'esp_ms': esp_ms,
+                    'reset_reason': reset_reason, 'elf_sha256': parts[5],
                 }
             elif msg_type == 'USB':
                 # Diagnostic-only recovery snapshot; never a STATE substitute.

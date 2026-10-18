@@ -43,6 +43,8 @@ def generate_launch_description():
                               choices=['5', '10', '15', '20', '25', '30']),
         DeclareLaunchArgument('camera_max_bytes_per_sec',
                               default_value='750000'),
+        DeclareLaunchArgument('usb_fault_trace_events', default_value='0',
+                              description='Pi USB fault trace count (0-16)'),
         _include(
             'fire_robot_bringup', 'robot.launch.py',
             use_sim_time=use_sim_time,
@@ -52,6 +54,8 @@ def generate_launch_description():
             camera_max_bytes_per_sec=LaunchConfiguration(
                 'camera_max_bytes_per_sec'),
             cmd_vel_input_topic='/fire_robot_static/cmd_vel_raw',
+            usb_fault_trace_events=LaunchConfiguration(
+                'usb_fault_trace_events'),
         ),
         _include(
             'fire_robot_mission',

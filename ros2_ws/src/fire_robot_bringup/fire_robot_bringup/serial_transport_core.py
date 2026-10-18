@@ -3,13 +3,18 @@ import json
 import threading
 import time
 from fire_robot_bringup.serial_protocol import SerialProtocolV2
+from fire_robot_bringup.serial_fault_trace import classify_esp_uptime
 from fire_robot_bringup.timing_diagnostics import TimingDiagnostics
 
 
 class SerialTransportCore:
     def init_transport(self, port, baudrate, first_state_timeout_s,
                        pump_command_timeout_s, serial_cls,
-                       diagnostics_enabled=True):
+                       diagnostics_enabled=True, fault_trace_events=0):
+        if (isinstance(fault_trace_events, bool)
+                or not isinstance(fault_trace_events, int)
+                or not 0 <= fault_trace_events <= 16):
+            raise ValueError('fault_trace_events must be an integer 0-16')
         self.port = port
         self.baudrate = baudrate
         self.first_state_timeout_s = first_state_timeout_s
@@ -42,6 +47,12 @@ class SerialTransportCore:
         self.telemetry_healthy = False
         self.state_stale_timeout_ms = 500
         self.latest_usb_diagnostic = None
+        self._boot_logged_epoch = None
+        # Opt-in, bounded event capture. No extra timer, thread or frame queue.
+        self.fault_trace_events = fault_trace_events
+        self.fault_trace_count = 0
+        self._fault_trace_last_state = None
+        self._fault_trace_pending = None
 
         self.pending_cmd = None
         self.pending_pump = None
@@ -98,6 +109,10 @@ class SerialTransportCore:
         self.odom_timing = TimingDiagnostics(enabled=self.diagnostics_enabled)
 
         self.running = True
+
+    def _emit_fault_trace(self, event):
+        self.get_logger().info('serial_fault_trace ' + json.dumps(
+            event, sort_keys=True, separators=(',', ':'), ensure_ascii=True))
 
     def _transition_state(self, new_state):
         """Transition the transport state while ``state_lock`` is held."""
@@ -250,13 +265,35 @@ class SerialTransportCore:
 
                 def close_task():
                     result = None
+                    trace_id = None
+                    close_start_ns = None
+                    cancel_ms = None
+                    tx_lock_wait_ms = None
+                    flush_ms = None
+                    close_call_ms = None
                     with self.state_lock:
+                        trace = self._fault_trace_pending
+                        if (trace is not None
+                                and trace['fault_epoch'] == current_gen
+                                and trace.get('close_attempts', 0) < 4):
+                            trace['close_attempts'] = trace.get(
+                                'close_attempts', 0) + 1
+                            trace_id = trace['id']
+                            close_start_ns = time.monotonic_ns()
                         cancel_called = self.close_ownership.get('cancel_called', False)
                         if not cancel_called and self.close_ownership.get(
                                 'generation') == current_gen:
                             self.close_ownership['cancel_called'] = True
                         else:
                             cancel_called = True
+
+                    if trace_id is not None:
+                        self._emit_fault_trace({
+                            'phase': 'close_begin', 'id': trace_id,
+                            'epoch': current_gen,
+                            'mono_ns': close_start_ns,
+                            'wall_ns': time.time_ns(),
+                        })
 
                     deadline_expired = (
                         shutdown_deadline is not None
@@ -265,6 +302,7 @@ class SerialTransportCore:
                         result = TimeoutError('Shutdown deadline exhausted')
 
                     if not cancel_called and result is None:
+                        cancel_start_ns = time.monotonic_ns() if trace_id else None
                         if getattr(current_handle, 'cancel_read', None):
                             try:
                                 current_handle.cancel_read()
@@ -280,16 +318,23 @@ class SerialTransportCore:
                                     r = getattr(self, 'last_failure_reason', '')
                                     self.last_failure_reason = (
                                         f"{r} cancel_write:{type(e).__name__}:{e}")
+                        if trace_id is not None:
+                            cancel_ms = round((time.monotonic_ns()
+                                               - cancel_start_ns) / 1e6, 3)
 
                     tx_acq = False
                     try:
                         if result is None and hasattr(self, 'tx_lock'):
+                            lock_start_ns = time.monotonic_ns() if trace_id else None
                             timeout = 0.5
                             if shutdown_deadline is not None:
                                 timeout = min(
                                     timeout,
                                     max(0.0, shutdown_deadline - time.monotonic()))
                             tx_acq = self.tx_lock.acquire(timeout=timeout)
+                            if trace_id is not None:
+                                tx_lock_wait_ms = round((time.monotonic_ns()
+                                                         - lock_start_ns) / 1e6, 3)
                             if not tx_acq:
                                 raise TimeoutError(
                                     'Could not acquire tx_lock before deadline')
@@ -303,6 +348,7 @@ class SerialTransportCore:
                             reset_output = getattr(
                                 current_handle, 'reset_output_buffer', None)
                             if reset_output is not None:
+                                flush_start_ns = time.monotonic_ns() if trace_id else None
                                 try:
                                     reset_output()
                                 except Exception as e:
@@ -310,7 +356,16 @@ class SerialTransportCore:
                                         self.last_failure_reason = (
                                             'close_flush:'
                                             f'{type(e).__name__}:{e}')
-                            current_handle.close()
+                                if trace_id is not None:
+                                    flush_ms = round((time.monotonic_ns()
+                                                      - flush_start_ns) / 1e6, 3)
+                            close_call_start_ns = time.monotonic_ns() if trace_id else None
+                            try:
+                                current_handle.close()
+                            finally:
+                                if trace_id is not None:
+                                    close_call_ms = round((time.monotonic_ns()
+                                                           - close_call_start_ns) / 1e6, 3)
                             result = True
                     except TimeoutError as e:
                         result = e
@@ -337,6 +392,21 @@ class SerialTransportCore:
                         else:
                             self.get_logger().error(
                                 'Close ownership changed while close task ran')
+
+                    if trace_id is not None:
+                        self._emit_fault_trace({
+                            'phase': 'close_end', 'id': trace_id,
+                            'epoch': current_gen,
+                            'wall_ns': time.time_ns(),
+                            'duration_ms': round((time.monotonic_ns()
+                                                  - close_start_ns) / 1e6, 3),
+                            'cancel_ms': cancel_ms,
+                            'tx_lock_wait_ms': tx_lock_wait_ms,
+                            'flush_ms': flush_ms,
+                            'close_call_ms': close_call_ms,
+                            'result': ('ok' if result is True else
+                                       type(result).__name__),
+                        })
 
                 task_to_start = threading.Thread(
                     target=close_task, daemon=True)
@@ -408,6 +478,7 @@ class SerialTransportCore:
         if handle is None:
             return
 
+        trace_event = None
         with self.state_lock:
             now_mono = time.monotonic()
             old_state = self._session_state
@@ -422,6 +493,20 @@ class SerialTransportCore:
             if reason:
                 self.last_failure_reason = reason
             self.last_quarantine_mono = now_mono
+            if (self.fault_trace_events and
+                    self._fault_trace_pending is None and
+                    self.fault_trace_count < self.fault_trace_events):
+                self.fault_trace_count += 1
+                trace = {
+                    'id': self.fault_trace_count,
+                    'fault_epoch': epoch,
+                    'fault_mono_ns': int(now_mono * 1_000_000_000),
+                    'fault_wall_ns': time.time_ns(),
+                    'last_state': self._fault_trace_last_state,
+                    'reason': str(reason)[:200],
+                }
+                self._fault_trace_pending = trace
+                trace_event = dict(phase='fault', **trace)
 
             self.session_ready = False
             self.telemetry_healthy = False
@@ -446,8 +531,9 @@ class SerialTransportCore:
             self.next_reconnect_mono = time.monotonic() + self.reconnect_backoff
 
         self.close_serial()
-        # Emit after fail-closed state/close ownership is established. The ROS
-        # log timestamp is the event wall-clock time; the values are monotonic.
+        # Emit after fail-closed state/close ownership is established.
+        if trace_event is not None:
+            self._emit_fault_trace(trace_event)
         safe_reason = json.dumps(str(reason)[:200], ensure_ascii=True)
         self.get_logger().warning(
             f"serial_quarantine state={old_state} epoch={epoch} "
@@ -671,11 +757,30 @@ class SerialTransportCore:
 
             if state == 'OPENING':
                 self._increment_counter('open_attempt_count')
+                with self.state_lock:
+                    trace = self._fault_trace_pending
+                    trace_open = (trace is not None
+                                  and trace.get('open_attempts', 0) < 4)
+                    if trace_open:
+                        trace['open_attempts'] = trace.get(
+                            'open_attempts', 0) + 1
+                        trace_id = trace['id']
+                    else:
+                        trace_id = None
+                open_start_ns = time.monotonic_ns() if trace_open else None
                 try:
                     new_ser = self.serial_cls(
                         self.port, self.baudrate,
                         timeout=0.01, write_timeout=0.1)
                 except Exception as e:
+                    if trace_open:
+                        self._emit_fault_trace({
+                            'phase': 'open_failed', 'id': trace_id,
+                            'epoch': gen, 'wall_ns': time.time_ns(),
+                            'duration_ms': round((time.monotonic_ns()
+                                                  - open_start_ns) / 1e6, 3),
+                            'error': type(e).__name__,
+                        })
                     self.get_logger().warn(
                         f"Failed to open port {self.port}: {e}")
                     with self.state_lock:
@@ -689,6 +794,7 @@ class SerialTransportCore:
                         self._transition_state('BACKOFF')
                     continue
 
+                open_end_ns = time.monotonic_ns() if trace_open else None
                 try:
                     cmd = self.protocol.generate_cmd(0.0, 0.0)
                     pump = self.protocol.generate_pump(0)
@@ -706,11 +812,23 @@ class SerialTransportCore:
                     if getattr(self, 'stop_request', False):
                         raise Exception("Bootstrap interrupted by shutdown")
                 except Exception as e:
+                    if trace_open:
+                        self._emit_fault_trace({
+                            'phase': 'bootstrap_failed', 'id': trace_id,
+                            'epoch': gen, 'wall_ns': time.time_ns(),
+                            'open_ms': round((open_end_ns - open_start_ns)
+                                             / 1e6, 3),
+                            'bootstrap_ms': round((time.monotonic_ns()
+                                                   - open_end_ns) / 1e6, 3),
+                            'error': type(e).__name__,
+                        })
                     self._increment_counter('bootstrap_fail_count')
                     self._quarantine_handle(
                         new_ser,
                         f"bootstrap:{type(e).__name__}:{e}")
                     continue
+
+                bootstrap_end_ns = time.monotonic_ns() if trace_open else None
 
                 reject_reason = None
                 with self.state_lock:
@@ -744,12 +862,31 @@ class SerialTransportCore:
                     continue
 
                 self.protocol.reset_parser()
+                trace_event = None
                 with self.state_lock:
                     last_quarantine = self.last_quarantine_mono
                     recovery_ms = (
                         max(0.0, (time.monotonic() - last_quarantine) * 1000.0)
                         if last_quarantine is not None else -1.0)
                     opened_epoch = self.session_epoch
+                    trace = self._fault_trace_pending
+                    if (trace is not None and trace['id'] == trace_id
+                            and bootstrap_end_ns is not None):
+                        trace_event = {
+                            'phase': 'opened', 'id': trace['id'],
+                            'epoch': opened_epoch,
+                            'open_start_mono_ns': open_start_ns,
+                            'open_end_mono_ns': open_end_ns,
+                            'bootstrap_end_mono_ns': bootstrap_end_ns,
+                            'open_ms': round((open_end_ns - open_start_ns) / 1e6, 3),
+                            'bootstrap_ms': round(
+                                (bootstrap_end_ns - open_end_ns) / 1e6, 3),
+                            'fault_to_open_ms': round(
+                                (bootstrap_end_ns - trace['fault_mono_ns']) / 1e6, 3),
+                        }
+                if trace_event is not None:
+                    trace_event['opened_wall_ns'] = time.time_ns()
+                    self._emit_fault_trace(trace_event)
                 self.get_logger().info(
                     f"Opened serial port {self.port} epoch={opened_epoch} "
                     f"recovery_ms={recovery_ms:.1f}")
@@ -808,12 +945,34 @@ class SerialTransportCore:
     def handle_frame(self, frame):
         """Handle parsed telemetry frame."""
         now_mono = time.monotonic()
+        trace_event = None
+        boot_event = None
         with self.state_lock:
             if not self.session_ready:
                 return
             epoch = self.session_epoch
 
             if frame['type'] == 'STATE':
+                if (self.fault_trace_events
+                        and (self.fault_trace_count < self.fault_trace_events
+                             or self._fault_trace_pending is not None)):
+                    current = {
+                        'epoch': epoch,
+                        'esp_ms': frame['esp_ms'],
+                        'receive_mono_ns': int(now_mono * 1_000_000_000),
+                        'pi_wall_ns': time.time_ns(),
+                    }
+                    trace = self._fault_trace_pending
+                    if trace is not None and epoch != trace['fault_epoch']:
+                        before = trace['last_state']
+                        trace_event = {
+                            'phase': 'first_state', 'id': trace['id'],
+                            'before': before, 'after': current,
+                            'uptime_evidence': classify_esp_uptime(
+                                before, current),
+                        }
+                        self._fault_trace_pending = None
+                    self._fault_trace_last_state = current
                 if (getattr(self, 'diagnostics_enabled', True)
                         and self.last_state_time_mono > 0.0):
                     self.state_gap_max_ms = max(
@@ -839,6 +998,23 @@ class SerialTransportCore:
             elif frame['type'] == 'USB':
                 # Do not refresh STATE time, safety readiness or reconnect state.
                 self.latest_usb_diagnostic = (frame, epoch, now_mono)
+            elif frame['type'] == 'BOOT':
+                # Child process log is sufficient; no IPC telemetry slot or
+                # timer. This diagnostic never affects command admission.
+                if self._boot_logged_epoch != epoch:
+                    self._boot_logged_epoch = epoch
+                    boot_event = {
+                        'epoch': epoch, 'receive_mono_ns': int(now_mono * 1e9),
+                        'pi_wall_ns': time.time_ns(), 'esp_ms': frame['esp_ms'],
+                        'reset_reason': frame['reset_reason'],
+                        'elf_sha256': frame['elf_sha256'],
+                    }
+
+        if trace_event is not None:
+            self._emit_fault_trace(trace_event)
+        if boot_event is not None:
+            self.get_logger().info('esp_boot_identity ' + json.dumps(
+                boot_event, sort_keys=True, separators=(',', ':')))
 
 
     def log_timer_callback(self):

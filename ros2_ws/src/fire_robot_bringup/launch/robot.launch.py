@@ -131,6 +131,9 @@ def generate_launch_description():
     usb_recovery_capture_arg = DeclareLaunchArgument(
         'usb_recovery_capture_s', default_value='0',
         description='Bounded ESP USB recovery capture in seconds (0-180; 0=off)')
+    usb_fault_trace_arg = DeclareLaunchArgument(
+        'usb_fault_trace_events', default_value='0',
+        description='Bounded Pi USB fault trace count (0-16; 0=off)')
     dashboard_arg = DeclareLaunchArgument(
         'use_dashboard', default_value='true',
         description='Start rosbridge WebSocket for the operator dashboard')
@@ -177,6 +180,8 @@ def generate_launch_description():
                 LaunchConfiguration('enable_diagnostics'), value_type=bool),
             'usb_recovery_capture_s': ParameterValue(
                 LaunchConfiguration('usb_recovery_capture_s'), value_type=int),
+            'usb_fault_trace_events': ParameterValue(
+                LaunchConfiguration('usb_fault_trace_events'), value_type=int),
         }],
         respawn=True,
         respawn_delay=2.0,
@@ -234,6 +239,7 @@ def generate_launch_description():
         cmd_vel_rate_arg,
         diagnostics_arg,
         usb_recovery_capture_arg,
+        usb_fault_trace_arg,
         dashboard_arg,
         # Sub-launches & Nodes
         description_launch,

@@ -83,6 +83,12 @@ class SerialBridgeNode(SerialTransportCore, Node):
         capture = UsbRecoveryCapture(
             self.get_parameter('usb_recovery_capture_s').value)
         self._usb_capture = capture if capture.deadline is not None else None
+        self.declare_parameter('usb_fault_trace_events', 0)
+        fault_trace_events = self.get_parameter('usb_fault_trace_events').value
+        if (isinstance(fault_trace_events, bool)
+                or not isinstance(fault_trace_events, int)
+                or not 0 <= fault_trace_events <= 16):
+            raise ValueError('usb_fault_trace_events must be an integer 0-16')
 
         self.port = self.get_parameter('serial_port').value
         self.baudrate = self.get_parameter('serial_baudrate').value
@@ -129,7 +135,8 @@ class SerialBridgeNode(SerialTransportCore, Node):
 
         self.init_transport(self.port, self.baudrate, self.first_state_timeout_s,
                             self.pump_command_timeout_s, self.serial_cls,
-                            diagnostics_enabled=self.enable_diagnostics)
+                            diagnostics_enabled=self.enable_diagnostics,
+                            fault_trace_events=fault_trace_events)
         self.transport_process = None
         self._ipc_seen = {}
         self._ipc_fault_logged = False
@@ -148,7 +155,8 @@ class SerialBridgeNode(SerialTransportCore, Node):
                     'port': self.port, 'baudrate': self.baudrate,
                     'first_state_timeout_s': self.first_state_timeout_s,
                     'pump_command_timeout_s': self.pump_command_timeout_s,
-                    'enable_diagnostics': self.enable_diagnostics})
+                    'enable_diagnostics': self.enable_diagnostics,
+                    'usb_fault_trace_events': fault_trace_events})
                 self.transport_process.heartbeat()
             except BaseException:
                 if self.transport_process is not None:

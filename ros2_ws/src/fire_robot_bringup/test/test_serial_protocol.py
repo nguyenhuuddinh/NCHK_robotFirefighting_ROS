@@ -45,6 +45,32 @@ def test_usb_recovery_diagnostics_fragmented_bounded_and_crc_checked():
     assert list(parser.parse_chunk(wire))[0]['reason'] == 1
 
 
+def test_boot_identity_is_strict_diagnostic_and_keeps_sequence():
+    sha = b'a' * 64
+    payload = b'BOOT,2,10,12345,9,' + sha
+    wire = _create_bad_frame(payload)
+    parser = SerialProtocolV2()
+    frames = []
+    for i in range(0, len(wire), 7):
+        frames.extend(parser.parse_chunk(wire[i:i + 7]))
+    assert frames == [{
+        'type': 'BOOT', 'seq': 10, 'esp_ms': 12345,
+        'reset_reason': 9, 'elf_sha256': sha.decode(),
+    }]
+    next_state = _create_bad_frame(
+        b'STATE,2,11,12400,0.000,0.000,0.000,0.000,0.000,0.000')
+    assert list(parser.parse_chunk(next_state))[0]['type'] == 'STATE'
+    assert parser.gap_count == 0
+
+    for bad in (b'BOOT,2,12,1,9,xyz',
+                b'BOOT,2,12,1,9,unknown,extra',
+                b'BOOT,2,12,1,-1,unknown',
+                b'BOOT,2,12,4294967296,9,unknown'):
+        assert list(parser.parse_chunk(_create_bad_frame(bad))) == []
+    assert list(parser.parse_chunk(_create_bad_frame(
+        b'BOOT,2,12,1,0,unknown')))[0]['elf_sha256'] == 'unknown'
+
+
 def test_encode_frames_and_tx_invalid():
     """Test generating frames and rejecting invalid bounds/types."""
     p = SerialProtocolV2()

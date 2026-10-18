@@ -80,7 +80,9 @@ class ProcessTransport(SerialTransportCore):
                             config['first_state_timeout_s'],
                             config['pump_command_timeout_s'], serial_cls,
                             diagnostics_enabled=config.get(
-                                'enable_diagnostics', True))
+                                'enable_diagnostics', True),
+                            fault_trace_events=config.get(
+                                'usb_fault_trace_events', 0))
         self.ipc_fault = ''
         self.last_heartbeat = time.monotonic()
         self.deadlines = {}
@@ -208,7 +210,8 @@ def worker_main(endpoint, config, serial_cls=None):
     if serial_cls is None:
         import serial
         serial_cls = serial.Serial
-    logging.basicConfig(level=logging.INFO, format='[%(name)s] %(levelname)s %(message)s')
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s [%(name)s] %(levelname)s %(message)s')
     transport = ProcessTransport(config, serial_cls)
     parent_pid = os.getppid()
     stopping = False

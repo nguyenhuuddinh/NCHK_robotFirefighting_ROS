@@ -26,6 +26,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument('enable_diagnostics', default_value='true'),
+        DeclareLaunchArgument('publish_annotated', default_value='true'),
+        DeclareLaunchArgument('use_alignment_observer', default_value='true'),
         DeclareLaunchArgument(
             'model_path',
             default_value=(
@@ -43,6 +46,12 @@ def generate_launch_description():
                 'model_path': LaunchConfiguration('model_path'),
                 'python_executable': LaunchConfiguration(
                     'python_executable'),
+                'enable_diagnostics': LaunchConfiguration(
+                    'enable_diagnostics'),
+                'publish_annotated': LaunchConfiguration(
+                    'publish_annotated'),
+                'use_alignment_observer': LaunchConfiguration(
+                    'use_alignment_observer'),
             }.items(),
         ),
         Node(

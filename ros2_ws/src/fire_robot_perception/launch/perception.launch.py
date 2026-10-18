@@ -10,6 +10,7 @@ from launch.actions import (
     ExecuteProcess,
     OpaqueFunction,
 )
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -86,6 +87,15 @@ def generate_launch_description():
         default_value='false',
         description='Use simulation time; false for the physical robot',
     )
+    diagnostics_arg = DeclareLaunchArgument(
+        'enable_diagnostics', default_value='true',
+        description='Collect optional YOLO periodic statistics')
+    annotated_arg = DeclareLaunchArgument(
+        'publish_annotated', default_value='true',
+        description='Allow annotated JPEG output when a viewer subscribes')
+    alignment_arg = DeclareLaunchArgument(
+        'use_alignment_observer', default_value='true',
+        description='Start the alignment preview node')
 
     # The ament console-script wrapper is generated with /usr/bin/python3 on
     # this ROS 2 Humble install. Activating a venv does not change that
@@ -104,6 +114,11 @@ def generate_launch_description():
             ['model_path:=', LaunchConfiguration('model_path')],
             '-p',
             ['use_sim_time:=', LaunchConfiguration('use_sim_time')],
+            '-p',
+            ['enable_diagnostics:=',
+             LaunchConfiguration('enable_diagnostics')],
+            '-p',
+            ['publish_annotated:=', LaunchConfiguration('publish_annotated')],
         ],
         output='screen',
     )
@@ -117,6 +132,7 @@ def generate_launch_description():
             LaunchConfiguration('params_file'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
         ],
+        condition=IfCondition(LaunchConfiguration('use_alignment_observer')),
     )
 
     return LaunchDescription([
@@ -124,6 +140,9 @@ def generate_launch_description():
         python_executable_arg,
         params_file_arg,
         use_sim_time_arg,
+        diagnostics_arg,
+        annotated_arg,
+        alignment_arg,
         OpaqueFunction(function=_validate_paths),
         observer,
         alignment_observer,

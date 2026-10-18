@@ -56,6 +56,8 @@ def test_launch_is_standalone_and_observe_only(monkeypatch, tmp_path):
         'params_file': '/tmp/yolo-params.yaml',
         'model_path': '/tmp/yolo-model.pt',
         'use_sim_time': 'false',
+        'enable_diagnostics': 'true',
+        'publish_annotated': 'true',
     })
     command = [
         perform_substitutions(context, part) for part in processes[0].cmd
@@ -73,6 +75,10 @@ def test_launch_is_standalone_and_observe_only(monkeypatch, tmp_path):
         'model_path:=/tmp/yolo-model.pt',
         '-p',
         'use_sim_time:=false',
+        '-p',
+        'enable_diagnostics:=true',
+        '-p',
+        'publish_annotated:=true',
     ]
 
 

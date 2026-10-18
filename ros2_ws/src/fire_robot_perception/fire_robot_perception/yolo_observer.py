@@ -235,8 +235,9 @@ class YoloObserver(Node):
 
         self._detections_pub = self.create_publisher(
             String, self.detections_topic, sensor_qos())
-        self._annotated_pub = self.create_publisher(
+        self._annotated_pub = (self.create_publisher(
             CompressedImage, self.annotated_topic, sensor_qos())
+            if self.publish_annotated else None)
         self._image_sub = self.create_subscription(
             CompressedImage,
             self.input_topic,
@@ -262,9 +263,6 @@ class YoloObserver(Node):
             )
 
         self._received = 0
-        self._processed = 0
-        self._decode_errors = 0
-        self._inference_errors = 0
         self._period_received = 0
         self._period_processed = 0
         self._period_decode_errors = 0
@@ -280,15 +278,18 @@ class YoloObserver(Node):
         # starts after that initialization, not before it.
         self._last_input_time = time.monotonic()
         self.create_timer(0.5, self._check_input_health)
-        self.create_timer(self.stats_period, self._log_stats)
+        if self.enable_diagnostics:
+            self.create_timer(self.stats_period, self._log_stats)
 
         self.get_logger().warning(
-            '[YOLO] OBSERVE-ONLY: publishes detections and annotated images; '
+            '[YOLO] OBSERVE-ONLY: publishes detections'
+            f'{" and annotated images" if self.publish_annotated else ""}; '
             'no motion or actuator commands are created by this node'
         )
         self.get_logger().info(
             f'[YOLO] {self.input_topic} -> {self.detections_topic}, '
-            f'{self.annotated_topic} (BEST_EFFORT depth=1)'
+            f'annotation={self.annotated_topic if self.publish_annotated else "off"} '
+            '(BEST_EFFORT depth=1)'
         )
 
     def _declare_parameters(self):
@@ -319,6 +320,7 @@ class YoloObserver(Node):
         self.declare_parameter('annotated_jpeg_quality', 80)
         self.declare_parameter('input_timeout_s', 1.0)
         self.declare_parameter('stats_period_s', 5.0)
+        self.declare_parameter('enable_diagnostics', True)
 
     def _read_and_validate_parameters(self):
         self.model_path = Path(
@@ -365,6 +367,9 @@ class YoloObserver(Node):
             self.get_parameter('input_timeout_s').value)
         self.stats_period = float(
             self.get_parameter('stats_period_s').value)
+        self.enable_diagnostics = self.get_parameter('enable_diagnostics').value
+        if not isinstance(self.enable_diagnostics, bool):
+            raise ValueError('enable_diagnostics must be a boolean')
 
         if not self.model_path.is_file():
             raise ValueError(f'model_path is not a file: {self.model_path}')
@@ -737,7 +742,8 @@ class YoloObserver(Node):
         now = time.monotonic()
         self._last_input_time = now
         self._received += 1
-        self._period_received += 1
+        if self.enable_diagnostics:
+            self._period_received += 1
         if self._camera_stale:
             self._camera_stale = False
             self.get_logger().info('[YOLO] camera stream resumed')
@@ -745,8 +751,8 @@ class YoloObserver(Node):
         compressed = np.frombuffer(msg.data, dtype=np.uint8)
         frame = cv2.imdecode(compressed, cv2.IMREAD_COLOR)
         if frame is None:
-            self._decode_errors += 1
-            self._period_decode_errors += 1
+            if self.enable_diagnostics:
+                self._period_decode_errors += 1
             self._reset_fire_tracking()
             self._publish_observation(
                 msg,
@@ -768,8 +774,8 @@ class YoloObserver(Node):
             detections = self._extract_detections(
                 result, frame.shape[1], frame.shape[0])
         except Exception as exc:
-            self._inference_errors += 1
-            self._period_inference_errors += 1
+            if self.enable_diagnostics:
+                self._period_inference_errors += 1
             self._reset_fire_tracking()
             self.get_logger().error(
                 f'[YOLO] inference failed: {type(exc).__name__}: {exc}')
@@ -804,9 +810,9 @@ class YoloObserver(Node):
 
         processing_ms = (time.perf_counter() - callback_start) * 1000.0
         source_age_ms = self._source_age_ms(msg)
-        self._processed += 1
-        self._period_processed += 1
-        self._period_processing_ms.append(processing_ms)
+        if self.enable_diagnostics:
+            self._period_processed += 1
+            self._period_processing_ms.append(processing_ms)
         self._publish_observation(
             msg,
             state='ok',

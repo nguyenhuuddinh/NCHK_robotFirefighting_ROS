@@ -49,6 +49,10 @@ class SerialTransportCore:
         self.state_stale_timeout_ms = 500
         self.latest_usb_diagnostic = None
         self._boot_logged_epoch = None
+        # A bounded, event-only breadcrumb survives the 180 s USB frame
+        # capture window and works with periodic diagnostics disabled.
+        self._usb_recoveries_seen = None
+        self._usb_recovery_events_logged = 0
         # Opt-in, bounded event capture. No extra timer, thread or frame queue.
         self.fault_trace_events = fault_trace_events
         self.fault_trace_count = 0
@@ -1021,6 +1025,7 @@ class SerialTransportCore:
         now_mono = time.monotonic()
         trace_event = None
         boot_event = None
+        usb_recovery_event = None
         with self.state_lock:
             if not self.session_ready:
                 return
@@ -1075,6 +1080,23 @@ class SerialTransportCore:
             elif frame['type'] == 'USB':
                 # Do not refresh STATE time, safety readiness or reconnect state.
                 self.latest_usb_diagnostic = (frame, epoch, now_mono)
+                recoveries = frame.get('recoveries')
+                if recoveries is not None:
+                    previous = self._usb_recoveries_seen
+                    self._usb_recoveries_seen = recoveries
+                    if (recoveries > 0 and
+                            (previous is None or recoveries > previous) and
+                            self._usb_recovery_events_logged < 8):
+                        self._usb_recovery_events_logged += 1
+                        usb_recovery_event = {
+                            'epoch': epoch,
+                            'kind': ('before_first_usb_frame' if previous is None
+                                     else 'counter_advanced'),
+                            'previous_recoveries': previous,
+                            'pi_wall_ns': time.time_ns(),
+                            'receive_mono_ns': int(now_mono * 1e9),
+                            'usb': frame,
+                        }
             elif frame['type'] == 'BOOT':
                 # Child process log is sufficient; no IPC telemetry slot or
                 # timer. This diagnostic never affects command admission.
@@ -1092,6 +1114,9 @@ class SerialTransportCore:
         if boot_event is not None:
             self.get_logger().info('esp_boot_identity ' + json.dumps(
                 boot_event, sort_keys=True, separators=(',', ':')))
+        if usb_recovery_event is not None:
+            self.get_logger().warning('esp_usb_recovery_event ' + json.dumps(
+                usb_recovery_event, sort_keys=True, separators=(',', ':')))
 
 
     def log_timer_callback(self):

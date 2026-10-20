@@ -124,6 +124,11 @@ def generate_launch_description():
         description='Tần suất publish /cmd_vel (Hz)'
     )
 
+    recovery_diagnostics_arg = DeclareLaunchArgument(
+        'enable_serial_recovery_diagnostics', default_value='false',
+        description='Log bounded N8R2 BOOT/USB recovery evidence (default OFF)'
+    )
+
     # ── 1. Robot Description (TF tree) ──
     # Pi cần TF tree để micro-ROS Agent có thể publish odom → base_link,
     # và static transforms base_link → laser_frame/camera_frame/imu_frame
@@ -159,6 +164,8 @@ def generate_launch_description():
         parameters=[{
             'serial_port': LaunchConfiguration('serial_port'),
             'serial_baudrate': LaunchConfiguration('serial_baudrate'),
+            'enable_serial_recovery_diagnostics': LaunchConfiguration(
+                'enable_serial_recovery_diagnostics'),
         }],
         respawn=True,
         respawn_delay=2.0,
@@ -210,6 +217,7 @@ def generate_launch_description():
         cmd_vel_output_arg,
         heartbeat_timeout_arg,
         cmd_vel_rate_arg,
+        recovery_diagnostics_arg,
         # Sub-launches & Nodes
         description_launch,
         sensors_launch,

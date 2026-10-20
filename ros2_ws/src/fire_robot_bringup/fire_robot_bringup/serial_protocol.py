@@ -4,6 +4,7 @@ import re
 
 UINT_PATTERN = re.compile(r"^[0-9]+$")
 FLOAT_PATTERN = re.compile(r"^-?[0-9]+\.[0-9]+$")
+ELF_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def is_strict_uint(s: str) -> bool:
@@ -287,6 +288,66 @@ class SerialProtocolV2:
                     'left': left, 'center': center, 'right': right,
                     'valid': valid
                 }
+            elif msg_type == 'BOOT':
+                # One-shot diagnostic, never substitutes for STATE freshness.
+                if (len(parts) != 6 or
+                        not is_strict_uint(parts[3]) or
+                        not is_strict_uint(parts[4]) or
+                        (parts[5] != 'unknown' and
+                         not ELF_SHA256_PATTERN.fullmatch(parts[5]))):
+                    self.parse_fail_count += 1
+                    continue
+                esp_ms = int(parts[3])
+                reset_reason = int(parts[4])
+                if esp_ms > 0xFFFFFFFF or reset_reason > 0xFFFFFFFF:
+                    self.parse_fail_count += 1
+                    continue
+                parsed = {
+                    'type': 'BOOT', 'seq': seq, 'esp_ms': esp_ms,
+                    'reset_reason': reset_reason, 'elf_sha256': parts[5],
+                }
+            elif msg_type == 'USB':
+                # Diagnostic-only recovery snapshot; never a STATE substitute.
+                # D5 adds five fields after short_write. Accept older 17-field
+                # frames so Pi can be updated before the ESP firmware.
+                names = (
+                    'esp_ms', 'recoveries', 'recovery_ms', 'reason', 'offset',
+                    'length', 'available', 'late_ms', 'task_gap_ms',
+                    'tx_event_age_ms', 'tx_event_seen', 'deadline_expired',
+                    'deadline_blocked', 'short_write',
+                )
+                if len(parts) not in (17, 22) or not all(
+                        is_strict_uint(f) for f in parts[3:]):
+                    self.parse_fail_count += 1
+                    continue
+                values = list(map(int, parts[3:]))
+                fields = dict(zip(names, values[:len(names)]))
+                if (any(v > 0xFFFFFFFF for v in values) or
+                        fields['reason'] not in (0, 1, 2) or
+                        fields['tx_event_seen'] not in (0, 1) or
+                        not 0 <= fields['offset'] <= fields['length'] <= 192):
+                    self.parse_fail_count += 1
+                    continue
+                if len(parts) == 22:
+                    (snapshot_valid, cdc_connected, cdc_line_state,
+                     raw_available, cached_dtr) = values[len(names):]
+                    if (snapshot_valid not in (0, 1) or
+                            cdc_connected not in (0, 1) or
+                            cached_dtr not in (0, 1) or
+                            cdc_line_state > 3 or
+                            (not snapshot_valid and
+                             (cdc_connected or cdc_line_state or
+                              raw_available or cached_dtr))):
+                        self.parse_fail_count += 1
+                        continue
+                    fields.update({
+                        'fault_snapshot_valid': snapshot_valid,
+                        'fault_cdc_connected': cdc_connected,
+                        'fault_cdc_line_state': cdc_line_state,
+                        'fault_raw_write_available': raw_available,
+                        'fault_cached_dtr': cached_dtr,
+                    })
+                parsed = {'type': 'USB', 'seq': seq, **fields}
             elif msg_type == 'ACT':
                 # Commanded PWM state only; no flow or nozzle feedback.
                 # ACT,2,seq,esp_ms,pump_pwm,phase,angle,servo_pwm,home_count,pump_ready

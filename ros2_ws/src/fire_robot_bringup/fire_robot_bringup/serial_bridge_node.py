@@ -14,6 +14,9 @@ import threading
 import time
 
 from fire_robot_bringup.serial_protocol import SerialProtocolV2
+from fire_robot_bringup.serial_recovery_diagnostics import (
+    SerialRecoveryDiagnostics,
+)
 
 
 DEFAULT_SERIAL_PORT = (
@@ -34,6 +37,10 @@ class SerialBridgeNode(Node):
         self.declare_parameter('serial_baudrate', 115200)
         self.declare_parameter('first_state_timeout_s', 8.0)
         self.declare_parameter('pump_command_timeout_s', 0.7)
+        self.declare_parameter('enable_serial_recovery_diagnostics', False)
+        self._recovery_diagnostics = (
+            SerialRecoveryDiagnostics() if self.get_parameter(
+                'enable_serial_recovery_diagnostics').value else None)
 
         self.port = self.get_parameter('serial_port').value
         self.baudrate = self.get_parameter('serial_baudrate').value
@@ -809,6 +816,9 @@ class SerialBridgeNode(Node):
                 self.latest_ir = (frame, epoch, now_mono)
             elif frame['type'] == 'ACT':
                 self.latest_actuator = (frame, epoch, now_mono)
+            elif frame['type'] in ('BOOT', 'USB'):
+                if self._recovery_diagnostics is not None:
+                    self._recovery_diagnostics.record(frame, epoch, now_mono)
 
     def telemetry_publish_callback(self):
         """Publish telemetry from latest slots."""
@@ -825,6 +835,9 @@ class SerialBridgeNode(Node):
             self.latest_ir = None
             actuator_item = self.latest_actuator
             self.latest_actuator = None
+            diagnostic_events = (self._recovery_diagnostics.drain(
+                self.session_epoch, self.running and self.session_ready)
+                if self._recovery_diagnostics is not None else ())
 
         if state_item:
             frame, epoch, frame_mono = state_item
@@ -989,6 +1002,15 @@ class SerialBridgeNode(Node):
                     self._record_publish_result(failed=1)
             else:
                 self._record_publish_result(dropped=1)
+
+        # Use the existing telemetry callback, after sensor publication and
+        # outside transport locks. Diagnostics cannot refresh health/readiness.
+        for event in diagnostic_events:
+            with self.publish_lock:
+                if self.node_destroyed:
+                    break
+                self.get_logger().info(event['event'] + ' ' + json.dumps(
+                    event, sort_keys=True, separators=(',', ':')))
 
     def log_timer_callback(self):
         """Log diagnostics."""

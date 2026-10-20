@@ -24,6 +24,7 @@ from fire_robot_mission.fire_session_core import FireSessionCore
 from fire_robot_mission.actuator_freshness import ActuatorStampGuard
 from fire_robot_mission.close_owner_evidence import CloseOwnerEvidenceCollector
 from fire_robot_mission.global_stop_evidence import GlobalStopEvidence
+from fire_robot_mission.stop_clock_sampling import sample_stop_clock
 from fire_robot_mission.runtime_manifest import runtime_manifest
 
 
@@ -45,6 +46,17 @@ STOP_INPUTS = {
 }
 THROUGH_STOP_INPUT = ('/navigate_through_poses/_action/status', 'bt_navigator',
                       'action_msgs/msg/GoalStatusArray', True)
+
+
+def _stop_clock_pair(node):
+    """Bracket selected stop reads; preserve the legacy mode's clock path."""
+    stop = getattr(node, '_global_stop', None)
+    if stop is None:
+        return node.get_clock().now().nanoseconds, node._now()
+    sample = sample_stop_clock(lambda: node.get_clock().now().nanoseconds, node._now,
+                               previous_ros_ns=stop._last_ros, previous_mono=stop._last_mono)
+    stop.observe_clock_sample(sample)
+    return sample.ros_ns, sample.after
 
 
 def _full_twist(twist):
@@ -1229,10 +1241,10 @@ class FireMissionSupervisor(Node):
                    for item in message.status_list]
         if getattr(self, '_global_stop', None) is not None:
             source_id = self._stop_source_id('nav_status')
-            ros_ns = self.get_clock().now().nanoseconds
+            ros_ns, received = _stop_clock_pair(self)
             self._global_stop.observe_status(
                 records, stamp_ns=self._stop_metadata_stamp(metadata),
-                source_id=source_id, ros_ns=ros_ns, now=self._now())
+                source_id=source_id, ros_ns=ros_ns, now=received)
             if getattr(self, '_shadow_runtime', None) is not None:
                 sample = self._global_stop.samples['nav_status']
                 if sample is None:
@@ -1256,10 +1268,10 @@ class FireMissionSupervisor(Node):
         records = [(bytes(item.goal_info.goal_id.uuid).hex(), item.status)
                    for item in message.status_list]
         source_id = self._stop_source_id('nav_through_status')
-        ros_ns = self.get_clock().now().nanoseconds
+        ros_ns, received = _stop_clock_pair(self)
         self._global_stop.observe_status(
             records, stamp_ns=self._stop_metadata_stamp(metadata), source_id=source_id,
-            ros_ns=ros_ns, now=self._now(), role='nav_through_status')
+            ros_ns=ros_ns, now=received, role='nav_through_status')
 
     def _on_review(self, message):
         if not self._single_expected_publisher(
@@ -1279,8 +1291,8 @@ class FireMissionSupervisor(Node):
                      self._single_expected_publisher(self.actuator_state_topic, 'serial_bridge_node'))
         if not source_ok:
             if global_stop is not None:
-                ros_ns = self.get_clock().now().nanoseconds
-                global_stop.observe_actuator(None, source_id=None, ros_ns=ros_ns, now=self._now())
+                ros_ns, received = _stop_clock_pair(self)
+                global_stop.observe_actuator(None, source_id=None, ros_ns=ros_ns, now=received)
             self._core.update_actuator(
                 None, self._now(), blocker='ACTUATOR_PUBLISHER_INVALID')
             return
@@ -1288,8 +1300,7 @@ class FireMissionSupervisor(Node):
             payload = json.loads(message.data)
         except (TypeError, ValueError):
             payload = None
-        ros_now_ns = self.get_clock().now().nanoseconds
-        received = self._now()
+        ros_now_ns, received = _stop_clock_pair(self)
         if global_stop is not None:
             global_stop.observe_actuator(payload, source_id=source_id, ros_ns=ros_now_ns, now=received)
         age_ms = self._actuator_stamp_guard.admit(payload, ros_now_ns)
@@ -1343,8 +1354,7 @@ class FireMissionSupervisor(Node):
             return
         report = payload.get('close_owner_observation') if isinstance(payload, dict) else None
         # Read clocks after graph/decode work; never renew an old source stamp.
-        ros_now_ns = self.get_clock().now().nanoseconds
-        received = self._now()
+        ros_now_ns, received = _stop_clock_pair(self)
         runtime = getattr(self, '_shadow_runtime', None)
         if runtime is not None:
             if owner in runtime.owners:
@@ -1394,34 +1404,37 @@ class FireMissionSupervisor(Node):
                     and 0 <= stamp.nanosec < 1_000_000_000 else None)
         values = (_full_twist(message.twist.twist)
                   if message.header.frame_id == 'odom' and message.child_frame_id == 'base_link' else None)
-        ros_ns = self.get_clock().now().nanoseconds
+        ros_ns, received = _stop_clock_pair(self)
         self._global_stop.observe_motion('odom', values, stamp_ns=stamp_ns,
-                                         source_id=source_id, ros_ns=ros_ns, now=self._now())
+                                         source_id=source_id, ros_ns=ros_ns, now=received)
 
     def _on_stop_cmd(self, message, metadata=None):
         if getattr(self, '_global_stop', None) is None:
             return
         source_id = self._stop_source_id('cmd')
-        ros_ns = self.get_clock().now().nanoseconds
+        ros_ns, received = _stop_clock_pair(self)
         self._global_stop.observe_motion(
             'cmd', _full_twist(message), stamp_ns=self._stop_metadata_stamp(metadata),
-            source_id=source_id, ros_ns=ros_ns, now=self._now())
+            source_id=source_id, ros_ns=ros_ns, now=received)
 
     def _publish_state(self):
         session = self._core._fire_session
         # Timestamp before graph queries/evaluation so their cost is included
         # in the age seen by consumers, instead of re-dating an old snapshot.
-        stamp_ns = (self.get_clock().now().nanoseconds
-                    if session is not None else None)
         global_stop = getattr(self, '_global_stop', None)
+        if global_stop is not None:
+            stamp_ns, graph_started_at = _stop_clock_pair(self)
+        else:
+            stamp_ns = (self.get_clock().now().nanoseconds
+                        if session is not None else None)
         runtime = getattr(self, '_shadow_runtime', None)
         if runtime is not None:
             runtime.recovery_latch = (runtime.recovery_latch or global_stop.fault or
                                       self._close_owner_collector.fault)
             if global_stop.require_through_status:
+                admission_ros, admission_at = _stop_clock_pair(self)
                 runtime.navigation_blocker = global_stop.through_navigation_blocker(
-                    ros_ns=stamp_ns, now=self._now())
-        graph_started_at = self._now() if global_stop is not None else None
+                    ros_ns=admission_ros, now=admission_at)
         pump_count = self.count_publishers('/pump_cmd')
         self._core.update_pump_owner_count(pump_count)
         payload = self._core.evaluate(self._now())
@@ -1465,8 +1478,7 @@ class FireMissionSupervisor(Node):
                         # A different node publishing the omitted role's state
                         # also invalidates the chosen deployment manifest.
                         omitted_present |= bool(self.get_publishers_info_by_topic(CLOSE_OWNER_TOPICS[owner]))
-            ros_now_ns = self.get_clock().now().nanoseconds
-            assessed_at = self._now()
+            ros_now_ns, assessed_at = _stop_clock_pair(self)
             if global_stop is not None and sources is not None:
                 global_stop.observe_graph(
                     raw_count=raw_count, pump_count=pump_count, sources=sources,
@@ -1503,6 +1515,9 @@ class FireMissionSupervisor(Node):
         if runtime is not None:
             runtime.recovery_latch = runtime.recovery_latch or global_stop.fault or collector.fault
             payload['lifecycle']['shadow_session_runtime'] = runtime.snapshot()
+            payload['lifecycle']['shadow_session_runtime']['clock_sampling'] = {
+                **global_stop.clock_sampling,
+                'first_fault': global_stop.clock_fault_evidence}
         message = String()
         message.data = json.dumps(
             payload, separators=(',', ':'), ensure_ascii=True)
@@ -1511,10 +1526,10 @@ class FireMissionSupervisor(Node):
         # Take its barrier AFTER publish; retries must not re-date the round.
         if (collector is not None and session.close_request is not None and
                 collector.request is None):
-            announced_ros_ns = self.get_clock().now().nanoseconds
+            announced_ros_ns, announced_at = _stop_clock_pair(self)
             collector.begin_close(session.close_request,
                                   announced_ros_ns=announced_ros_ns,
-                                  announced_at=self._now())
+                                  announced_at=announced_at)
             if global_stop is not None and collector.request is not None:
                 global_stop.begin_close(collector.request,
                                         announced_ros_ns=collector.announced_ros_ns,
@@ -1522,7 +1537,7 @@ class FireMissionSupervisor(Node):
         if runtime is not None and collector.request is not None:
             # Re-evaluate against the time AFTER publication. No new graph
             # query and no re-dating of cached observations is permitted.
-            ros_ns, now = self.get_clock().now().nanoseconds, self._now()
+            ros_ns, now = _stop_clock_pair(self)
             owners = collector.assess(
                 ros_now_ns=ros_ns, now=now,
                 absence_observed_at=None if global_stop.graph is None else global_stop.graph[1])
@@ -1535,7 +1550,7 @@ class FireMissionSupervisor(Node):
 
     def _shadow_current_stop_result(self):
         global_stop, collector = self._global_stop, self._close_owner_collector
-        ros_ns, now = self.get_clock().now().nanoseconds, self._now()
+        ros_ns, now = _stop_clock_pair(self)
         owners = collector.assess(
             ros_now_ns=ros_ns, now=now,
             absence_observed_at=None if global_stop.graph is None else global_stop.graph[1])

@@ -85,6 +85,9 @@ class GlobalStopEvidence:
         self._watermarks = dict.fromkeys(self.telemetry_roles)
         self._pins = dict.fromkeys((*STOP_SOURCES, *self.telemetry_roles))
         self._last_ros = self._last_mono = self._clock_anchor = None
+        self.clock_fault_evidence = None
+        self.clock_sampling = {'calls': 0, 'retries': 0, 'uncertain': 0,
+                               'max_span_ns': 0, 'last': None}
         self._hold_since = self._hold_last = None
         self.graph = None
         self.graph_reason = 'GLOBAL_GRAPH_NOT_RECEIVED'
@@ -92,7 +95,32 @@ class GlobalStopEvidence:
             max_age_ms=timeout_s * 1000.0, max_future_skew_ms=future_skew_ms)
         self._actuator_identity = None
 
+    def observe_clock_sample(self, sample):
+        """Bounded diagnostics; an unusable local read cannot authorize cleanup."""
+        info = self.clock_sampling
+        info['calls'] += 1
+        info['retries'] += sample.attempts - 1
+        info['uncertain'] += int(sample.reason is not None)
+        # Invalid values must remain a fault without making the diagnostic
+        # heartbeat contain NaN, infinity or a non-JSON object.
+        clean = lambda value: value if _time(value) else None
+        info['last'] = {'ros_ns': clean(sample.ros_ns), 'before': clean(sample.before),
+                        'after': clean(sample.after), 'span_ns': sample.span_ns,
+                        'attempts': sample.attempts, 'reason': sample.reason,
+                        'widest_span_ns': sample.widest_span_ns}
+        info['max_span_ns'] = max(info['max_span_ns'], sample.widest_span_ns)
+        if sample.reason is not None:
+            if self.fault is None:
+                self.clock_fault_evidence = {
+                    'reason': sample.reason, 'sample': dict(info['last']),
+                    'anchor': self._clock_anchor,
+                    'previous': (self._last_ros, self._last_mono)}
+            self.fault = self.fault or sample.reason
+            self._hold_since = self._hold_last = None
+
     def _clock(self, ros_ns, now):
+        previous_fault = self.fault
+        previous = self._last_ros, self._last_mono
         if type(ros_ns) is not int or ros_ns <= 0 or not _time(now):
             self.fault = self.fault or 'GLOBAL_CLOCK_INVALID'
         elif ((self._last_ros is not None and ros_ns < self._last_ros) or
@@ -107,6 +135,12 @@ class GlobalStopEvidence:
                 self._clock_anchor = ros_ns, now
             self._last_ros, self._last_mono = ros_ns, now
         if self.fault is not None:
+            if previous_fault is None:
+                self.clock_fault_evidence = {
+                    'reason': self.fault, 'ros_ns': ros_ns, 'mono': now,
+                    'anchor': self._clock_anchor, 'previous': previous,
+                    'threshold_ns': self.future_ns,
+                    'sampling': self.clock_sampling['last']}
             self._hold_since = self._hold_last = None
             return False
         return True

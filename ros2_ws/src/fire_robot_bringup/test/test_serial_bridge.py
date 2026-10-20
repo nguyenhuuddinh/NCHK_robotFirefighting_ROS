@@ -3471,7 +3471,8 @@ def test_diagnostic_all_states_and_counters(rclpy_init):
             'cmd_drop_count', 'telemetry_drop_count',
             'telemetry_publish_count', 'telemetry_publish_fail_count',
             'tx_partial_count', 'tx_fail_count', 'state_publish_max_age',
-            'env_publish_max_age'
+            'env_publish_max_age', 'read_max_ms', 'tx_max_ms',
+            'worker_gap_max_ms', 'state_gap_max_ms'
         ]
 
         for attr in required_attrs:
@@ -3488,7 +3489,9 @@ def test_diagnostic_all_states_and_counters(rclpy_init):
             with node.state_lock:
                 node._session_state = s
             node.log_timer_callback()
-            parsed = dict(token.split('=', 1) for token in logs[-1].split())
+            base_log, timing_log = logs[-1].split(' odom_timing=[', 1)
+            assert timing_log.endswith(']')
+            parsed = dict(token.split('=', 1) for token in base_log.split())
             assert parsed['state'] == s
             assert set(parsed) == {'state', *required_attrs}
             for key in required_attrs:
@@ -3518,6 +3521,73 @@ def test_diagnostic_all_states_and_counters(rclpy_init):
         finally:
             if rclpy.ok():
                 rclpy.shutdown()
+
+
+def test_serial_failure_event_and_io_timing_are_diagnostic_only(rclpy_init):
+    """Quarantine first, then log bounded reasons and windowed I/O latency."""
+    registry.instances.clear()
+    node = SerialBridgeNode(serial_cls=FakeSerial)
+    try:
+        assert wait_until(lambda: node.ser is not None)
+        node.stop_request = True
+        node.worker_thread.join(timeout=2.0)
+        assert not node.worker_thread.is_alive()
+        handle = node.ser
+
+        warnings = []
+        infos = []
+        node.get_logger().warning = warnings.append
+        node.get_logger().info = infos.append
+
+        original_read = handle.read
+        original_write = handle.write
+
+        def slow_read(size):
+            time.sleep(0.02)
+            return original_read(size)
+
+        def slow_write(frame):
+            time.sleep(0.02)
+            return original_write(frame)
+
+        handle.read = slow_read
+        handle.write = slow_write
+        assert node._timed_read(handle, 8) == b''
+        assert node._timed_write(handle, b'SECRET_FRAME_DATA') == 17
+
+        with node.state_lock:
+            node._session_state = 'HEALTHY'
+            node.last_state_time_mono = time.monotonic() - 0.12
+            node.worker_gap_max_ms = 17.0
+            node.state_gap_max_ms = 105.0
+
+        node._quarantine_handle(handle, 'read:OSError:bad\nline')
+        assert node.ser is None
+        assert node.session_ready is False
+        assert node.telemetry_healthy is False
+        assert len(warnings) == 1
+        event = warnings[0]
+        assert 'serial_quarantine state=HEALTHY epoch=' in event
+        assert 'reason="read:OSError:bad\\nline"' in event
+        assert 'last_state_age_ms=' in event
+        assert 'worker_gap_max_ms=17.0' in event
+        assert 'SECRET_FRAME_DATA' not in event
+        assert '\n' not in event
+
+        node.log_timer_callback()
+        parsed = dict(token.split('=', 1) for token in infos[-1].split())
+        assert float(parsed['read_max_ms']) >= 20.0
+        assert float(parsed['tx_max_ms']) >= 20.0
+        assert float(parsed['worker_gap_max_ms']) == 17.0
+        assert float(parsed['state_gap_max_ms']) == 105.0
+        node.log_timer_callback()
+        next_window = dict(token.split('=', 1) for token in infos[-1].split())
+        for name in ('read_max_ms', 'tx_max_ms',
+                     'worker_gap_max_ms', 'state_gap_max_ms'):
+            assert float(next_window[name]) == 0.0
+    finally:
+        if not node.node_destroyed:
+            assert wait_until(node.destroy_node, timeout=2.0)
 
 
 def test_first_state_grace_is_deterministic(rclpy_init):
@@ -4016,6 +4086,10 @@ def test_runtime_serial_timeout_is_fail_closed_and_exactly_recovers(
         qa44_transition_parsed_session_to_healthy(node, 1)
 
         gen1 = getattr(node, 'session_epoch', -1)
+        warnings = []
+        infos = []
+        node.get_logger().warning = warnings.append
+        node.get_logger().info = infos.append
 
         orig_write = h1.write
         write_started_evt = threading.Event()
@@ -4047,6 +4121,10 @@ def test_runtime_serial_timeout_is_fail_closed_and_exactly_recovers(
 
         reason = getattr(node, 'last_failure_reason', '')
         assert 'tx:CMD:SerialTimeoutException' in reason
+        assert wait_until(lambda: any(
+            'serial_quarantine state=HEALTHY' in message
+            and 'tx:CMD:SerialTimeoutException' in message
+            for message in warnings))
 
         def chk_backoff():
             return getattr(node, '_session_state', '') == 'BACKOFF'
@@ -4061,6 +4139,9 @@ def test_runtime_serial_timeout_is_fail_closed_and_exactly_recovers(
             timeout=2.0)
         assert getattr(node, 'ser', None) is not h1
         h2 = node.ser
+        assert wait_until(lambda: any(
+            'Opened serial port' in message and 'recovery_ms=' in message
+            for message in infos))
 
         raw_900 = make_state(900, 100, 9.0, 8.0, 0.0, 0.0, 0.0, 0.0)
         qa44_assert_exact_parsed_frame(

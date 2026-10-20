@@ -108,6 +108,65 @@ def step(core, now, owned=False, raw=None, nav=None, safety=None,
         COUNTS if counts is None else counts)
 
 
+def test_pre_spray_clear_releases_noncentered_old_goal():
+    core = ready()
+    core.phase = 'COMPLETE'
+    core.goal_uuid = UUID
+    core.stop_reason = 'PRE_SPRAY_FIRE_CLEARED'
+    cleared = dict(mission(), state='IDLE',
+                   perception={'detected_now': False,
+                               'confirmed': False},
+                   lifecycle={'pre_spray_clear_goal_uuid': UUID})
+    core.update('mission', cleared, 10.0)
+    core.update('actuator', {
+        'pump_pwm_commanded_on': False,
+        'servo_pwm_commanded_on': False, 'servo_phase': 'IDLE'}, 10.0)
+    counts = dict(COUNTS, mission_source_ok=True,
+                  actuator_source_ok=True, pump=0)
+    _, state, action = step(core, 10.1, counts=counts)
+    assert action is None
+    assert state['state'] == 'WAITING_FOR_ADMISSION'
+    assert core.goal_uuid is None and UUID in core.used_goal_uuids
+
+
+def test_pre_spray_clear_cannot_rearm_with_raw_owner():
+    core = ready()
+    core.phase = 'COMPLETE'
+    core.goal_uuid = UUID
+    core.stop_reason = 'PRE_SPRAY_FIRE_CLEARED'
+    core.update('mission', dict(mission(), state='IDLE',
+                perception={'detected_now': False,
+                            'confirmed': False},
+                lifecycle={'pre_spray_clear_goal_uuid': UUID}), 10.0)
+    core.update('actuator', {
+        'pump_pwm_commanded_on': False,
+        'servo_pwm_commanded_on': False, 'servo_phase': 'IDLE'}, 10.0)
+    counts = dict(COUNTS, mission_source_ok=True,
+                  actuator_source_ok=True, pump=0)
+    step(core, 10.1, raw=RAW, counts=counts)
+    assert core.goal_uuid == UUID
+
+
+def test_pre_spray_clear_retired_after_early_distinct_goal():
+    core = ready()
+    core.phase = 'COMPLETE'
+    core.goal_uuid = UUID
+    core.stop_reason = 'PRE_SPRAY_FIRE_CLEARED'
+    core.update_statuses([(UUID, 5), ('b' * 32, 2)])
+    core.update('mission', dict(
+        mission(), state='NAV2_NAVIGATING',
+        perception={'detected_now': False, 'confirmed': False},
+        lifecycle={'pre_spray_clear_goal_uuid': UUID}), 10.0)
+    core.update('actuator', {
+        'pump_pwm_commanded_on': False,
+        'servo_pwm_commanded_on': False, 'servo_phase': 'IDLE'}, 10.0)
+    counts = dict(COUNTS, mission_source_ok=True,
+                  actuator_source_ok=True, pump=0)
+    assert step(core, 10.1, counts=counts)[1]['state'] == \
+        'WAITING_FOR_ADMISSION'
+    assert UUID in core.used_goal_uuids
+
+
 def acquired():
     core = ready()
     angular, report, action = step(core, 10.01)
@@ -697,6 +756,38 @@ def test_one_frame_target_miss_pauses_then_reacquires_from_zero():
     assert report['state'] == 'TURNING'
     assert report['target_reacquiring'] is False
     assert angular > 0.0
+
+
+def test_off_center_before_ir_motion_reopens_alignment_same_goal():
+    core = ready()
+    core.phase = 'COMPLETE'
+    core.goal_uuid = UUID
+    core.stop_reason = 'TARGET_CENTERED'
+    core.update('ir', {
+        'schema_version': 1, 'state': 'WAITING_FOR_ADMISSION',
+        'goal_uuid': None, 'step_count': 0, 'publisher_owned': False,
+    }, 10.0)
+    core.update('preview', preview('ALIGNING_LEFT', 0.35), 10.0)
+    counts = dict(COUNTS, ir=1, ir_source_ok=True, pump=0)
+    angular, report, action = step(core, 10.01, counts=counts)
+    assert (angular, report['state'], action) == (0.0, 'ACQUIRING', 'CREATE')
+    assert report['goal_uuid'] == UUID
+
+
+def test_pre_ir_realign_never_competes_with_ir_owner_or_pump():
+    for owned_ir, pump in ((True, 0), (False, 1)):
+        core = ready()
+        core.phase = 'COMPLETE'
+        core.goal_uuid = UUID
+        core.stop_reason = 'TARGET_CENTERED'
+        core.update('ir', {
+            'schema_version': 1, 'state': 'WAITING_FOR_ADMISSION',
+            'goal_uuid': None, 'step_count': 0,
+            'publisher_owned': owned_ir,
+        }, 10.0)
+        core.update('preview', preview('ALIGNING_LEFT', 0.35), 10.0)
+        counts = dict(COUNTS, ir=1, ir_source_ok=True, pump=pump)
+        assert step(core, 10.01, counts=counts)[1]['state'] == 'COMPLETE'
 
 
 def test_completed_alignment_rearms_only_for_distinct_active_goal():

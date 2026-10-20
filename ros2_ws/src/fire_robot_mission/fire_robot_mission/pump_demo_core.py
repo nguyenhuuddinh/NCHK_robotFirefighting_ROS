@@ -241,10 +241,26 @@ class PumpDemoCore:
             reasons.append('CMD_VEL_NOT_ZERO')
         return reasons
 
-    def step(self, now, counts):
+    def abort_for_session(self, reason, goal_uuid):
+        """Latch OFF for an acquired owner, including before its first ON."""
+        if (reason not in ('SESSION_CONTEXT_INVALID', 'SESSION_CLOSE_REQUESTED') or
+                type(goal_uuid) is not str or len(goal_uuid) != 32 or
+                goal_uuid == '0' * 32 or any(c not in '0123456789abcdef' for c in goal_uuid)):
+            raise ValueError('invalid bound session stop')
+        if self.state in ('COMPLETE', 'ABORTED'):
+            return
+        if self.goal_uuid is None:
+            self.goal_uuid = goal_uuid
+        self.state = 'ABORTED'
+        self.stop_reason = reason
+        self.ready_since = None
+
+    def step(self, now, counts, *, allow_rearm=True, owner_present=True):
         """Return (pump_on, diagnostic). OFF/abort is latched for this node."""
+        if type(allow_rearm) is not bool or type(owner_present) is not bool:
+            raise ValueError('pump owner/rearm gates must be bool')
         now = float(now)
-        if self.state in ('COMPLETE', 'ABORTED') and self.goal_uuid and \
+        if allow_rearm and self.state in ('COMPLETE', 'ABORTED') and self.goal_uuid and \
                 self.stop_reason in ({'PULSE_TIME_LIMIT'} |
                                      POSSIBLE_EARLY_EXTINGUISH) and \
                 self.status_at is not None and \
@@ -265,6 +281,8 @@ class PumpDemoCore:
                 self.stop_reason = ''
                 self.inputs.clear()
         reasons = self.blockers(now, counts)
+        if not owner_present:
+            reasons.append('PUMP_PUBLISHER_NOT_OWNED')
         on = False
         if self.state == 'WAITING_FOR_ADMISSION':
             if reasons:

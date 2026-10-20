@@ -1,6 +1,7 @@
 """Read-only, fail-closed preview of a short IR-guided approach step."""
 
 import math
+from functools import lru_cache
 
 
 def _fresh(received, now, timeout):
@@ -51,8 +52,27 @@ def validated_ir_band(payload):
     return band
 
 
+@lru_cache(maxsize=8)
+def _sector_indices(angle_min, increment, count, center_angle_rad,
+                    half_angle_rad):
+    """Cache only immutable scan geometry, never ranges or a clear decision."""
+    indices = []
+    low_angle, high_angle = math.inf, -math.inf
+    for index in range(count):
+        angle = angle_min + index * increment - center_angle_rad
+        signed_angle = math.atan2(math.sin(angle), math.cos(angle))
+        if abs(signed_angle) <= half_angle_rad:
+            indices.append(index)
+            low_angle = min(low_angle, signed_angle)
+            high_angle = max(high_angle, signed_angle)
+    required_side = half_angle_rad - abs(increment) * 1.5
+    covered = (len(indices) >= 10 and required_side > 0 and
+               low_angle <= -required_side and high_angle >= required_side)
+    return tuple(indices), covered
+
+
 def sector_clearance(scan, center_angle_rad, half_angle_rad, required_m):
-    """Require two-sided sector coverage and enough finite obstacle returns."""
+    """Require two-sided coverage; inspect the current distances on every call."""
     if not isinstance(scan, tuple) or len(scan) != 5:
         return None, 'SCAN_INVALID'
     angle_min, increment, range_min, range_max, ranges = scan
@@ -60,27 +80,22 @@ def sector_clearance(scan, center_angle_rad, half_angle_rad, required_m):
             range_min < 0 or range_max <= range_min or
             not isinstance(ranges, tuple) or len(ranges) < 90):
         return None, 'SCAN_INVALID'
-    selected = []
-    selected_angles = []
-    for index, value in enumerate(ranges):
-        angle = angle_min + index * increment - center_angle_rad
-        signed_angle = math.atan2(math.sin(angle), math.cos(angle))
-        if abs(signed_angle) <= half_angle_rad:
-            selected.append(value)
-            selected_angles.append(signed_angle)
-    required_side = half_angle_rad - abs(increment) * 1.5
-    if (len(selected) < 10 or required_side <= 0 or
-            min(selected_angles, default=0) > -required_side or
-            max(selected_angles, default=0) < required_side):
+    indices, covered = _sector_indices(
+        angle_min, increment, len(ranges), center_angle_rad, half_angle_rad)
+    if not covered:
         return None, 'SCAN_SECTOR_COVERAGE_LOW'
-    finite = [float(value) for value in selected
-              if _finite(value) and range_min <= value <= range_max]
-    invalid = [value for value in selected
-               if not (_finite(value) and range_min <= value <= range_max)
-               and value != math.inf]
-    if len(finite) < 10 or len(invalid) > len(selected) // 5:
+    finite_count = 0
+    invalid_count = 0
+    clearance = math.inf
+    for index in indices:
+        value = ranges[index]
+        if _finite(value) and range_min <= value <= range_max:
+            finite_count += 1
+            clearance = min(clearance, float(value))
+        elif value != math.inf:
+            invalid_count += 1
+    if finite_count < 10 or invalid_count > len(indices) // 5:
         return None, 'SCAN_SECTOR_UNOBSERVED'
-    clearance = min(finite)
     if clearance < required_m:
         return clearance, 'OBSTACLE_OR_INSUFFICIENT_MARGIN'
     return clearance, None

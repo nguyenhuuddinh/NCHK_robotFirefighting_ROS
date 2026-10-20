@@ -19,6 +19,38 @@ from rclpy.qos import (
 )
 from std_msgs.msg import String
 
+from fire_robot_mission.detection_freshness import DetectionStampGuard
+from fire_robot_mission.fire_session_core import FireSessionCore
+from fire_robot_mission.actuator_freshness import ActuatorStampGuard
+from fire_robot_mission.close_owner_evidence import CloseOwnerEvidenceCollector
+from fire_robot_mission.global_stop_evidence import GlobalStopEvidence
+from fire_robot_mission.runtime_manifest import runtime_manifest
+
+
+# Explicit, conservative manifest for the optional observation-only collector.
+# This does not start owners or infer that an unlaunched owner has released.
+CLOSE_OWNER_MANIFEST = 'all_four_external_v1'
+CLOSE_OWNER_TOPICS = {
+    'live_nav_stop_gateway': '/fire_mission/live_nav_stop_state',
+    'live_alignment_takeover': '/fire_mission/live_alignment_state',
+    'ir_approach_live': '/fire_mission/ir_approach_live_state',
+    'pump_demo_controller': '/fire_mission/pump_demo_state',
+}
+STOP_INPUTS = {
+    'odom': ('/odom', 'serial_bridge_node', 'nav_msgs/msg/Odometry', False),
+    'cmd': ('/cmd_vel', 'safety_watchdog', 'geometry_msgs/msg/Twist', False),
+    'actuator': ('/fire_sensors/actuator_state', 'serial_bridge_node', 'std_msgs/msg/String', False),
+    'nav_status': ('/navigate_to_pose/_action/status', 'bt_navigator',
+                   'action_msgs/msg/GoalStatusArray', True),
+}
+THROUGH_STOP_INPUT = ('/navigate_through_poses/_action/status', 'bt_navigator',
+                      'action_msgs/msg/GoalStatusArray', True)
+
+
+def _full_twist(twist):
+    return (twist.linear.x, twist.linear.y, twist.linear.z,
+            twist.angular.x, twist.angular.y, twist.angular.z)
+
 
 ACTIVE_GOAL_STATUSES = {1, 2, 3}
 GOAL_STATUS_NAMES = {
@@ -88,7 +120,10 @@ class MissionSupervisorCore:
             stationary_angular_speed_rad_s=0.05,
             turn_comparison_epsilon_rad_s=0.03,
             review_timeout_s=0.6, actuator_timeout_s=0.35,
-            pre_spray_clear_hold_s=1.5):
+            pre_spray_clear_hold_s=1.5,
+            enable_fire_session_observer=False):
+        if type(enable_fire_session_observer) is not bool:
+            raise ValueError('enable_fire_session_observer must be a bool')
         positive = {
             'detection_timeout_s': detection_timeout_s,
             'alignment_timeout_s': alignment_timeout_s,
@@ -135,10 +170,16 @@ class MissionSupervisorCore:
         self.review_timeout = float(review_timeout_s)
         self.actuator_timeout = float(actuator_timeout_s)
         self.pre_spray_clear_hold = float(pre_spray_clear_hold_s)
+        # Optional migration telemetry only. OFF creates no session core/UUID.
+        self._fire_session = (FireSessionCore(
+            proof_timeout_s=self.actuator_timeout)
+            if enable_fire_session_observer else None)
+        self._session_runtime = None
 
         self._detection = None
         self._detection_received = None
         self._detection_error = ''
+        self._detection_error_blocker = 'DETECTION_INVALID_JSON'
         self._alignment = None
         self._alignment_received = None
         self._alignment_error = ''
@@ -155,6 +196,8 @@ class MissionSupervisorCore:
         self._review_received = None
         self._actuator = None
         self._actuator_received = None
+        self._actuator_source_age_ms = 0.0
+        self._actuator_source_blocker = 'ACTUATOR_NOT_RECEIVED'
         self._ir = None
         self._ir_received = None
         self._pump_started_uuid = None
@@ -178,12 +221,17 @@ class MissionSupervisorCore:
         self._detection = payload
         self._detection_received = float(now)
         self._detection_error = ''
+        self._detection_error_blocker = 'DETECTION_INVALID_JSON'
 
-    def mark_detection_error(self, error, now):
+    def mark_detection_error(self, error, now, *,
+                             blocker='DETECTION_INVALID_JSON'):
         """Record malformed detection telemetry as a fail-safe input."""
         self._detection = None
         self._detection_received = float(now)
         self._detection_error = str(error)
+        self._detection_error_blocker = blocker
+        self._reset_candidate()
+        self._centered_since = None
 
     def update_alignment(self, payload, now):
         """Store one decoded alignment preview."""
@@ -243,10 +291,33 @@ class MissionSupervisorCore:
         self._review = payload
         self._review_received = float(now)
 
-    def update_actuator(self, payload, now):
-        """Store Pi bridge telemetry; never command the actuator."""
+    def update_actuator(self, payload, now, *, source_age_ms=0.0, blocker=None):
+        """Store receipt-aged telemetry; pure callers must admit source first."""
+        if (blocker is not None or not isinstance(payload, dict) or
+                type(source_age_ms) not in (int, float) or
+                not math.isfinite(source_age_ms) or source_age_ms < 0):
+            payload = None
+            source_age_ms = 0.0
+            blocker = blocker or 'ACTUATOR_REPORT_INVALID'
+        self._actuator_source_blocker = blocker
         self._actuator = payload
         self._actuator_received = float(now)
+        self._actuator_source_age_ms = float(source_age_ms)
+        if (payload is None or payload.get('pump_pwm_commanded_on') is not False or
+                payload.get('servo_pwm_commanded_on') is not False or
+                payload.get('servo_phase') != 'IDLE'):
+            # Even if a valid OFF arrives before the next timer, an intervening
+            # invalid/ON observation must break the old absence/review proof.
+            self._pre_spray_clear_since = None
+            self._review = None
+            self._review_received = None
+
+    def _actuator_age(self, now):
+        if (self._actuator_received is None or not math.isfinite(now) or
+                not math.isfinite(self._actuator_received) or
+                now < self._actuator_received):
+            return None
+        return now - self._actuator_received + self._actuator_source_age_ms / 1000.0
 
     def update_ir(self, payload, now):
         self._ir = payload
@@ -281,7 +352,7 @@ class MissionSupervisorCore:
         ir = self._ir if isinstance(self._ir, dict) else {}
         actuator = self._actuator if isinstance(self._actuator, dict) else {}
         age = _age_seconds(self._ir_received, now)
-        actuator_age = _age_seconds(self._actuator_received, now)
+        actuator_age = self._actuator_age(now)
         odom_fresh, stationary, _ = self._odom_status(now)
         actuator_fresh = (actuator_age is not None and
                           actuator_age <= self.actuator_timeout)
@@ -353,8 +424,8 @@ class MissionSupervisorCore:
                 _age_seconds(self._review_received, now) > \
                 self.review_timeout:
             return False
-        if _age_seconds(self._actuator_received, now) is None or \
-                _age_seconds(self._actuator_received, now) > \
+        if self._actuator_age(now) is None or \
+                self._actuator_age(now) > \
                 self.actuator_timeout:
             return False
         review = self._review if isinstance(self._review, dict) else {}
@@ -416,7 +487,7 @@ class MissionSupervisorCore:
         if age > self.detection_timeout:
             blockers.append('DETECTION_TIMEOUT')
         if self._detection_error:
-            blockers.append('DETECTION_INVALID_JSON')
+            blockers.append(self._detection_error_blocker)
             return blockers, warnings, None
         payload = self._detection
         if not isinstance(payload, dict):
@@ -431,12 +502,18 @@ class MissionSupervisorCore:
         if not _is_number(source_age):
             blockers.append('SOURCE_AGE_MISSING')
         else:
-            source_age = float(source_age)
-            if source_age > self.max_source_age:
-                blockers.append('SOURCE_TIMESTAMP_STALE')
-            elif source_age < -self.max_future_skew:
+            reported_source_age = float(source_age)
+            # age_ms belongs to the YOLO observation, not this evaluation.
+            # Charge monotonic time spent cached here on every timer tick.
+            # The ROS adapter first accounts for transit using the stamp.
+            # Direct core callers must likewise supply age at receipt.
+            source_age = max(0.0, reported_source_age) + age * 1000.0
+            if reported_source_age < -self.max_future_skew:
+                # Waiting must not rehabilitate an invalid future timestamp.
                 blockers.append('SOURCE_TIMESTAMP_IN_FUTURE')
-            elif source_age < 0.0:
+            elif source_age > self.max_source_age:
+                blockers.append('SOURCE_TIMESTAMP_STALE')
+            elif reported_source_age < 0.0:
                 warnings.append('SMALL_NEGATIVE_SOURCE_AGE')
         return blockers, warnings, source_age
 
@@ -519,6 +596,112 @@ class MissionSupervisorCore:
             self._state_since = float(now)
         return round((float(now) - self._state_since) * 1000.0, 1)
 
+    def _observe_fire_session(self, now, hard_blockers, target_present,
+                              pre_spray_clear, reviewed_clear, clear_goal):
+        """Mirror admission/close requests without granting command authority.
+
+        Cleanup is separate and runs only after a successful STOPPING publish.
+        """
+        session = self._fire_session
+        runtime = self._session_runtime
+        blocker = None
+        absence = False
+        if runtime is not None:
+            fire = (self._detection or {}).get('fire') or {}
+            source_age_ms = ((self._detection or {}).get('source') or {}).get('age_ms')
+            effective_at = (self._detection_received - max(0.0, source_age_ms) / 1000.0
+                            if self._detection_received is not None and _is_number(source_age_ms) else None)
+            absence = runtime.observe_absence(
+                absent=(not hard_blockers and fire.get('detected_now') is False and
+                        fire.get('confirmed') is False),
+                event_at=effective_at, now=now)
+        current_status = (self._goal_status_received is not None and
+                          0 <= now - self._goal_status_received <=
+                          (self.command_timeout if runtime is None else
+                           min(self.command_timeout, runtime.timeout_s)))
+        active = [uuid for uuid, status in self._goal_status_records
+                  if status in ACTIVE_GOAL_STATUSES]
+        goal = self._active_goal_uuid()
+        ambiguous = bool(active) and (
+            goal is None or any(not _valid_goal_uuid(uuid) for uuid in active))
+        identity = session.identity
+        if identity is not None:
+            if session.phase == 'ACTIVE':
+                reason = None
+                if hard_blockers or (runtime is not None and runtime.owner_blocker(now)):
+                    reason = 'SAFETY_ABORT'
+                elif (current_status and active and
+                      (ambiguous or goal != identity.nav_goal_uuid)):
+                    reason = 'SAFETY_ABORT'
+                elif (current_status and identity.nav_goal_uuid is not None and
+                      (identity.nav_goal_uuid, 6) in self._goal_status_records):
+                    reason = 'NAVIGATION_ABORTED'
+                elif clear_goal == identity.nav_goal_uuid and clear_goal is not None:
+                    if reviewed_clear:
+                        reason = 'POST_SPRAY_CLEAR'
+                    elif pre_spray_clear:
+                        reason = 'TARGET_ABSENT_CONFIRMED'
+                if reason is None and runtime is not None and absence:
+                    reason = 'TARGET_ABSENT_CONFIRMED'
+                if reason is not None:
+                    session.request_close(identity.session_id, reason, now)
+            if session.phase == 'STOPPING':
+                blocker = ('VERIFIED_SESSION_CLEANUP_NOT_CONNECTED' if runtime is None else
+                           runtime.blocker or 'GLOBAL_STOP_PROOF_REQUIRED')
+            elif not current_status:
+                blocker = 'NAV2_STATUS_NOT_CURRENT'
+            elif not target_present:
+                blocker = 'TARGET_ABSENCE_PROOF_NOT_CONNECTED'
+        elif not hard_blockers and target_present and self._candidate_confirmed:
+            if not current_status:
+                blocker = 'NAV2_STATUS_NOT_CURRENT'
+            elif ambiguous:
+                blocker = 'NAV2_GOAL_BINDING_AMBIGUOUS'
+            else:
+                # Empty current status permits an unbound observation. It is
+                # not a verified "Nav2 inactive" proof for live admission.
+                if runtime is None:
+                    session.begin(goal if active else None)
+                else:
+                    runtime.try_begin(session, goal if active else None, now)
+                    blocker = runtime.blocker
+        identity = session.identity
+        return {
+            'mode': 'OBSERVE_ONLY',
+            'actuation_authorized': False,
+            'phase': session.phase,
+            'session_id': None if identity is None else identity.session_id,
+            'nav_goal_uuid': None if identity is None else identity.nav_goal_uuid,
+            'close_reason': session.close_reason,
+            'close_generation': (None if session.close_request is None else
+                                 session.close_request.generation),
+            'blocker': blocker,
+        }
+
+    def finish_verified_session(self, evidence, now):
+        """Retire legacy session inputs only after the local typed proof succeeds.
+
+        Source guards/clock watermarks belong to the node and are preserved.
+        No owner arm, live limit, watchdog or durable budget is reset here.
+        """
+        if self._session_runtime is None or not self._fire_session.finish_close(evidence, now):
+            return False
+        for name in ('_detection', '_detection_received', '_alignment', '_alignment_received',
+                     '_odom', '_odom_received', '_nav_command', '_nav_command_received',
+                     '_raw_command', '_raw_command_received', '_review', '_review_received',
+                     '_actuator', '_actuator_received', '_ir', '_ir_received',
+                     '_goal_status_received', '_pump_started_uuid', '_pre_spray_clear_since',
+                     '_pre_spray_clear_uuid', '_centered_since', '_acquired_goal_uuid',
+                     '_last_state', '_state_since'):
+            setattr(self, name, None)
+        self._goal_statuses, self._goal_status_records = [], []
+        self._detection_error = self._alignment_error = ''
+        self._actuator_source_blocker = 'ACTUATOR_NOT_RECEIVED'
+        self._actuator_source_age_ms = 0.0
+        self._ever_acquired = self._acquired_goal_canceled = False
+        self._reset_candidate()
+        return True
+
     def evaluate(self, now):
         """Return one JSON-safe observe-only mission snapshot."""
         now = float(now)
@@ -538,8 +721,10 @@ class MissionSupervisorCore:
 
         pre_spray_clear = (not target_present and not hard_blockers and
                            self._pre_spray_clear(now, nav_active))
-        if not target_present and not hard_blockers and \
-                (self._reviewed_clear(now, nav_active) or pre_spray_clear):
+        reviewed_clear = (not target_present and not hard_blockers and
+                          self._reviewed_clear(now, nav_active))
+        clear_goal = self._acquired_goal_uuid
+        if reviewed_clear or pre_spray_clear:
             if pre_spray_clear:
                 self._pre_spray_clear_uuid = self._acquired_goal_uuid
             self._ever_acquired = False
@@ -643,13 +828,24 @@ class MissionSupervisorCore:
         raw_command_age = _age_seconds(self._raw_command_received, now)
         detection_age = _age_seconds(self._detection_received, now)
         alignment_age = _age_seconds(self._alignment_received, now)
+        actuator_age = self._actuator_age(now)
+        actuator_blocker = self._actuator_source_blocker
+        if actuator_blocker is None and (
+                actuator_age is None or actuator_age > self.actuator_timeout):
+            actuator_blocker = 'ACTUATOR_SOURCE_STALE'
+        lifecycle = {
+            'pre_spray_clear_goal_uuid': self._pre_spray_clear_uuid,
+            'actuator_source_blocker': actuator_blocker,
+        }
+        if self._fire_session is not None:
+            lifecycle['fire_session_observer'] = self._observe_fire_session(
+                now, hard_blockers, target_present, pre_spray_clear,
+                reviewed_clear, clear_goal)
         return {
             'schema_version': 1,
             'observe_only': True,
             'state': state,
-            'lifecycle': {
-                'pre_spray_clear_goal_uuid': self._pre_spray_clear_uuid,
-            },
+            'lifecycle': lifecycle,
             'state_age_ms': state_age_ms,
             'perception': {
                 'detected_now': detected_now,
@@ -730,6 +926,41 @@ class FireMissionSupervisor(Node):
         self._declare_parameters()
         self._read_parameters()
         self._core = MissionSupervisorCore(**self._core_parameters)
+        self._shadow_runtime = None
+        self._close_owner_collector = (CloseOwnerEvidenceCollector(
+            timeout_s=(min(self._core.odom_timeout, self._core.command_timeout,
+                           self._core.actuator_timeout, 0.35)
+                       if self.enable_global_stop_collection else 0.35),
+            future_skew_ms=(min(self._core.max_future_skew, 20.0)
+                            if self.enable_global_stop_collection else 20.0),
+            manifest_id=self._owner_manifest.name)
+            if self.enable_close_owner_collection else None)
+        self._global_stop = (GlobalStopEvidence(
+            linear_limit=min(self._core.stationary_linear, 0.02),
+            angular_limit=min(self._core.stationary_angular, 0.05),
+            timeout_s=min(self._core.odom_timeout, self._core.command_timeout,
+                          self._core.actuator_timeout, 0.35),
+            future_skew_ms=min(self._core.max_future_skew, 20.0),
+            manifest_id=self._owner_manifest.name,
+            require_recovery_on_change=self.enable_shadow_session_cleanup,
+            require_through_status=self.require_through_status)
+            if self.enable_global_stop_collection else None)
+        if self.enable_shadow_session_cleanup:
+            from fire_robot_mission.shadow_budget import ShadowBudgetStore
+            from fire_robot_mission.shadow_session_runtime import ShadowSessionRuntime
+            store = ShadowBudgetStore(self.get_parameter('shadow_budget_file').value,
+                                      initialize=self.get_parameter('initialize_shadow_budget').value)
+            self._shadow_runtime = ShadowSessionRuntime(
+                store, self._owner_manifest, timeout_s=self._global_stop.timeout_s,
+                absence_hold_s=max(1.5, self._core.pre_spray_clear_hold))
+            self._core._session_runtime = self._shadow_runtime
+        if self._core._fire_session is not None:
+            self._session_source_sequence = 0
+        self._detection_stamp_guard = DetectionStampGuard(
+            self._core.max_source_age, self._core.max_future_skew)
+        self._actuator_stamp_guard = ActuatorStampGuard(
+            max_age_ms=self._core.actuator_timeout * 1000.0,
+            max_future_skew_ms=self._core.max_future_skew)
         qos = sensor_qos()
         self._state_publisher = self.create_publisher(
             String, self.state_topic, qos)
@@ -743,12 +974,22 @@ class FireMissionSupervisor(Node):
             Twist, self.nav_command_topic, self._on_nav_command, qos)
         self.create_subscription(
             Twist, self.raw_command_topic, self._on_raw_command, qos)
-        self.create_subscription(
+        status_subscription = self.create_subscription(
             GoalStatusArray,
             self.nav_status_topic,
             self._on_nav_status,
             action_status_qos(),
         )
+        if self._global_stop is not None:
+            status_subscription._fire_stop_metadata_callback = self._on_nav_status
+            command_subscription = self.create_subscription(
+                Twist, '/cmd_vel', self._on_stop_cmd, qos)
+            command_subscription._fire_stop_metadata_callback = self._on_stop_cmd
+            if self.require_through_status:
+                through_subscription = self.create_subscription(
+                    GoalStatusArray, THROUGH_STOP_INPUT[0], self._on_through_nav_status,
+                    action_status_qos())
+                through_subscription._fire_stop_metadata_callback = self._on_through_nav_status
         self.create_subscription(
             String, self.post_spray_review_topic, self._on_review, qos)
         self.create_subscription(
@@ -757,6 +998,17 @@ class FireMissionSupervisor(Node):
             String, self.ir_range_topic, self._on_ir_range, qos)
         self.create_subscription(
             String, self.pump_state_topic, self._on_pump_state, qos)
+        if self._close_owner_collector is not None:
+            for owner, topic in CLOSE_OWNER_TOPICS.items():
+                # Pump telemetry already has a subscription and JSON decoder.
+                if owner != 'pump_demo_controller' and owner in self._owner_manifest.required:
+                    self.create_subscription(
+                        String, topic,
+                        lambda message, *, role=owner: self._on_close_owner(role, message), qos)
+        if self._shadow_runtime is not None:
+            from std_srvs.srv import Trigger
+            self.create_service(Trigger, '/fire_mission/recover_shadow_session', self._recover_shadow)
+            self.create_service(Trigger, '/fire_mission/reset_shadow_encounter', self._reset_shadow)
         self.create_timer(1.0 / self.publish_rate, self._publish_state)
         self.get_logger().warning(
             '[MISSION] OBSERVE-ONLY: no Twist, Nav2 action or actuator '
@@ -803,6 +1055,14 @@ class FireMissionSupervisor(Node):
         self.declare_parameter('review_timeout_s', 0.6)
         self.declare_parameter('actuator_timeout_s', 0.35)
         self.declare_parameter('pre_spray_clear_hold_s', 1.5)
+        self.declare_parameter('enable_fire_session_observer', False)
+        self.declare_parameter('enable_close_owner_collection', False)
+        self.declare_parameter('close_owner_manifest', '')
+        self.declare_parameter('enable_global_stop_collection', False)
+        self.declare_parameter('enable_shadow_session_cleanup', False)
+        self.declare_parameter('shadow_budget_file', '')
+        self.declare_parameter('initialize_shadow_budget', False)
+        self.declare_parameter('require_through_status', False)
 
     def _read_parameters(self):
         topic_names = [
@@ -849,6 +1109,47 @@ class FireMissionSupervisor(Node):
                 'pre_spray_clear_hold_s',
             )
         }
+        self._core_parameters['enable_fire_session_observer'] = (
+            self.get_parameter('enable_fire_session_observer').value)
+        self.enable_close_owner_collection = self.get_parameter(
+            'enable_close_owner_collection').value
+        self.enable_shadow_session_cleanup = self.get_parameter('enable_shadow_session_cleanup').value
+        if type(self.enable_shadow_session_cleanup) is not bool:
+            raise ValueError('enable_shadow_session_cleanup must be a bool')
+        self._owner_manifest = runtime_manifest(CLOSE_OWNER_MANIFEST)
+        if type(self.enable_close_owner_collection) is not bool:
+            raise ValueError('enable_close_owner_collection must be a bool')
+        if self.enable_close_owner_collection:
+            if self._core_parameters['enable_fire_session_observer'] is not True:
+                raise ValueError('close owner collection requires the fire session observer')
+            manifest_name = self.get_parameter('close_owner_manifest').value
+            if self.enable_shadow_session_cleanup:
+                self._owner_manifest = runtime_manifest(manifest_name)
+            elif manifest_name != CLOSE_OWNER_MANIFEST:
+                raise ValueError('close owner collection requires all_four_external_v1 manifest')
+            if (self.state_topic != '/fire_mission/state' or
+                    self.pump_state_topic != CLOSE_OWNER_TOPICS['pump_demo_controller']):
+                raise ValueError('close owner collection requires canonical mission/pump topics')
+        self.enable_global_stop_collection = self.get_parameter('enable_global_stop_collection').value
+        if type(self.enable_global_stop_collection) is not bool:
+            raise ValueError('enable_global_stop_collection must be a bool')
+        if self.enable_global_stop_collection:
+            if not self.enable_close_owner_collection:
+                raise ValueError('global stop collection requires owner collection')
+            expected = {'odom_topic': '/odom', 'raw_command_topic': '/cmd_vel_raw',
+                        'nav_status_topic': '/navigate_to_pose/_action/status',
+                        'actuator_state_topic': '/fire_sensors/actuator_state'}
+            if any(getattr(self, name) != value for name, value in expected.items()):
+                raise ValueError('global stop collection requires canonical input topics')
+            if self.get_parameter('use_sim_time').value is not False:
+                raise ValueError('DDS timestamps require system ROS time in global stop mode')
+        if self.enable_shadow_session_cleanup and not self.enable_global_stop_collection:
+            raise ValueError('shadow cleanup requires global stop collection')
+        self.require_through_status = self.get_parameter('require_through_status').value
+        if type(self.require_through_status) is not bool:
+            raise ValueError('require_through_status must be a bool')
+        if self.require_through_status and not self.enable_shadow_session_cleanup:
+            raise ValueError('through-status proof requires shadow cleanup')
 
     @staticmethod
     def _now():
@@ -869,8 +1170,32 @@ class FireMissionSupervisor(Node):
         self._decode_json(
             message,
             self._core.mark_detection_error,
-            self._core.update_detection,
+            self._store_detection,
         )
+
+    def _store_detection(self, payload, received):
+        """Admit stamped ok observations; preserve explicit health faults."""
+        if payload.get('state') != 'ok':
+            self._core.update_detection(payload, received)
+            return
+        ros_now_ns = self.get_clock().now().nanoseconds
+        checked_received = self._now()
+        admitted = self._detection_stamp_guard.admit(payload, ros_now_ns)
+        if admitted is None:
+            reason = self._detection_stamp_guard.reason
+            self._core.mark_detection_error(reason, received, blocker=reason)
+            return
+        barrier = getattr(self, '_shadow_input_barrier_ns', None)
+        if barrier is not None:
+            # Source age includes camera/YOLO transit. Frames queued BEFORE
+            # cleanup cannot become a candidate in the next session.
+            effective_ns = min(self._detection_stamp_guard.last_stamp_ns,
+                               ros_now_ns - math.ceil(max(0.0, admitted['source']['age_ms']) * 1e6))
+            if effective_ns <= barrier + round(self._core.max_future_skew * 1e6):
+                self._core.mark_detection_error('old session frame', received,
+                                                blocker='DETECTION_BEFORE_SESSION_CLEANUP')
+                return
+        self._core.update_detection(admitted, checked_received)
 
     def _on_alignment(self, message):
         self._decode_json(
@@ -880,6 +1205,8 @@ class FireMissionSupervisor(Node):
         )
 
     def _on_odom(self, message):
+        if getattr(self, '_global_stop', None) is not None:
+            self._observe_stop_odom(message)
         received = admit_odom(self, message, self._core.odom_timeout)
         if received is None:
             return
@@ -897,10 +1224,24 @@ class FireMissionSupervisor(Node):
         self._core.update_raw_command(
             message.linear.x, message.angular.z, self._now())
 
-    def _on_nav_status(self, message):
-        self._core.update_goal_statuses(
-            [(bytes(item.goal_info.goal_id.uuid).hex(), item.status)
-             for item in message.status_list], self._now())
+    def _on_nav_status(self, message, metadata=None):
+        records = [(bytes(item.goal_info.goal_id.uuid).hex(), item.status)
+                   for item in message.status_list]
+        if getattr(self, '_global_stop', None) is not None:
+            source_id = self._stop_source_id('nav_status')
+            ros_ns = self.get_clock().now().nanoseconds
+            self._global_stop.observe_status(
+                records, stamp_ns=self._stop_metadata_stamp(metadata),
+                source_id=source_id, ros_ns=ros_ns, now=self._now())
+            if getattr(self, '_shadow_runtime', None) is not None:
+                sample = self._global_stop.samples['nav_status']
+                if sample is None:
+                    self._core._goal_status_received = None
+                    self._core._goal_status_records, self._core._goal_statuses = [], []
+                else:
+                    self._core.update_goal_statuses(records, sample.effective_at)
+                return
+        self._core.update_goal_statuses(records, self._now())
 
     def _single_expected_publisher(self, topic, node_name):
         infos = self.get_publishers_info_by_topic(topic)
@@ -910,6 +1251,15 @@ class FireMissionSupervisor(Node):
                 infos[0].topic_type == 'std_msgs/msg/String' and
                 infos[0].qos_profile.reliability ==
                 ReliabilityPolicy.BEST_EFFORT)
+
+    def _on_through_nav_status(self, message, metadata=None):
+        records = [(bytes(item.goal_info.goal_id.uuid).hex(), item.status)
+                   for item in message.status_list]
+        source_id = self._stop_source_id('nav_through_status')
+        ros_ns = self.get_clock().now().nanoseconds
+        self._global_stop.observe_status(
+            records, stamp_ns=self._stop_metadata_stamp(metadata), source_id=source_id,
+            ros_ns=ros_ns, now=self._now(), role='nav_through_status')
 
     def _on_review(self, message):
         if not self._single_expected_publisher(
@@ -923,15 +1273,34 @@ class FireMissionSupervisor(Node):
         self._core.update_review(payload, self._now())
 
     def _on_actuator(self, message):
-        if not self._single_expected_publisher(
-                self.actuator_state_topic, 'serial_bridge_node'):
-            self._core.update_actuator(None, self._now())
+        global_stop = getattr(self, '_global_stop', None)
+        source_id = self._stop_source_id('actuator') if global_stop is not None else None
+        source_ok = (source_id is not None if global_stop is not None else
+                     self._single_expected_publisher(self.actuator_state_topic, 'serial_bridge_node'))
+        if not source_ok:
+            if global_stop is not None:
+                ros_ns = self.get_clock().now().nanoseconds
+                global_stop.observe_actuator(None, source_id=None, ros_ns=ros_ns, now=self._now())
+            self._core.update_actuator(
+                None, self._now(), blocker='ACTUATOR_PUBLISHER_INVALID')
             return
         try:
             payload = json.loads(message.data)
         except (TypeError, ValueError):
             payload = None
-        self._core.update_actuator(payload, self._now())
+        ros_now_ns = self.get_clock().now().nanoseconds
+        received = self._now()
+        if global_stop is not None:
+            global_stop.observe_actuator(payload, source_id=source_id, ros_ns=ros_now_ns, now=received)
+        age_ms = self._actuator_stamp_guard.admit(payload, ros_now_ns)
+        if age_ms is None:
+            self._core.update_actuator(
+                None, received, blocker=self._actuator_stamp_guard.reason)
+            return
+        if self._actuator_stamp_guard.context_changed:
+            self._core.update_actuator(
+                None, received, blocker='ACTUATOR_SOURCE_CONTEXT_CHANGED')
+        self._core.update_actuator(payload, received, source_age_ms=age_ms)
 
     def _on_ir_range(self, message):
         if not self._single_expected_publisher(
@@ -945,35 +1314,290 @@ class FireMissionSupervisor(Node):
         self._core.update_ir(payload, self._now())
 
     def _on_pump_state(self, message):
-        if not self._single_expected_publisher(
-                self.pump_state_topic, 'pump_demo_controller'):
+        source_ok = self._single_expected_publisher(
+            self.pump_state_topic, 'pump_demo_controller')
+        if not source_ok:
+            self._collect_close_owner('pump_demo_controller', None, source_ok=False)
             return
         try:
             payload = json.loads(message.data)
         except (TypeError, ValueError):
             payload = None
+        self._collect_close_owner('pump_demo_controller', payload, source_ok=source_ok)
         self._core.update_pump(payload, self._now())
 
+    def _on_close_owner(self, owner, message):
+        """Selected mode only: fixed endpoint, one decode, latest sample only."""
+        if getattr(self, '_close_owner_collector', None) is None:
+            return
+        source_ok = self._single_expected_publisher(CLOSE_OWNER_TOPICS[owner], owner)
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            payload = None
+        self._collect_close_owner(owner, payload, source_ok=source_ok)
+
+    def _collect_close_owner(self, owner, payload, *, source_ok):
+        collector = getattr(self, '_close_owner_collector', None)
+        if collector is None:
+            return
+        report = payload.get('close_owner_observation') if isinstance(payload, dict) else None
+        # Read clocks after graph/decode work; never renew an old source stamp.
+        ros_now_ns = self.get_clock().now().nanoseconds
+        received = self._now()
+        runtime = getattr(self, '_shadow_runtime', None)
+        if runtime is not None:
+            if owner in runtime.owners:
+                runtime.owners[owner] = None
+            if not isinstance(report, dict) or report.get('live_enabled') is not False:
+                runtime.recovery_latch = 'SHADOW_OWNER_LIVE_OR_UNDECLARED:' + owner
+                collector.observe(owner, None, ros_now_ns=ros_now_ns,
+                                  received_at=received, source_ok=False)
+                return
+        admitted = collector.observe(owner, report, ros_now_ns=ros_now_ns,
+                                     received_at=received, source_ok=source_ok)
+        if admitted and runtime is not None:
+            sample = collector._samples[owner]
+            runtime.observe_owner(owner, report, sample.received_at - sample.source_age_s)
+
+    @staticmethod
+    def _stop_metadata_stamp(metadata):
+        stamp = metadata.get('source_timestamp') if isinstance(metadata, dict) else None
+        return stamp if type(stamp) is int and stamp > 0 else None
+
+    def _stop_source_id(self, role):
+        if role in CLOSE_OWNER_TOPICS:
+            topic, node, kind, status = CLOSE_OWNER_TOPICS[role], role, 'std_msgs/msg/String', False
+        else:
+            topic, node, kind, status = (THROUGH_STOP_INPUT if role == 'nav_through_status'
+                                         else STOP_INPUTS[role])
+        infos = self.get_publishers_info_by_topic(topic)
+        if len(infos) != 1:
+            return None
+        info = infos[0]
+        reliability = ReliabilityPolicy.RELIABLE if status else ReliabilityPolicy.BEST_EFFORT
+        durability = DurabilityPolicy.TRANSIENT_LOCAL if status else DurabilityPolicy.VOLATILE
+        if (info.node_name != node or info.node_namespace != '/' or info.topic_type != kind or
+                info.qos_profile.reliability != reliability or info.qos_profile.durability != durability):
+            return None
+        gid = getattr(info, 'endpoint_gid', None)
+        if (type(gid) not in (list, tuple, bytes) or len(gid) not in (16, 24) or
+                any(type(byte) is not int or not 0 <= byte <= 255 for byte in gid) or not any(gid)):
+            return None
+        return bytes(gid)
+
+    def _observe_stop_odom(self, message):
+        source_id = self._stop_source_id('odom')
+        stamp = message.header.stamp
+        stamp_ns = (stamp.sec * 1_000_000_000 + stamp.nanosec
+                    if type(stamp.sec) is int and stamp.sec >= 0 and type(stamp.nanosec) is int
+                    and 0 <= stamp.nanosec < 1_000_000_000 else None)
+        values = (_full_twist(message.twist.twist)
+                  if message.header.frame_id == 'odom' and message.child_frame_id == 'base_link' else None)
+        ros_ns = self.get_clock().now().nanoseconds
+        self._global_stop.observe_motion('odom', values, stamp_ns=stamp_ns,
+                                         source_id=source_id, ros_ns=ros_ns, now=self._now())
+
+    def _on_stop_cmd(self, message, metadata=None):
+        if getattr(self, '_global_stop', None) is None:
+            return
+        source_id = self._stop_source_id('cmd')
+        ros_ns = self.get_clock().now().nanoseconds
+        self._global_stop.observe_motion(
+            'cmd', _full_twist(message), stamp_ns=self._stop_metadata_stamp(metadata),
+            source_id=source_id, ros_ns=ros_ns, now=self._now())
+
     def _publish_state(self):
-        self._core.update_pump_owner_count(
-            self.count_publishers('/pump_cmd'))
+        session = self._core._fire_session
+        # Timestamp before graph queries/evaluation so their cost is included
+        # in the age seen by consumers, instead of re-dating an old snapshot.
+        stamp_ns = (self.get_clock().now().nanoseconds
+                    if session is not None else None)
+        global_stop = getattr(self, '_global_stop', None)
+        runtime = getattr(self, '_shadow_runtime', None)
+        if runtime is not None:
+            runtime.recovery_latch = (runtime.recovery_latch or global_stop.fault or
+                                      self._close_owner_collector.fault)
+            if global_stop.require_through_status:
+                runtime.navigation_blocker = global_stop.through_navigation_blocker(
+                    ros_ns=stamp_ns, now=self._now())
+        graph_started_at = self._now() if global_stop is not None else None
+        pump_count = self.count_publishers('/pump_cmd')
+        self._core.update_pump_owner_count(pump_count)
         payload = self._core.evaluate(self._now())
+        if session is not None:
+            observer = payload['lifecycle']['fire_session_observer']
+            if type(stamp_ns) is int and stamp_ns > 0:
+                self._session_source_sequence += 1
+                sec, nanosec = divmod(stamp_ns, 1_000_000_000)
+                observer['source'] = {
+                    'instance_id': session.source_instance_id,
+                    'sequence': self._session_source_sequence,
+                    'stamp': {'sec': sec, 'nanosec': nanosec},
+                }
+                observer['source_blocker'] = None
+            else:
+                observer['source'] = None
+                observer['source_blocker'] = 'SESSION_CLOCK_INVALID'
+        collector = getattr(self, '_close_owner_collector', None)
+        if collector is not None:
+            if (collector.request is not None and
+                    session.close_request != collector.request):
+                # A changed/lost pending round must block this same payload,
+                # rather than briefly attaching old readiness to a new close.
+                collector.begin_close(session.close_request,
+                                      announced_ros_ns=collector.announced_ros_ns,
+                                      announced_at=collector.announced_at)
+            if (global_stop is not None and global_stop.request is not None and
+                    global_stop.request != session.close_request):
+                global_stop.begin_close(session.close_request,
+                                        announced_ros_ns=global_stop.barrier_ros_ns,
+                                        announced_at=global_stop.barrier_at)
+            sources = None
+            if global_stop is not None and global_stop.request is not None:
+                sources = {role: self._stop_source_id(role) for role in global_stop.source_roles}
+                raw_count = self.count_publishers('/cmd_vel_raw')
+                omitted_present = None
+                if global_stop.manifest.omitted:
+                    nodes = self.get_node_names_and_namespaces()
+                    omitted_present = any(name in global_stop.manifest.omitted for name, _ in nodes)
+                    for owner in global_stop.manifest.omitted:
+                        # A different node publishing the omitted role's state
+                        # also invalidates the chosen deployment manifest.
+                        omitted_present |= bool(self.get_publishers_info_by_topic(CLOSE_OWNER_TOPICS[owner]))
+            ros_now_ns = self.get_clock().now().nanoseconds
+            assessed_at = self._now()
+            if global_stop is not None and sources is not None:
+                global_stop.observe_graph(
+                    raw_count=raw_count, pump_count=pump_count, sources=sources,
+                    started_ros_ns=stamp_ns, started_at=graph_started_at,
+                    ros_ns=ros_now_ns, now=assessed_at, omitted_present=omitted_present)
+            absence_at = (global_stop.graph[1] if global_stop is not None and
+                          global_stop.graph is not None else None)
+            result = collector.assess(ros_now_ns=ros_now_ns, now=assessed_at,
+                                      absence_observed_at=absence_at)
+            payload['lifecycle']['close_owner_collection'] = {
+                'mode': 'OBSERVE_ONLY', 'manifest': collector.manifest.name,
+                'required_owners': list(collector.manifest.required),
+                'session_id': result.session_id,
+                'nav_goal_uuid': result.nav_goal_uuid,
+                'close_generation': result.close_generation,
+                'owner_reports_ready': result.ready,
+                'blockers': list(result.blockers),
+                'cleanup_authorized': False,
+                'actuation_authorized': False,
+            }
+            if global_stop is not None:
+                self._global_stop_result = global_stop.assess(result, ros_ns=ros_now_ns, now=assessed_at)
+                evidence = self._global_stop_result.evidence
+                payload['lifecycle']['global_stop_collection'] = {
+                    'mode': 'OBSERVE_ONLY', 'stop_evidence_ready': self._global_stop_result.ready,
+                    'session_id': None if global_stop.request is None else global_stop.request.session_id,
+                    'nav_goal_uuid': None if global_stop.request is None else global_stop.request.nav_goal_uuid,
+                    'close_generation': None if global_stop.request is None else global_stop.request.generation,
+                    'nav_terminal_status': None if evidence is None else evidence.nav_terminal_status,
+                    'blockers': list(self._global_stop_result.blockers),
+                    'cleanup_authorized': False, 'actuation_authorized': False,
+                    'physical_motion_or_actuator_verified': False,
+                }
+        if runtime is not None:
+            runtime.recovery_latch = runtime.recovery_latch or global_stop.fault or collector.fault
+            payload['lifecycle']['shadow_session_runtime'] = runtime.snapshot()
         message = String()
         message.data = json.dumps(
             payload, separators=(',', ':'), ensure_ascii=True)
         self._state_publisher.publish(message)
+        # Only a successfully published STOPPING heartbeat announces a round.
+        # Take its barrier AFTER publish; retries must not re-date the round.
+        if (collector is not None and session.close_request is not None and
+                collector.request is None):
+            announced_ros_ns = self.get_clock().now().nanoseconds
+            collector.begin_close(session.close_request,
+                                  announced_ros_ns=announced_ros_ns,
+                                  announced_at=self._now())
+            if global_stop is not None and collector.request is not None:
+                global_stop.begin_close(collector.request,
+                                        announced_ros_ns=collector.announced_ros_ns,
+                                        announced_at=collector.announced_at)
+        if runtime is not None and collector.request is not None:
+            # Re-evaluate against the time AFTER publication. No new graph
+            # query and no re-dating of cached observations is permitted.
+            ros_ns, now = self.get_clock().now().nanoseconds, self._now()
+            owners = collector.assess(
+                ros_now_ns=ros_ns, now=now,
+                absence_observed_at=None if global_stop.graph is None else global_stop.graph[1])
+            result = global_stop.assess(owners, ros_ns=ros_ns, now=now)
+            finished = runtime.finish_after_publish(
+                self._core, result, collector, global_stop,
+                now=now, clock=self._now, recheck=self._shadow_current_stop_result)
+            if finished:
+                self._shadow_input_barrier_ns = self.get_clock().now().nanoseconds
+
+    def _shadow_current_stop_result(self):
+        global_stop, collector = self._global_stop, self._close_owner_collector
+        ros_ns, now = self.get_clock().now().nanoseconds, self._now()
+        owners = collector.assess(
+            ros_now_ns=ros_ns, now=now,
+            absence_observed_at=None if global_stop.graph is None else global_stop.graph[1])
+        return global_stop.assess(owners, ros_ns=ros_ns, now=now)
+
+    def _recover_shadow(self, request, response):
+        return self._shadow_operator_request(response, reset=False)
+
+    def _reset_shadow(self, request, response):
+        return self._shadow_operator_request(response, reset=True)
+
+    def _shadow_operator_request(self, response, *, reset):
+        runtime = self._shadow_runtime
+        try:
+            runtime.operator_request(self._core._fire_session, self._now(), reset_encounter=reset,
+                                     idle_goal=self._core._active_goal_uuid())
+        except ValueError as error:
+            response.success, response.message = False, str(error)
+            return response
+        # Only this explicit operator action may establish new source pins.
+        old = self._global_stop
+        self._close_owner_collector = CloseOwnerEvidenceCollector(
+            timeout_s=old.timeout_s, future_skew_ms=old.future_ns / 1e6,
+            manifest_id=runtime.manifest.name)
+        self._global_stop = GlobalStopEvidence(
+            timeout_s=old.timeout_s, future_skew_ms=old.future_ns / 1e6,
+            linear_limit=old.linear_limit, angular_limit=old.angular_limit,
+            manifest_id=runtime.manifest.name, require_recovery_on_change=True,
+            require_through_status=old.require_through_status)
+        self._global_stop_result = None
+        response.success = True
+        response.message = 'New shadow close proof required; no arm or quota reset'
+        return response
+
+    def destroy_node(self):
+        runtime = getattr(self, '_shadow_runtime', None)
+        try:
+            return super().destroy_node()
+        finally:
+            if runtime is not None:
+                runtime.store.close()
 
 
 def main(args=None):
     """Run the observe-only mission supervisor."""
     rclpy.init(args=args)
     node = None
+    executor = None
     try:
         node = FireMissionSupervisor()
-        rclpy.spin(node)
+        if node.enable_global_stop_collection:
+            from fire_robot_mission.stop_metadata_executor import StopMetadataExecutor
+            executor = StopMetadataExecutor()
+            executor.add_node(node)
+            executor.spin()
+        else:
+            rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        if executor is not None:
+            executor.shutdown()
         if node is not None:
             node.destroy_node()
         if rclpy.ok():

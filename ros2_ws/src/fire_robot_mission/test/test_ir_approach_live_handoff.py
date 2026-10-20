@@ -13,7 +13,7 @@ def ready():
     node = object.__new__(IrApproachLiveNode)
     ir = {'zone': 'APPROACH', 'ir_band': 'APPROACH', 'blockers': []}
     node.core = SimpleNamespace(
-        input_timeout=0.35,
+        input_timeout=0.35, continuous_approach=False,
         _input=lambda name, now: ir if name == 'ir' else None)
     payloads = {
         'mission': {

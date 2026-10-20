@@ -12,6 +12,7 @@ from geometry_msgs.msg import Twist, Point
 from std_msgs.msg import String, Bool
 import threading
 import time
+from uuid import uuid4
 
 from fire_robot_bringup.serial_transport_core import SerialTransportCore
 from fire_robot_bringup.serial_process import SerialProcessClient
@@ -70,6 +71,9 @@ class SerialBridgeNode(SerialTransportCore, Node):
     def __init__(self, serial_cls=None):
         """Initialize SerialBridgeNode."""
         super().__init__('serial_bridge_node')
+        # ACT provenance is control telemetry, independent of diagnostic logs.
+        # Connection epochs alone can repeat after this node restarts.
+        self._actuator_source_instance = uuid4().hex
 
         self.declare_parameter('serial_port', DEFAULT_SERIAL_PORT)
         self.declare_parameter('serial_baudrate', 115200)
@@ -407,18 +411,32 @@ class SerialBridgeNode(SerialTransportCore, Node):
 
         if actuator_item:
             frame, epoch, frame_mono = actuator_item
+            # Read ROS time first, then charge the full monotonic receive age.
+            # The stamp marks Pi receipt of ACT, not ESP wall time or pump ACK.
+            actuator_ros_ns = self.get_clock().now().nanoseconds
             age = time.monotonic() - frame_mono
             with self.state_lock:
                 valid_session = (self.running and self.session_ready and
                                  self.telemetry_healthy and
                                  self.session_epoch == epoch)
-            if valid_session and age < 0.5:
+            if valid_session and 0.0 <= age < 0.5:
                 try:
+                    stamp_ns = actuator_ros_ns - math.ceil(age * 1e9)
+                    if stamp_ns <= 0:
+                        raise ValueError('ACT source clock is not ready')
+                    stamp_sec, stamp_nanosec = divmod(stamp_ns, 1000000000)
                     phase = ('IDLE', 'SWEEPING', 'RETURNING_HOME', 'LOCKED')
                     msg = String()
                     msg.data = json.dumps({
                         'schema_version': 1,
                         'mode': 'COMMAND_TELEMETRY_ONLY',
+                        'source': {
+                            'stamp': {'sec': stamp_sec,
+                                      'nanosec': stamp_nanosec},
+                            'bridge_instance_id': self._actuator_source_instance,
+                            'serial_epoch': epoch,
+                            'frame_seq': frame['seq'],
+                        },
                         'esp_ms': frame['esp_ms'],
                         'pump_pwm_commanded_on': bool(frame['pump_pwm']),
                         'pump_pwm_ready': bool(frame['pump_ready']),

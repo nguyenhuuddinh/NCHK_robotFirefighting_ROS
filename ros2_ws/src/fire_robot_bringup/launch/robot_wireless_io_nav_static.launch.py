@@ -25,12 +25,24 @@ def _include(package, launch_file, *, scoped=True, **arguments):
     )], scoped=scoped)
 
 
-def generate_launch_description():
+def generate_launch_description(*, mission_shadow=False):
+    if type(mission_shadow) is not bool:
+        raise ValueError('mission_shadow must be a bool')
     navigation_share = get_package_share_directory('fire_robot_navigation')
     map_path = os.path.join(
         navigation_share, 'maps', 'fire_room_9_10_2026.yaml')
     use_sim_time = LaunchConfiguration('use_sim_time')
 
+    mission_actions = []
+    if mission_shadow:
+        mission_actions = [
+            DeclareLaunchArgument('shadow_budget_file', description='Persistent shadow reservation file'),
+            DeclareLaunchArgument('initialize_shadow_budget', default_value='false', choices=['false', 'true']),
+            _include('fire_robot_mission', 'mission_session_shadow.launch.py',
+                     use_sim_time=use_sim_time,
+                     shadow_budget_file=LaunchConfiguration('shadow_budget_file'),
+                     initialize_shadow_budget=LaunchConfiguration('initialize_shadow_budget')),
+        ]
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('map', default_value=map_path),
@@ -46,6 +58,7 @@ def generate_launch_description():
             '/dev/serial/by-id/'
             'usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N8R2_'
             '_8MB_Flash___2MB_PSRAM__28372F1F73C8-if00')),
+        *mission_actions,
         _include(
             'fire_robot_bringup', 'robot.launch.py',
             use_sim_time=use_sim_time,
@@ -66,7 +79,8 @@ def generate_launch_description():
         # Delayed Nav2 TimerAction nodes need these launch configurations to
         # remain visible after the include returns (same as the G2 profile).
         _include(
-            'fire_robot_navigation', 'nav2_motion_shadow.launch.py',
+            'fire_robot_navigation',
+            'nav2_snapshot_shadow.launch.py' if mission_shadow else 'nav2_motion_shadow.launch.py',
             scoped=False,
             use_sim_time=use_sim_time,
             map=LaunchConfiguration('map'),

@@ -29,6 +29,10 @@ def generate_launch_description():
         'enable_live_output', default_value='false',
         description='Opt in to real /cmd_vel_raw output; operator arm still '
                     'required')
+    session_context = DeclareLaunchArgument(
+        'require_fire_session_context', default_value='false',
+        description='Bind a real Nav2 goal in fresh IDLE context, then stop '
+                    'and record owner release on fire/close; recovery remains gated')
     use_sim_time = DeclareLaunchArgument(
         'use_sim_time', default_value='false')
     gateway = Node(
@@ -42,6 +46,11 @@ def generate_launch_description():
                 'enable_live_output': ParameterValue(
                     LaunchConfiguration('enable_live_output'),
                     value_type=bool),
+                'require_fire_session_context': ParameterValue(
+                    LaunchConfiguration('require_fire_session_context'),
+                    value_type=bool),
+                'enable_close_owner_observation': ParameterValue(
+                    LaunchConfiguration('enable_close_owner_observation'), value_type=bool),
                 'use_sim_time': ParameterValue(
                     LaunchConfiguration('use_sim_time'),
                     value_type=bool),
@@ -49,6 +58,7 @@ def generate_launch_description():
         ],
     )
     return LaunchDescription([
-        params_file, enabled, use_sim_time,
+        params_file, enabled, session_context, use_sim_time,
+        DeclareLaunchArgument('enable_close_owner_observation', default_value='false'),
         OpaqueFunction(function=_validate_params), gateway,
     ])

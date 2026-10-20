@@ -24,6 +24,16 @@ class TestNav2Invariants(unittest.TestCase):
         'maps/fire_room_9_10_2026.yaml',
         'maps/fire_robot_map_2026_09_13.pgm',
         'maps/fire_robot_map_2026_09_13.yaml',
+        'maps/fire_robot_demo_2026_09_28.pgm',
+        'maps/fire_robot_demo_2026_09_28.yaml',
+        'maps/fire_room_demo.pgm',
+        'maps/fire_room_demo.yaml',
+        'maps/fire_room_TN1.pgm',
+        'maps/fire_room_TN1.yaml',
+        'maps/fire_room_tes1.pgm',
+        'maps/fire_room_tes1.yaml',
+        'maps/fire_room_test.pgm',
+        'maps/fire_room_test.yaml',
     }
 
     def test_measured_polygon_footprint(self):
@@ -140,6 +150,7 @@ class TestNav2Invariants(unittest.TestCase):
         expected_paths = [
             'launch/nav2.launch.py',
             'launch/nav2_motion_shadow.launch.py',
+            'launch/nav2_snapshot_shadow.launch.py',
             'launch/slam.launch.py',
             'config/nav2_params.yaml',
             'config/mapper_params_online_async.yaml',
@@ -199,6 +210,7 @@ class TestNav2Invariants(unittest.TestCase):
         expected_paths = [
             'launch/nav2.launch.py',
             'launch/nav2_motion_shadow.launch.py',
+            'launch/nav2_snapshot_shadow.launch.py',
             'launch/slam.launch.py',
             'config/nav2_params.yaml',
             'config/mapper_params_online_async.yaml',
@@ -218,7 +230,10 @@ class TestNav2Invariants(unittest.TestCase):
             'ament_unexpected_debug.txt',
             'local_setup.unexpected_debug.txt',
             'package.unexpected_debug.txt',
-            'launch/cmake/unexpected.txt'
+            'launch/cmake/unexpected.txt',
+            'maps/unexpected_map.pgm',
+            'maps/unexpected_map.yaml',
+            'maps/unexpected_debug.txt',
         ]
 
         for mutation in mutations:
@@ -253,7 +268,19 @@ class TestNav2Invariants(unittest.TestCase):
                     managed_paths = self._get_managed_installed_paths(d)
                     self._validate_artifacts(managed_paths)
 
-                    # Now add unexpected debug text
+                    # A local install may contain every explicitly known map.
+                    # Keep a positive fixture for those assets before injecting
+                    # unknown maps: accepting all *.pgm/*.yaml would hide bugs.
+                    for map_path in self.optional_map_paths:
+                        full_path = os.path.join(d, map_path)
+                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                        with open(full_path, 'w') as f:
+                            f.write('')
+                    managed_paths = self._get_managed_installed_paths(d)
+                    self.assertTrue(self.optional_map_paths.issubset(managed_paths))
+                    self._validate_artifacts(managed_paths)
+
+                    # Now add an unexpected artifact, including unknown maps.
                     os.makedirs(os.path.join(d, os.path.dirname(mutation)), exist_ok=True)
                     with open(os.path.join(d, mutation), 'w') as f:
                         f.write('')

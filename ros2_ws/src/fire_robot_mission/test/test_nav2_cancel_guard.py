@@ -313,6 +313,77 @@ def test_unknown_raw_owner_after_cancel_still_fails_closed():
     assert core.step(10.1)[0]['state'] == 'FAILED'
 
 
+def test_pre_spray_clear_retires_failed_alignment_only_when_stopped():
+    core = ready_core()
+    core.goal_uuid = UUID
+    core.complete = True
+    core.canceled_at = 10.0
+    core.failure = 'ALIGNMENT_STOP_PROOF_INVALID'
+    core.update_statuses([(UUID, 5)], 10.0)
+    proof = {'schema_version': 1, 'state': 'IDLE',
+             'perception': {'detected_now': False, 'confirmed': False},
+             'lifecycle': {'pre_spray_clear_goal_uuid': UUID}}
+    core.update_mission(proof, 10.0, source_ok=False)
+    assert core.step(10.1)[0]['state'] == 'FAILED'
+    core.update_mission(proof, 10.2, source_ok=True)
+    core.update_odom((0.1, 0, 0, 0, 0, 0), 10.2)
+    assert core.step(10.21)[0]['state'] == 'FAILED'
+    core.update_odom(ZERO, 10.3)
+    core.update_cmd(ZERO, 10.3)
+    core.update_statuses([(UUID, 5)], 10.3)
+    core.pump_publishers = 1
+    assert core.step(10.31)[0]['state'] == 'FAILED'
+    core.pump_publishers = 0
+    assert core.step(10.31)[0]['goal_uuid'] is None
+    assert UUID in core.used_goal_uuids
+
+
+def test_pre_spray_clear_accepts_unique_early_next_goal_but_not_new_fire():
+    core = ready_core()
+    core.goal_uuid = UUID
+    core.complete = True
+    core.canceled_at = 10.0
+    core.failure = 'ALIGNMENT_STOP_PROOF_INVALID'
+    core.update_statuses([(UUID, 5), (OTHER, 2)], 10.0)
+    proof = {'schema_version': 1, 'state': 'NAV2_NAVIGATING',
+             'perception': {'detected_now': False, 'confirmed': False},
+             'lifecycle': {'pre_spray_clear_goal_uuid': UUID}}
+    core.update_mission(proof, 10.0)
+    report, _ = core.step(10.1)
+    assert report['goal_uuid'] is None
+    assert UUID in core.used_goal_uuids
+
+    core = ready_core()
+    core.goal_uuid = UUID
+    core.complete = True
+    core.canceled_at = 10.0
+    core.failure = 'ALIGNMENT_STOP_PROOF_INVALID'
+    core.update_statuses([(UUID, 5), (OTHER, 2)], 10.0)
+    proof['perception'] = {'detected_now': True, 'confirmed': True}
+    core.update_mission(proof, 10.0)
+    assert core.step(10.1)[0]['goal_uuid'] == UUID
+
+
+@pytest.mark.parametrize('statuses', [
+    [(UUID, 2)],
+    [(UUID, 5), (OTHER, 2), ('ef' * 16, 2)],
+])
+def test_pre_spray_clear_never_retires_with_old_or_ambiguous_active_goal(
+        statuses):
+    core = ready_core()
+    core.goal_uuid = UUID
+    core.complete = True
+    core.canceled_at = 10.0
+    core.failure = 'ALIGNMENT_STOP_PROOF_INVALID'
+    core.update_statuses(statuses, 10.0)
+    core.update_mission({
+        'schema_version': 1, 'state': 'NAV2_NAVIGATING',
+        'perception': {'detected_now': False, 'confirmed': False},
+        'lifecycle': {'pre_spray_clear_goal_uuid': UUID},
+    }, 10.0)
+    assert core.step(10.1)[0]['goal_uuid'] == UUID
+
+
 def ir_report(state='MOVING', goal_uuid=UUID, owned=True,
               reason='', linear=0.05, continuous=False):
     return {

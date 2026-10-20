@@ -36,6 +36,11 @@ from fire_robot_mission.mission_supervisor import (
 from fire_robot_mission.nav2_cancel_guard import (
     ACTIVE_STATUSES, EXPECTED_SHADOW_PUBLISHERS, _valid_uuid,
 )
+from fire_robot_mission.session_context import SessionContextGuard
+from fire_robot_mission.motion_release import MotionReleaseProof
+from fire_robot_mission.close_owner_adapter import (
+    append_owner_observation, configure_owner_observation, start_owner_observation,
+)
 
 
 OWN_ENDPOINT = Counter({
@@ -118,6 +123,7 @@ class LiveAlignmentCore:
         self.cmd_at = None
         self.scan = None
         self.scan_at = None
+        self._scan_clear_cache = None
         self.statuses = None
         self.phase = 'WAITING_FOR_ADMISSION'
         self.goal_uuid = None
@@ -161,6 +167,7 @@ class LiveAlignmentCore:
         self.scan = (float(angle_min), float(angle_max),
                      float(range_max), tuple(ranges))
         self.scan_at = float(now)
+        self._scan_clear_cache = None
 
     @staticmethod
     def _valid_twist(values):
@@ -172,6 +179,17 @@ class LiveAlignmentCore:
         if not _fresh(self.scan_at, now, self.input_timeout) or \
                 self.scan is None:
             return False
+        # Cache only immutable scan geometry, never its freshness or authority.
+        # Keep the scan reference (not id(scan)) to avoid object-id reuse.
+        cached = self._scan_clear_cache
+        if (cached is None or cached[0] is not self.scan or
+                cached[1] != self.min_clearance):
+            clear = self._scan_geometry_clear()
+            self._scan_clear_cache = (self.scan, self.min_clearance, clear)
+            return clear
+        return cached[2]
+
+    def _scan_geometry_clear(self):
         angle_min, angle_max, range_max, ranges = self.scan
         if not math.isfinite(angle_min) or not math.isfinite(angle_max) or \
                 not math.isfinite(range_max) or \
@@ -401,10 +419,29 @@ class LiveAlignmentCore:
             return 'ALREADY_CENTERED'
         return ''
 
+    def request_session_stop(self, reason, now, *, reset_hold=False):
+        """Latch zero without resetting angular progress, quotas or arm."""
+        if reason not in ('SESSION_CONTEXT_INVALID', 'SESSION_CLOSE_REQUESTED'):
+            raise ValueError('invalid alignment session stop')
+        if self.phase in ('ACQUIRING', 'TURNING', 'STOPPING'):
+            if self.phase != 'STOPPING':
+                self.phase = 'STOPPING'
+                self.stop_reason = reason
+                self.stop_alignment_input = self._stop_input_snapshot(now)
+                self.zero_since = None
+            if reset_hold:
+                self.zero_since = None
+            self.last_angular = 0.0
+
     def step(self, now, publisher_owned=False, raw_sources=(),
-             nav_sources=(), safety_sources=(), counts=None):
+             nav_sources=(), safety_sources=(), counts=None, *,
+             session_admission=True, session_release_ready=True, allow_rearm=True,
+             defer_release=False):
         """Return (angular, telemetry, CREATE/RELEASE/None)."""
         now = float(now)
+        if any(type(value) is not bool for value in
+               (session_admission, session_release_ready, allow_rearm, defer_release)):
+            raise ValueError('alignment session gates must be bool')
         counts = counts or {}
         ir = self._input('ir', now) or {}
         guard = self._input('guard', now) or {}
@@ -449,7 +486,7 @@ class LiveAlignmentCore:
             'FIRE_TRACKING' and
             (self._input('preview', now) or {}).get('state') in (
                 'ALIGNING_LEFT', 'ALIGNING_RIGHT'))
-        if (self.phase == 'COMPLETE' and not publisher_owned and
+        if (allow_rearm and self.phase == 'COMPLETE' and not publisher_owned and
                 self.stop_reason == 'TARGET_CENTERED' and self.goal_uuid and
                 ((counts.get('ir') == 1 and
                   counts.get('ir_source_ok') is True and
@@ -484,7 +521,7 @@ class LiveAlignmentCore:
             self.best_abs_error = None
             self.stalled_since = None
             self.total_rotation_rad = 0.0
-        if self.phase == 'COMPLETE' and not publisher_owned and \
+        if allow_rearm and self.phase == 'COMPLETE' and not publisher_owned and \
                 self.goal_uuid and self.statuses is not None:
             active = [uuid for uuid, status in self.statuses
                       if status in ACTIVE_STATUSES]
@@ -535,8 +572,8 @@ class LiveAlignmentCore:
         angular = 0.0
         blockers = []
         if self.phase == 'WAITING_FOR_ADMISSION':
-            reason = self._preflight(
-                now, raw_sources, nav_sources, safety_sources, counts)
+            reason = (self._preflight(now, raw_sources, nav_sources, safety_sources, counts)
+                      if session_admission else 'SESSION_CONTEXT_NOT_ADMITTED')
             if reason == 'ALREADY_CENTERED':
                 # Exact canceled-goal, scan and stationary proofs passed.
                 # Do not rotate merely to create a motion attempt.
@@ -650,8 +687,9 @@ class LiveAlignmentCore:
                     self._stationary(now) and self._cmd_zero(now):
                 if self.zero_since is None:
                     self.zero_since = now
-                elif now - self.zero_since >= self.zero_hold:
-                    self.phase = 'COMPLETE'
+                elif now - self.zero_since >= self.zero_hold and session_release_ready:
+                    if not defer_release:
+                        self.phase = 'COMPLETE'
                     action = 'RELEASE'
             else:
                 self.zero_since = None
@@ -702,6 +740,7 @@ class LiveAlignmentTakeover(Node):
             if self.resolve_topic_name(topic) != topic:
                 raise ValueError(f'live alignment forbids remapping {topic}')
         self.declare_parameter('enable_live_alignment', False)
+        self.declare_parameter('require_fire_session_context', False)
         self.declare_parameter('publish_rate_hz', 20.0)
         defaults = {
             'input_timeout_s': 0.35,
@@ -726,6 +765,17 @@ class LiveAlignmentTakeover(Node):
         self.core = LiveAlignmentCore(
             enabled=self.get_parameter('enable_live_alignment').value,
             **params)
+        require_session = self.get_parameter('require_fire_session_context').value
+        if type(require_session) is not bool:
+            raise ValueError('require_fire_session_context must be bool')
+        self._session_context = (SessionContextGuard(timeout_s=min(self.core.input_timeout, 0.35))
+                                 if require_session and self.core.enabled else None)
+        self._motion_release = (MotionReleaseProof(
+            timeout_s=min(self.core.input_timeout, 0.35), zero_hold_s=self.core.zero_hold)
+            if self._session_context is not None else None)
+        configure_owner_observation(
+            self, 'live_alignment_takeover', live_enabled=self.core.enabled,
+            context=self._session_context, timeout_s=self.core.input_timeout)
         self._raw_publisher = None
         qos = sensor_qos()
         self._state_publisher = self.create_publisher(
@@ -764,7 +814,38 @@ class LiveAlignmentTakeover(Node):
             payload = json.loads(message.data)
         except (TypeError, ValueError):
             payload = None
+        context = getattr(self, '_session_context', None)
+        observed_context = context or getattr(self, '_close_owner_context', None)
+        if observed_context is not None and name == 'mission':
+            source_ok = self._sources('/fire_mission/state') == [
+                ('/', 'fire_mission_supervisor', 'std_msgs/msg/String',
+                 ReliabilityPolicy.BEST_EFFORT)]
+            observed_context.update(payload, self.get_clock().now().nanoseconds,
+                                    time.monotonic(), source_ok=source_ok)
+            if context is not None and context.sample is None:
+                payload = None
         self.core.update(name, payload, time.monotonic())
+        if context is not None and name == 'mission' and self._raw_publisher is not None:
+            self._guard_owned_session(time.monotonic(), source_ok=source_ok)
+
+    def _guard_owned_session(self, now, *, source_ok):
+        lease = self._motion_release
+        if lease.binding is None:
+            raise RuntimeError('ALIGNMENT_SESSION_BINDING_MISSING')
+        blocker = ('SESSION_PUBLISHER_INVALID' if source_ok is not True else
+                   self._session_context.blocker_for(lease.binding, now))
+        first_close = False
+        if blocker == 'SESSION_CLOSE_REQUESTED':
+            first_close = lease.close_generation is None
+            if not lease.accept_close(self._session_context.current(now), now):
+                blocker = 'SESSION_CLOSE_CONTEXT_CHANGED'
+                first_close = False
+        if blocker is not None:
+            lease.stop_latched = True
+            self.core.request_session_stop(
+                'SESSION_CLOSE_REQUESTED' if blocker == 'SESSION_CLOSE_REQUESTED'
+                else 'SESSION_CONTEXT_INVALID', now, reset_hold=first_close)
+        return blocker
 
     def _on_arm(self, message):
         self.core.update_arm(message.data, time.monotonic())
@@ -800,6 +881,7 @@ class LiveAlignmentTakeover(Node):
                 for info in self.get_publishers_info_by_topic(topic)]
 
     def _tick(self):
+        report_stamp_ns = start_owner_observation(self)
         now = time.monotonic()
         counts = {
             name: self.count_publishers(topic)
@@ -834,27 +916,87 @@ class LiveAlignmentTakeover(Node):
             '/fire_mission/state') == [
                 ('/', 'fire_mission_supervisor', 'std_msgs/msg/String',
                  ReliabilityPolicy.BEST_EFFORT)]
-        angular, payload, action = self.core.step(
-            now, self._raw_publisher is not None,
-            self._sources('/cmd_vel_raw'),
-            self._sources('/fire_mission/nav2_cmd_vel_shadow'),
-            self._sources('/cmd_vel'), counts)
+        context = getattr(self, '_session_context', None)
+        lease = getattr(self, '_motion_release', None)
+        raw_sources = self._sources('/cmd_vel_raw')
+        nav_sources = self._sources('/fire_mission/nav2_cmd_vel_shadow')
+        safety_sources = self._sources('/cmd_vel')
+        binding = None
+        context_blocker = None
+        if context is None:
+            angular, payload, action = self.core.step(
+                now, self._raw_publisher is not None, raw_sources,
+                nav_sources, safety_sources, counts)
+        else:
+            odom_source_ok = self._sources('/odom') == [
+                ('/', 'serial_bridge_node', 'nav_msgs/msg/Odometry',
+                 ReliabilityPolicy.BEST_EFFORT)]
+            now = time.monotonic()  # Include graph-query time in freshness.
+            if self._raw_publisher is not None:
+                context_blocker = self._guard_owned_session(
+                    now, source_ok=counts['mission_source_ok'])
+                if not odom_source_ok or counts['odom'] != 1:
+                    lease.stop_latched = True
+                    self.core.odom_at = None
+                    self.core.request_session_stop('SESSION_CONTEXT_INVALID', now)
+                    context_blocker = 'ODOM_PUBLISHER_INVALID'
+            else:
+                handoff = self.core._input('handoff', now) or {}
+                proof = handoff.get('live_cancel_proof') or {}
+                if counts['mission_source_ok'] and odom_source_ok and counts['odom'] == 1:
+                    binding = context.bind(proof.get('goal_uuid'), now)
+            ready = odom_source_ok and counts['odom'] == 1 and lease.can_release(
+                now, odom_at=self.core.odom_at, cmd_at=self.core.cmd_at)
+            angular, payload, action = self.core.step(
+                now, self._raw_publisher is not None, raw_sources,
+                nav_sources, safety_sources, counts,
+                session_admission=binding is not None,
+                session_release_ready=ready, allow_rearm=False, defer_release=True)
         if action == 'CREATE':
+            if context is not None and (binding is None or
+                                        self.core.goal_uuid != binding.nav_goal_uuid):
+                raise RuntimeError('ALIGNMENT_SESSION_ACQUIRE_UNCONFIRMED')
             self._raw_publisher = self.create_publisher(
                 Twist, '/cmd_vel_raw', sensor_qos())
+            if lease is not None:
+                lease.created(binding, time.monotonic())
             self.get_logger().warning(
                 '[LIVE ALIGNMENT] acquired one-shot raw publisher; zero '
                 'until exclusive graph ownership is discovered')
         if self._raw_publisher is not None:
             command = Twist()
-            command.angular.z = angular
+            command.angular.z = 0.0 if action == 'RELEASE' else angular
             self._raw_publisher.publish(command)
+            if lease is not None:
+                lease.command_published(command.angular.z, time.monotonic())
         if action == 'RELEASE' and self._raw_publisher is not None:
-            self.destroy_publisher(self._raw_publisher)
+            checked_at = time.monotonic() if lease is not None else None
+            if lease is not None and not (
+                    lease.can_release(checked_at, odom_at=self.core.odom_at,
+                                      cmd_at=self.core.cmd_at) and
+                    self.core._stationary(checked_at) and self.core._cmd_zero(checked_at)):
+                # Core remains STOPPING in migration mode until effect succeeds.
+                self.core.zero_since = None
+                action = None
+                context_blocker = 'MOTION_RELEASE_EVIDENCE_STALE'
+        if action == 'RELEASE' and self._raw_publisher is not None:
+            if self.destroy_publisher(self._raw_publisher) is not True:
+                raise RuntimeError('RAW_PUBLISHER_RELEASE_UNCONFIRMED: alignment')
             self._raw_publisher = None
+            if lease is not None:
+                lease.released(checked_at=checked_at, released_at=time.monotonic(),
+                               odom_at=self.core.odom_at, cmd_at=self.core.cmd_at,
+                               stationary_since=self.core.zero_since)
+                self.core.phase = 'COMPLETE'
             self.get_logger().warning(
                 '[LIVE ALIGNMENT] zero/stationary hold complete; raw '
                 'publisher released and one-shot attempt finished')
+        if lease is not None:
+            payload['session_owner'] = lease.snapshot(
+                owned=self._raw_publisher is not None,
+                blocker=context_blocker if self._raw_publisher is not None else context.reason)
+        append_owner_observation(self, payload, report_stamp_ns,
+                                 publisher_owned=self._raw_publisher is not None)
         message = String()
         message.data = json.dumps(payload, separators=(',', ':'))
         self._state_publisher.publish(message)

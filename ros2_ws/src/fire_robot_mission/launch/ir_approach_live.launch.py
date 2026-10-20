@@ -14,6 +14,8 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_reverse_jog', default_value='false'),
         DeclareLaunchArgument('integrated_handoff', default_value='false'),
         DeclareLaunchArgument('continuous_approach', default_value='false'),
+        DeclareLaunchArgument('require_fire_session_context', default_value='false'),
+        DeclareLaunchArgument('enable_close_owner_observation', default_value='false'),
         DeclareLaunchArgument('speed_m_s', default_value='0.05'),
         DeclareLaunchArgument('max_total_approach_m', default_value='2.0'),
         Node(
@@ -37,6 +39,10 @@ def generate_launch_description():
                 'continuous_approach': ParameterValue(
                     LaunchConfiguration('continuous_approach'),
                     value_type=bool),
+                'require_fire_session_context': ParameterValue(
+                    LaunchConfiguration('require_fire_session_context'), value_type=bool),
+                'enable_close_owner_observation': ParameterValue(
+                    LaunchConfiguration('enable_close_owner_observation'), value_type=bool),
                 'speed_m_s': ParameterValue(
                     LaunchConfiguration('speed_m_s'), value_type=float),
                 'max_total_approach_m': ParameterValue(

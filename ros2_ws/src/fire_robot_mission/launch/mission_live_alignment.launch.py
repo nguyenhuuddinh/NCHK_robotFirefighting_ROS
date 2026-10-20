@@ -41,9 +41,15 @@ def generate_launch_description():
                 value_type=bool),
             'use_sim_time': ParameterValue(
                 LaunchConfiguration('use_sim_time'), value_type=bool),
+            'require_fire_session_context': ParameterValue(
+                LaunchConfiguration('require_fire_session_context'), value_type=bool),
+            'enable_close_owner_observation': ParameterValue(
+                LaunchConfiguration('enable_close_owner_observation'), value_type=bool),
         }],
     )
     return LaunchDescription([
         params_file, enabled, use_sim_time,
+        DeclareLaunchArgument('require_fire_session_context', default_value='false'),
+        DeclareLaunchArgument('enable_close_owner_observation', default_value='false'),
         OpaqueFunction(function=_validate_params), node,
     ])

@@ -93,6 +93,20 @@ def test_stale_high_arm_after_restart_is_not_permission():
     assert 'OPERATOR_ARM_MISSING_OR_STALE' not in core.blockers(1.2, COUNTS)
 
 
+def test_pruned_empty_nav_status_uses_fresh_exact_guard_but_no_active_goal():
+    core = ready_core()
+    core.update_statuses([], 1.0)
+    assert 'EXACT_CANCEL_PROOF_INVALID' not in core.blockers(1.0, COUNTS)
+    assert core.step(1.0, COUNTS)[0] is False
+    refresh(core, 1.5)
+    core.update_statuses([], 1.5)
+    assert core.step(1.5, COUNTS)[0] is True
+    core.update_statuses([('b' * 32, 2, 101, 0)], 1.6)
+    refresh(core, 1.6)
+    on, report = core.step(1.6, COUNTS)
+    assert on is False and report['state'] == 'ABORTED'
+
+
 def test_requires_stable_ready_then_one_bounded_pulse():
     core = ready_core()
     assert core.pulse_s == 5.0

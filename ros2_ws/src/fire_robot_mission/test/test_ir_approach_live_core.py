@@ -9,7 +9,7 @@ import pytest
 
 from fire_robot_mission.ir_approach_live_core import (
     IrApproachLiveCore, VerifiedEndpointPins, provisional_spray_candidate,
-    realign_candidate, target_reacquire_candidate,
+    realign_candidate, target_reacquire_candidate, vision_far_candidate,
     verified_raw_gate,
 )
 
@@ -97,6 +97,35 @@ def test_default_off_and_unvalidated_override_off_never_claims_raw():
         speed, state, action = core.step(0.2, COUNTS, False)
         assert speed == 0.0 and action is None
         assert state['state'] in ('DISABLED', 'WAITING_FOR_ADMISSION')
+
+
+def test_arm_telemetry_exposes_receipt_and_never_arms_on_true_only():
+    core = IrApproachLiveCore(enabled=True, allow_provisional_ir=True)
+    core.update_arm(True, 0.1)
+    _, state, action = core.step(0.2, dict(COUNTS, arm=1), False)
+    assert action is None
+    assert state['arm'] == {
+        'false_seen': False, 'cycle_seen': False,
+        'heartbeat_true': True, 'receive_fresh': True,
+        'receive_age_ms': 100.0, 'publisher_count': 1,
+    }
+    assert 'OPERATOR_ARM_MISSING_OR_STALE' in state['blockers']
+
+    core.update_arm(False, 0.3)
+    _, state, _ = core.step(0.31, dict(COUNTS, arm=1), False)
+    assert state['arm']['false_seen'] is True
+    assert state['arm']['cycle_seen'] is False
+    assert state['arm']['heartbeat_true'] is False
+
+    core.update_arm(True, 0.4)
+    _, state, _ = core.step(0.41, dict(COUNTS, arm=1), False)
+    assert state['arm']['cycle_seen'] is True
+    assert state['arm']['receive_fresh'] is True
+    assert 'OPERATOR_ARM_MISSING_OR_STALE' not in state['blockers']
+
+    _, state, _ = core.step(0.9, dict(COUNTS, arm=1), False)
+    assert state['arm']['receive_fresh'] is False
+    assert 'OPERATOR_ARM_MISSING_OR_STALE' in state['blockers']
 
 
 @pytest.mark.parametrize('band', ['SPRAY_RANGE', 'UNKNOWN'])
@@ -199,6 +228,65 @@ def continuous_core():
     core.update_arm(False, 0.0)
     core.update_arm(True, 0.1)
     return core
+
+
+def test_vision_far_requires_fresh_stable_baseline_and_stops_at_spray():
+    core = continuous_core()
+    far = centered_ir('NO_FLAME_SIGNATURE')
+    far['zone'] = 'UNKNOWN'
+    far['blockers'] = ['NO_IR_FLAME_SIGNATURE']
+    core.update('ir', far, 0.1)
+    assert core.step(0.2, integrated_counts(), False)[2] is None
+    refresh(core, 0.51)
+    core.update('ir', far, 0.51)
+    assert core.step(0.52, integrated_counts(), False)[2] == 'CREATE'
+    owned = integrated_counts(raw=1, raw_owned=True)
+    assert core.step(0.6, owned, True)[0] == 0.08
+    core.update('ir', confirmed_spray(), 0.7)
+    core.update('odom', odom(0.01, 0.08), 0.7)
+    core.update('cmd', (0.08, 0, 0, 0, 0, 0), 0.7)
+    speed, state, _ = core.step(0.71, owned, True)
+    assert speed == 0.0
+    assert state['state'] == 'STOPPING'
+
+
+def test_vision_far_rejects_stale_ir_or_uncentered_camera():
+    far = centered_ir('NO_FLAME_SIGNATURE')
+    far['zone'] = 'UNKNOWN'
+    far['blockers'] = ['NO_IR_FLAME_SIGNATURE']
+    assert vision_far_candidate(far)
+    assert not vision_far_candidate(dict(far, ir_receive_age_ms=390.0))
+    assert not vision_far_candidate(dict(far, stable_samples=2))
+    assert not vision_far_candidate(dict(
+        far, blockers=['NO_IR_FLAME_SIGNATURE', 'FIRE_NOT_CENTERED']))
+    assert not vision_far_candidate(dict(far, ir_band='UNKNOWN'))
+
+
+def test_zero_total_budget_only_removes_total_distance_cap():
+    core = IrApproachLiveCore(
+        enabled=True, allow_provisional_ir=True,
+        integrated_handoff=True, continuous_approach=True,
+        speed_m_s=0.08, max_total_approach_m=0.0)
+    assert math.isinf(core.max_total_approach)
+    assert core.continuous_distance == 0.30
+    with pytest.raises(ValueError):
+        IrApproachLiveCore(enabled=True, allow_provisional_ir=True,
+                           max_total_approach_m=0.0)
+
+
+def test_pre_spray_clear_retires_aborted_ir_only_when_stopped():
+    core = continuous_core()
+    core.phase = 'ABORTED'
+    core.goal_uuid = 'ab' * 16
+    core.stop_reason = 'IR_BAND_INVALID_OR_STALE'
+    core.update('odom', odom(), 1.0)
+    core.update('cmd', (0.0,) * 6, 1.0)
+    counts = integrated_counts(pre_spray_clear_uuid=core.goal_uuid,
+                               handoff_ok=False)
+    _, state, _ = core.step(1.01, counts, False)
+    assert state['state'] == 'WAITING_FOR_ADMISSION'
+    assert core.goal_uuid is None
+    assert 'ab' * 16 in core.used_goal_uuids
 
 
 def moving_continuous():
@@ -385,15 +473,16 @@ def test_fresh_ir_off_center_can_recenter_but_cannot_resume_forward():
         core.update('cmd', (0.0,) * 6, now)
         _, state, action = core.step(now + 0.01, owned, True)
     assert state['state'] == 'COMPLETE' and action == 'RELEASE'
-    core.update('ir', dict(ir(), ir_sample_seq=11), 1.5)
+    core.update('ir', dict(centered_ir(), ir_sample_seq=11), 1.5)
     assert core.step(1.51, integrated_counts(handoff_ok=False), False)[1][
         'recovery_ready'] is False
-    core.update('ir', dict(ir(), ir_sample_seq=12), 1.7)
+    core.update('ir', dict(centered_ir(), ir_sample_seq=12), 1.7)
     _, state, action = core.step(
         1.71, integrated_counts(handoff_ok=False), False)
     assert state['recovery_ready'] is True
     assert state['state'] == 'COMPLETE' and action is None
     # A valid IR-only band with an off-center vision zone cannot rearm wheels.
+    core.update('ir', dict(ir(), ir_sample_seq=13), 1.71)
     _, state, action = core.step(1.72, integrated_counts(), False)
     assert state['state'] == 'COMPLETE' and action is None
 
@@ -405,19 +494,19 @@ def test_two_new_ir_samples_are_not_enough_if_band_is_unstable():
     core.stop_reason = 'REALIGN_REQUIRED'
     core.sensor_recovery_active = True
     core.recovery_sample_seq = 10
-    unstable = dict(ir(), ir_sample_seq=12, stable_samples=2,
+    unstable = dict(centered_ir(), ir_sample_seq=12, stable_samples=2,
                     blockers=['IR_BAND_NOT_STABLE'])
     core.update('ir', unstable, 1.0)
     _, state, action = core.step(1.01, integrated_counts(), False)
     assert state['state'] == 'COMPLETE' and action is None
     assert state['recovery_ready'] is False
-    core.update('ir', dict(ir(), ir_sample_seq=13), 1.2)
+    core.update('ir', dict(centered_ir(), ir_sample_seq=13), 1.2)
     _, state, action = core.step(1.21, integrated_counts(
         handoff_ok=False), False)
     assert state['state'] == 'COMPLETE' and action is None
     assert state['recovery_ready'] is True
     _, state, action = core.step(1.22, integrated_counts(), False)
-    assert state['state'] == 'COMPLETE' and action is None
+    assert state['state'] == 'WAITING_FOR_ADMISSION' and action is None
 
 
 def test_ir_sample_counter_restart_needs_two_new_samples_in_new_epoch():
@@ -428,11 +517,11 @@ def test_ir_sample_counter_restart_needs_two_new_samples_in_new_epoch():
     core.sensor_recovery_active = True
     core.recovery_sample_seq = 10000
     for seq, now in ((1, 1.0), (2, 1.2)):
-        core.update('ir', dict(ir(), ir_sample_seq=seq), now)
+        core.update('ir', dict(centered_ir(), ir_sample_seq=seq), now)
         _, state, action = core.step(now + 0.01, integrated_counts(), False)
         assert state['state'] == 'COMPLETE' and action is None
         assert state['recovery_ready'] is False
-    core.update('ir', dict(ir(), ir_sample_seq=3), 1.4)
+    core.update('ir', dict(centered_ir(), ir_sample_seq=3), 1.4)
     _, state, action = core.step(1.41, integrated_counts(
         handoff_ok=False), False)
     assert state['recovery_ready'] is True

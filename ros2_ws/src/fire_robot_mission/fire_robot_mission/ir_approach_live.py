@@ -27,6 +27,11 @@ from fire_robot_mission.mission_supervisor import (
 from fire_robot_mission.nav2_cancel_guard import (
     ACTIVE_STATUSES, EXPECTED_SHADOW_PUBLISHERS, _valid_uuid,
 )
+from fire_robot_mission.motion_release import MotionReleaseProof
+from fire_robot_mission.close_owner_adapter import (
+    append_owner_observation, configure_owner_observation, start_owner_observation,
+)
+from fire_robot_mission.session_context import SessionContextGuard
 
 
 TOPICS = (
@@ -56,6 +61,7 @@ class IrApproachLiveNode(Node):
         self.declare_parameter('enable_reverse_jog', False)
         self.declare_parameter('integrated_handoff', False)
         self.declare_parameter('continuous_approach', False)
+        self.declare_parameter('require_fire_session_context', False)
         defaults = {
             'step_m': 0.05, 'speed_m_s': 0.05,
             'max_duration_s': 1.0, 'input_timeout_s': 0.35,
@@ -79,6 +85,20 @@ class IrApproachLiveNode(Node):
                 'continuous_approach').value,
             **{key: self.get_parameter(key).value for key in defaults},
         )
+        require_session = self.get_parameter('require_fire_session_context').value
+        if type(require_session) is not bool or (
+                require_session and (not self.core.integrated_handoff or
+                                     not math.isfinite(self.core.max_total_approach))):
+            raise ValueError('IR session context requires integrated handoff and bounded distance')
+        self._session_context = (SessionContextGuard(timeout_s=self.core.input_timeout)
+                                 if require_session and self.core.enabled else None)
+        self._motion_release = (MotionReleaseProof(
+            owner='ir_approach_live', timeout_s=self.core.input_timeout,
+            zero_hold_s=self.core.zero_hold)
+            if self._session_context is not None else None)
+        configure_owner_observation(
+            self, 'ir_approach_live', live_enabled=self.core.enabled,
+            context=self._session_context, timeout_s=self.core.input_timeout)
         self._endpoint_pins = VerifiedEndpointPins()
         self._raw_publisher = None
         self._proofs = {}
@@ -107,6 +127,11 @@ class IrApproachLiveNode(Node):
             self.create_subscription(
                 GoalStatusArray, '/navigate_to_pose/_action/status',
                 self._on_status, action_status_qos())
+        elif self._close_owner_context is not None:
+            # Non-integrated, disabled IR has no mission subscription to reuse.
+            self.create_subscription(
+                String, '/fire_mission/state',
+                lambda msg: self._on_proof('mission', msg), qos)
         self.create_timer(0.05, self._tick)
         self.get_logger().warning(
             'IR jog opt-in=%s, integrated=%s, continuous=%s, '
@@ -153,9 +178,57 @@ class IrApproachLiveNode(Node):
             payload = json.loads(msg.data)
         except (TypeError, ValueError):
             payload = None
+        context = getattr(self, '_session_context', None)
+        observed_context = context or getattr(self, '_close_owner_context', None)
+        if observed_context is not None and name == 'mission':
+            infos = self.get_publishers_info_by_topic('/fire_mission/state')
+            source_ok = len(infos) == 1 and self._exact_endpoint(
+                infos[0], 'fire_mission_supervisor', 'std_msgs/msg/String',
+                ReliabilityPolicy.BEST_EFFORT)
+            observed_context.update(payload, self.get_clock().now().nanoseconds,
+                                    time.monotonic(), source_ok=source_ok)
+            if context is not None and context.sample is None:
+                payload = None
         self._proofs[name] = (payload, time.monotonic())
+        if context is not None and name == 'mission' and self._raw_publisher is not None:
+            self._guard_owned_session(time.monotonic(), source_ok=source_ok)
         if name in ('review', 'actuator'):
             self.core.update(name, payload, time.monotonic())
+
+    def _guard_owned_session(self, now, *, source_ok):
+        lease = self._motion_release
+        if lease.binding is None:
+            raise RuntimeError('IR_SESSION_BINDING_MISSING')
+        blocker = ('SESSION_PUBLISHER_INVALID' if source_ok is not True else
+                   self._session_context.blocker_for(lease.binding, now))
+        first_close = False
+        if blocker == 'SESSION_CLOSE_REQUESTED':
+            first_close = lease.close_generation is None
+            if not lease.accept_close(self._session_context.current(now), now):
+                blocker = 'SESSION_CLOSE_CONTEXT_CHANGED'
+                first_close = False
+        if blocker is not None:
+            lease.stop_latched = True
+            self.core.request_session_stop(
+                'SESSION_CLOSE_REQUESTED' if blocker == 'SESSION_CLOSE_REQUESTED'
+                else 'SESSION_CONTEXT_INVALID', now, reset_hold=first_close)
+        return blocker
+
+    def _release_evidence(self, now, counts):
+        """Source checks from this tick plus fresh, post-zero stationary samples."""
+        core = self.core
+        odom, cmd = core._input('odom', now), core._input('cmd', now)
+        return bool(
+            counts.get('raw') == 1 and counts.get('raw_owned') is True and
+            counts.get('raw_gate') is True and counts.get('safety_owner') is True and
+            counts.get('odom') == counts.get('cmd') == 1 and
+            counts.get('odom_owner') is True and core._odom_valid(odom) and
+            all(abs(v) <= 0.02 for v in odom[1][:3]) and
+            all(abs(v) <= 0.05 for v in odom[1][3:]) and
+            core._zero_twist(cmd, 0.001) and core.zero_since is not None and
+            now - core.zero_since >= core.zero_hold and
+            self._motion_release.can_release(
+                now, odom_at=core.inputs['odom'][1], cmd_at=core.inputs['cmd'][1]))
 
     def _on_status(self, msg):
         self._statuses = tuple(
@@ -270,7 +343,6 @@ class IrApproachLiveNode(Node):
                 info.qos_profile.reliability == reliability)
 
     def _counts(self):
-        now = time.monotonic()
         ir = self.get_publishers_info_by_topic(
             '/fire_mission/ir_range_preview')
         scan = self.get_publishers_info_by_topic('/scan')
@@ -342,16 +414,6 @@ class IrApproachLiveNode(Node):
                            '/fire_mission/nav2_cmd_vel_shadow')]
             counts['nav_shadow_ok'] = (
                 Counter(sources) == EXPECTED_SHADOW_PUBLISHERS)
-            uuid, admission, runtime, range_ready = self._handoff_evidence(
-                now, counts)
-            counts.update(goal_uuid=uuid, handoff_ok=admission,
-                          runtime_ok=runtime, range_handoff_ok=range_ready)
-            mission = self._proof('mission', now) or {}
-            lifecycle = mission.get('lifecycle') or {}
-            counts['pre_spray_clear_uuid'] = (
-                lifecycle.get('pre_spray_clear_goal_uuid')
-                if counts.get('mission_source_ok') and
-                mission.get('state') == 'IDLE' else None)
             for key, topic, owner in (
                     ('review', '/fire_mission/post_spray_review',
                      'post_spray_review'),
@@ -362,6 +424,16 @@ class IrApproachLiveNode(Node):
                     len(infos) == 1 and self._exact_endpoint(
                         infos[0], owner, 'std_msgs/msg/String',
                         ReliabilityPolicy.BEST_EFFORT))
+            now = time.monotonic()  # Graph-query time counts toward proof age.
+            uuid, admission, runtime, range_ready = self._handoff_evidence(now, counts)
+            counts.update(goal_uuid=uuid, handoff_ok=admission,
+                          runtime_ok=runtime, range_handoff_ok=range_ready)
+            mission = self._proof('mission', now) or {}
+            lifecycle = mission.get('lifecycle') or {}
+            counts['pre_spray_clear_uuid'] = (
+                lifecycle.get('pre_spray_clear_goal_uuid')
+                if counts.get('mission_source_ok') and
+                mission.get('state') == 'IDLE' else None)
             guard = self._proof('guard', now) or {}
             counts['guard_owner_ack'] = (
                 guard.get('state') == 'IR_APPROACH_IN_PROGRESS' and
@@ -372,25 +444,96 @@ class IrApproachLiveNode(Node):
         return counts
 
     def _tick(self):
+        report_stamp_ns = start_owner_observation(self)
+        counts = self._counts()
         now = time.monotonic()
-        speed, payload, action = self.core.step(
-            now, self._counts(), self._raw_publisher is not None)
+        context = getattr(self, '_session_context', None)
+        lease = getattr(self, '_motion_release', None)
+        binding = None
+        blocker = None
+        if context is None:
+            speed, payload, action = self.core.step(
+                now, counts, self._raw_publisher is not None)
+        else:
+            if self._raw_publisher is not None:
+                blocker = self._guard_owned_session(
+                    now, source_ok=counts.get('mission_source_ok') is True)
+                if not (counts.get('odom') == counts.get('cmd') == 1 and
+                        counts.get('odom_owner') is True and
+                        counts.get('safety_owner') is True):
+                    self.core.update('odom', None, now)
+                    lease.stop_latched = True
+                    self.core.request_session_stop('SESSION_CONTEXT_INVALID', now, reset_hold=True)
+                    blocker = 'MOTION_SOURCE_INVALID'
+            elif counts.get('mission_source_ok') is True:
+                binding = context.bind(counts.get('goal_uuid'), now)
+            speed, payload, action = self.core.step(
+                now, counts, self._raw_publisher is not None,
+                session_admission=binding is not None,
+                session_release_ready=self._release_evidence(now, counts),
+                allow_rearm=False, defer_release=True)
         if action == 'CREATE':
+            if context is not None and (
+                    binding is None or self.core.goal_uuid != binding.nav_goal_uuid or
+                    context.blocker_for(binding, time.monotonic()) is not None):
+                raise RuntimeError('IR_SESSION_ACQUIRE_UNCONFIRMED')
             self._raw_publisher = self.create_publisher(
                 Twist, '/cmd_vel_raw', sensor_qos())
+            if lease is not None:
+                lease.created(binding, time.monotonic())
             self.get_logger().warning(
                 'IR jog claimed raw command topic; waiting for exclusive '
                 'publisher discovery before moving')
+        if lease is not None and speed != 0.0:
+            checked_at = time.monotonic()
+            blocker = self._guard_owned_session(
+                checked_at, source_ok=counts.get('mission_source_ok') is True)
+            _, _, runtime_ok, _ = self._handoff_evidence(checked_at, counts)
+            if (blocker is not None or not runtime_ok or
+                    any(self.core._input(key, checked_at) is None
+                        for key in ('ir', 'scan', 'odom', 'cmd')) or
+                    self.core.arm_at is None or not
+                    0 <= checked_at - self.core.arm_at <= self.core.arm_timeout):
+                lease.stop_latched = True
+                self.core.request_session_stop('SESSION_CONTEXT_INVALID', checked_at)
+                speed = 0.0
+                blocker = blocker or 'MOTION_INPUT_EXPIRED_BEFORE_PUBLISH'
+        published_speed = 0.0
         if self._raw_publisher is not None:
             command = Twist()
-            command.linear.x = float(speed) if math.isfinite(speed) else 0.0
+            command.linear.x = (
+                float(speed) if action != 'RELEASE' and math.isfinite(speed)
+                else 0.0)
             self._raw_publisher.publish(command)
+            published_speed = command.linear.x
+            if lease is not None:
+                lease.command_published(command.linear.x, time.monotonic())
+        if action == 'RELEASE' and self._raw_publisher is not None and lease is not None:
+            checked_at = time.monotonic()
+            if not self._release_evidence(checked_at, counts):
+                self.core.zero_since = None
+                action = None
+                blocker = 'MOTION_RELEASE_EVIDENCE_STALE'
         if action == 'RELEASE' and self._raw_publisher is not None:
-            self.destroy_publisher(self._raw_publisher)
+            if self.destroy_publisher(self._raw_publisher) is not True:
+                raise RuntimeError('RAW_PUBLISHER_RELEASE_UNCONFIRMED: ir_approach')
             self._raw_publisher = None
+            if lease is not None:
+                lease.released(
+                    checked_at=checked_at, released_at=time.monotonic(),
+                    odom_at=self.core.inputs['odom'][1], cmd_at=self.core.inputs['cmd'][1],
+                    stationary_since=self.core.zero_since)
+                self.core.publisher_released(account_abort=True)
             self.get_logger().warning(
                 'IR jog finished: %s; raw owner released' %
                 self.core.stop_reason)
+        if lease is not None:
+            payload['command']['linear_x_m_s'] = round(published_speed, 4)
+            payload['session_owner'] = lease.snapshot(
+                owned=self._raw_publisher is not None,
+                blocker=blocker if self._raw_publisher is not None else context.reason)
+        append_owner_observation(self, payload, report_stamp_ns,
+                                 publisher_owned=self._raw_publisher is not None)
         state = String()
         state.data = json.dumps(payload, separators=(',', ':'),
                                 allow_nan=False)

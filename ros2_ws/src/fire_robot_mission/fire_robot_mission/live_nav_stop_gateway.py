@@ -30,6 +30,11 @@ from fire_robot_mission.nav2_cancel_guard import (
     ACTIVE_STATUSES, EXPECTED_SHADOW_PUBLISHERS, _valid_uuid,
 )
 from fire_robot_mission.pump_demo_core import POSSIBLE_EARLY_EXTINGUISH
+from fire_robot_mission.motion_release import MotionReleaseProof
+from fire_robot_mission.session_context import SessionContextGuard
+from fire_robot_mission.close_owner_adapter import (
+    append_owner_observation, configure_owner_observation, start_owner_observation,
+)
 
 
 RAW_ENDPOINT = Counter({
@@ -43,6 +48,18 @@ SAFETY_ENDPOINT = Counter({
 ACTUATOR_ENDPOINT = Counter({
     ('/', 'serial_bridge_node', 'std_msgs/msg/String',
      ReliabilityPolicy.BEST_EFFORT): 1,
+})
+MISSION_ENDPOINT = Counter({
+    ('/', 'fire_mission_supervisor', 'std_msgs/msg/String',
+     ReliabilityPolicy.BEST_EFFORT): 1,
+})
+ODOM_ENDPOINT = Counter({
+    ('/', 'serial_bridge_node', 'nav_msgs/msg/Odometry',
+     ReliabilityPolicy.BEST_EFFORT): 1,
+})
+STATUS_ENDPOINT = Counter({
+    ('/', 'bt_navigator', 'action_msgs/msg/GoalStatusArray',
+     ReliabilityPolicy.RELIABLE): 1,
 })
 ACTUATOR_MAX_SOURCE_AGE_S = 0.5
 FIRE_STATES = {'FIRE_TRACKING', 'CENTERED_HOLD', 'ALIGNMENT_READY',
@@ -399,6 +416,14 @@ class LiveNavStopCore:
         self.released = True
         self.publisher_created_at = None
 
+    def request_navigation_stop(self, reason, *, reset_hold=False):
+        """Latch an owner stop; never rebind its goal or reset cycle history."""
+        self.stop_latched = True
+        if not self.stop_reason:
+            self.stop_reason = reason
+        if reset_hold:
+            self.stop_since = None
+
     def _stationary(self, now):
         fresh = _fresh(self.odom_at, now, self.odom_timeout)
         values = self.odom
@@ -552,6 +577,7 @@ class LiveNavStopCore:
                 guard.get('enabled') is True and
                 guard.get('send_count') == 1 and
                 _valid_uuid(guard.get('goal_uuid')) and
+                guard.get('goal_uuid') == self.goal_uuid and
                 guard.get('cancel_service_accepted') is True and
                 guard.get('cancel_status_seen') is True and
                 guard.get('goal_status') == 5 and
@@ -575,7 +601,9 @@ class LiveNavStopCore:
                  cmd_sources, status_publishers, mission_publishers=0,
                  odom_publishers=0, arm_publishers=0,
                  guard_publishers=0, pump_publishers=0,
-                 actuator_sources=()):
+                 actuator_sources=(), *, session_admission=True,
+                 session_release_ready=True, allow_rearm=True,
+                 defer_release=False):
         """Return (Twist planar pair, state JSON, CREATE/RELEASE/None)."""
         now = float(now)
         raw_count = len(raw_sources)
@@ -603,6 +631,8 @@ class LiveNavStopCore:
             now, nav_ok, safety_ok, status_publishers,
             mission_publishers, odom_publishers, arm_publishers,
             odom_fresh)
+        if not session_admission and not publisher_owned:
+            blockers.append('NAVIGATION_SESSION_ADMISSION_BLOCKED')
         if self.goal_uuid is not None and active_goal is not None and \
                 active_goal != self.goal_uuid and not self.released:
             blockers.append('NAV_GOAL_UUID_CHANGED')
@@ -632,7 +662,7 @@ class LiveNavStopCore:
             rearm_blockers = self._next_goal_blockers(
                 now, stationary, cmd_zero, raw_count, pump_publishers,
                 guard_publishers, actuator_ok, clear_ready)
-            rearmed = self._rearm_if_new_goal(
+            rearmed = allow_rearm and self._rearm_if_new_goal(
                 now, stationary, cmd_zero, raw_count, pump_publishers,
                 guard_publishers, clear_ready, actuator_ok)
             if rearmed:
@@ -669,9 +699,10 @@ class LiveNavStopCore:
                         self.stop_since = now
                 else:
                     self.stop_since = None
-                if not publisher_owned or (self.stop_since is not None and
-                                           now - self.stop_since >=
-                                           self.stationary_hold):
+                if ((not publisher_owned and not defer_release) or
+                        (publisher_owned and session_release_ready and
+                         self.stop_since is not None and
+                         now - self.stop_since >= self.stationary_hold)):
                     action = 'RELEASE' if publisher_owned else None
                     state = 'RELEASING'
                     if not publisher_owned:
@@ -765,6 +796,7 @@ class LiveNavStopGateway(Node):
                 raise ValueError(
                     f'live gateway forbids remapping {topic}')
         self.declare_parameter('enable_live_output', False)
+        self.declare_parameter('require_fire_session_context', False)
         self.declare_parameter('publish_rate_hz', 20.0)
         defaults = {
             'mission_timeout_s': 0.35, 'nav_timeout_s': 0.35,
@@ -788,6 +820,30 @@ class LiveNavStopGateway(Node):
         self.core = LiveNavStopCore(
             enabled=enabled,
             **{name: self.get_parameter(name).value for name in defaults})
+        require_session = self.get_parameter('require_fire_session_context').value
+        if type(require_session) is not bool:
+            raise ValueError('require_fire_session_context must be a boolean')
+        if require_session:
+            # Migration cannot relax the reviewed freshness/stop/speed limits.
+            limits = {
+                'mission_timeout': 0.35, 'nav_timeout': 0.35,
+                'odom_timeout': 0.35, 'guard_timeout': 0.35,
+                'arm_timeout': 0.40, 'discovery_timeout': 0.75,
+                'stationary_linear': 0.02, 'stationary_angular': 0.05,
+                'command_zero_epsilon': 0.001,
+                'max_nav_linear': 0.10, 'max_nav_angular': 0.8,
+            }
+            if (self.core.stationary_hold < 0.5 or
+                    any(getattr(self.core, key) > limit for key, limit in limits.items())):
+                raise ValueError('navigation session mode must retain reviewed safety limits')
+        self._session_context = (SessionContextGuard(timeout_s=self.core.mission_timeout)
+                                 if require_session and enabled else None)
+        self._motion_release = (MotionReleaseProof(
+            timeout_s=self.core.odom_timeout, zero_hold_s=self.core.stationary_hold,
+            owner='live_nav_stop_gateway') if self._session_context is not None else None)
+        configure_owner_observation(
+            self, 'live_nav_stop_gateway', live_enabled=self.core.enabled,
+            context=self._session_context, timeout_s=self.core.mission_timeout)
         self._raw_publisher = None
         qos = sensor_qos()
         self._state_publisher = self.create_publisher(
@@ -832,7 +888,18 @@ class LiveNavStopGateway(Node):
             payload = json.loads(message.data)
         except (TypeError, ValueError):
             payload = None
+        context = getattr(self, '_session_context', None)
+        observed_context = context or getattr(self, '_close_owner_context', None)
+        if observed_context is not None:
+            source_ok = Counter(self._sources('/fire_mission/state')) == MISSION_ENDPOINT
+            observed_context.update(payload, self.get_clock().now().nanoseconds,
+                                    time.monotonic(), source_ok=source_ok)
+            if context is not None and context.sample is None:
+                payload = None
         self.core.update_mission(payload, time.monotonic())
+        if context is not None and self._raw_publisher is not None:
+            # A bad report followed by a good one before the timer still stops.
+            self._guard_owned_navigation(time.monotonic(), source_ok=source_ok)
 
     def _on_nav(self, message):
         self.core.update_nav(self._values(message), time.monotonic())
@@ -858,9 +925,26 @@ class LiveNavStopGateway(Node):
         self.core.update_guard(payload, time.monotonic())
 
     def _on_status(self, message):
+        if (getattr(self, '_session_context', None) is not None and
+                Counter(self._sources('/navigate_to_pose/_action/status')) != STATUS_ENDPOINT):
+            self.core.update_statuses([], time.monotonic())
+            self.core.normal_terminal_uuid = self.core.normal_terminal_status = None
+            if self._raw_publisher is not None:
+                self._motion_release.stop_latched = True
+                self.core.request_navigation_stop('NAV_STATUS_SOURCE_INVALID')
+            return
         self.core.update_statuses([
             (bytes(item.goal_info.goal_id.uuid).hex(), item.status)
             for item in message.status_list], time.monotonic())
+        if (getattr(self, '_session_context', None) is not None and
+                self._raw_publisher is not None and
+                self.core._active_goal(time.monotonic()) != self._motion_release.binding.nav_goal_uuid):
+            normal_done = (not self.core.fire_latched and
+                           self.core.normal_terminal_uuid == self.core.goal_uuid and
+                           self.core.normal_terminal_status in (4, 5, 6))
+            self._motion_release.stop_latched = True
+            self.core.request_navigation_stop(
+                'NAV_GOAL_TERMINAL_NO_FIRE' if normal_done else 'NAV_GOAL_CONTEXT_CHANGED')
 
     @staticmethod
     def _json_payload(message):
@@ -890,41 +974,236 @@ class LiveNavStopGateway(Node):
                 for info in self.get_publishers_info_by_topic(topic)]
 
     def _tick(self):
+        report_stamp_ns = start_owner_observation(self)
+        # Gather topology first: its latency must count toward input age.
+        raw_sources = self._sources('/cmd_vel_raw')
+        nav_sources = self._sources('/fire_mission/nav2_cmd_vel_shadow')
+        cmd_sources = self._sources('/cmd_vel')
+        session_sources = None
+        if getattr(self, '_session_context', None) is not None:
+            # The exact endpoint lists also supply their real cardinalities;
+            # do not query the same three topics again just to count them.
+            session_sources = (
+                self._sources('/navigate_to_pose/_action/status'),
+                self._sources('/fire_mission/state'), self._sources('/odom'))
+            status_count, mission_count, odom_count = map(len, session_sources)
+        else:
+            status_count = self.count_publishers('/navigate_to_pose/_action/status')
+            mission_count = self.count_publishers('/fire_mission/state')
+            odom_count = self.count_publishers('/odom')
+        arm_count = self.count_publishers('/fire_mission/live_nav_arm')
+        guard_count = self.count_publishers('/fire_mission/nav2_cancel_guard_state')
+        pump_count = self.count_publishers('/pump_cmd')
+        actuator_sources = self._sources('/fire_sensors/actuator_state')
+        if session_sources is not None:
+            self._tick_navigation_session(
+                raw_sources, nav_sources, cmd_sources, status_count,
+                mission_count, odom_count, arm_count, guard_count,
+                pump_count, actuator_sources, session_sources,
+                report_stamp_ns=report_stamp_ns)
+            return
         now = time.monotonic()
         linear, angular, payload, action = self.core.evaluate(
             now, self._raw_publisher is not None,
-            self._sources('/cmd_vel_raw'),
-            self._sources('/fire_mission/nav2_cmd_vel_shadow'),
-            self._sources('/cmd_vel'),
-            self.count_publishers('/navigate_to_pose/_action/status'),
-            self.count_publishers('/fire_mission/state'),
-            self.count_publishers('/odom'),
-            self.count_publishers('/fire_mission/live_nav_arm'),
-            self.count_publishers(
-                '/fire_mission/nav2_cancel_guard_state'),
-            self.count_publishers('/pump_cmd'),
-            self._sources('/fire_sensors/actuator_state'))
+            raw_sources, nav_sources, cmd_sources, status_count,
+            mission_count, odom_count, arm_count, guard_count,
+            pump_count, actuator_sources)
         if action == 'CREATE':
-            self._raw_publisher = self.create_publisher(
-                Twist, '/cmd_vel_raw', sensor_qos())
-            self.core.publisher_created(now)
+            self._raw_publisher = LiveNavStopGateway._create_raw_publisher(self)
+            self.core.publisher_created(time.monotonic())
             self.get_logger().warning(
                 '[LIVE NAV GATEWAY] acquired raw publisher; zero until '
                 'exclusive ROS graph ownership is visible')
         if self._raw_publisher is not None:
             command = Twist()
-            command.linear.x = linear
-            command.angular.z = angular
+            command.linear.x = 0.0 if action == 'RELEASE' else linear
+            command.angular.z = 0.0 if action == 'RELEASE' else angular
             self._raw_publisher.publish(command)
         if action == 'RELEASE' and self._raw_publisher is not None:
-            self.destroy_publisher(self._raw_publisher)
+            if self.destroy_publisher(self._raw_publisher) is not True:
+                # Fail the callback instead of publishing a false release
+                # proof. No later spin tick may resume this command owner.
+                raise RuntimeError('RAW_PUBLISHER_RELEASE_UNCONFIRMED: gateway')
             self._raw_publisher = None
             self.core.publisher_released()
             self.get_logger().warning(
                 '[LIVE NAV GATEWAY] raw publisher released after STOP; '
                 'new goal requires completed cycle and safe clear proof')
+        append_owner_observation(self, payload, report_stamp_ns,
+                                 publisher_owned=self._raw_publisher is not None)
         state = String()
         state.data = json.dumps(payload, separators=(',', ':'))
+        self._state_publisher.publish(state)
+
+    def _create_raw_publisher(self):
+        """Single creation site shared by the mutually exclusive runtime modes."""
+        return self.create_publisher(Twist, '/cmd_vel_raw', sensor_qos())
+
+    def _guard_owned_navigation(self, now, *, source_ok):
+        """Link the first fire to an existing real-goal lease, only to stop it."""
+        lease, context = self._motion_release, self._session_context
+        navigation = lease.binding
+        if navigation is None:
+            raise RuntimeError('NAVIGATION_OWNER_BINDING_MISSING')
+        observer = context.current(now)
+        blocker, reset_hold = None, False
+        if not source_ok:
+            blocker = 'SESSION_PUBLISHER_INVALID'
+        elif observer is None:
+            blocker = context.reason
+        elif (self.core.goal_uuid != navigation.nav_goal_uuid or
+              observer['source']['instance_id'] != navigation.source_instance_id):
+            blocker = 'NAVIGATION_SESSION_MISMATCH'
+        elif observer['phase'] == 'IDLE':
+            if lease.fire_binding is not None:
+                blocker = 'SESSION_BINDING_CHANGED'
+        else:
+            binding = context.bind_fire_for_navigation(navigation, now)
+            first_fire = lease.fire_binding is None
+            if binding is None or not lease.associate_fire(binding, now):
+                blocker = 'NAVIGATION_SESSION_MISMATCH'
+            else:
+                self.core.fire_latched = True
+                reset_hold = first_fire
+                blocker = 'FIRE_ACQUIRED'
+                if observer['phase'] == 'STOPPING':
+                    first_close = lease.close_generation is None
+                    if lease.accept_close(observer, now):
+                        reset_hold = reset_hold or first_close
+                        blocker = 'SESSION_CLOSE_REQUESTED'
+                    else:
+                        blocker = 'SESSION_CLOSE_CONTEXT_CHANGED'
+        if blocker is not None:
+            lease.stop_latched = True
+            self.core.request_navigation_stop(blocker, reset_hold=reset_hold)
+        return blocker
+
+    def _navigation_inputs_ok(self, now, graph):
+        """Recheck ages after computation using this tick's graph snapshot."""
+        return bool(
+            graph['mission_ok'] and graph['odom_ok'] and graph['status_ok'] and
+            self.core._active_goal(now) == self.core.goal_uuid and
+            not self.core._nav_eligible(
+                now, graph['nav_ok'], graph['safety_ok'], graph['status_count'],
+                graph['mission_count'], graph['odom_count'], graph['arm_count'],
+                self.core._stationary(now)[0]))
+
+    def _navigation_release_evidence(self, now, graph):
+        core = self.core
+        return bool(
+            graph['raw_ok'] and graph['safety_ok'] and graph['odom_ok'] and
+            graph['odom_count'] == 1 and core._stationary(now)[1] and
+            core._cmd_zero(now, True) and core.stop_since is not None and
+            now - core.stop_since >= core.stationary_hold and
+            self._motion_release.can_release(now, odom_at=core.odom_at,
+                                             cmd_at=core.cmd_at))
+
+    def _tick_navigation_session(self, raw, nav, cmd, status_count, mission_count,
+                                 odom_count, arm_count, guard_count, pump_count,
+                                 actuator, session_sources, *, report_stamp_ns=None):
+        # No new timer/subscription/ROS-clock read; reuse this tick's lists.
+        status_sources, mission_sources, odom_sources = session_sources
+        graph = {
+            'mission_ok': Counter(mission_sources) == MISSION_ENDPOINT,
+            'odom_ok': Counter(odom_sources) == ODOM_ENDPOINT,
+            'status_ok': Counter(status_sources) == STATUS_ENDPOINT,
+            'raw_ok': Counter(raw) == RAW_ENDPOINT,
+            'nav_ok': Counter(nav) == EXPECTED_SHADOW_PUBLISHERS,
+            'safety_ok': Counter(cmd) == SAFETY_ENDPOINT,
+            'status_count': status_count, 'mission_count': mission_count,
+            'odom_count': odom_count, 'arm_count': arm_count,
+        }
+        now = time.monotonic()
+        context, lease = self._session_context, self._motion_release
+        owned = self._raw_publisher is not None
+        binding, blocker = None, None
+        if owned:
+            blocker = self._guard_owned_navigation(now, source_ok=graph['mission_ok'])
+            discovery = (not raw and not self.core.ever_forwarded and
+                         self.core.publisher_created_at is not None and
+                         0 <= now - self.core.publisher_created_at < self.core.discovery_timeout)
+            if (not graph['odom_ok'] or not graph['safety_ok'] or odom_count != 1 or
+                    (not graph['raw_ok'] and not discovery) or not graph['status_ok']):
+                lease.stop_latched = True
+                self.core.request_navigation_stop('MOTION_SOURCE_INVALID', reset_hold=True)
+                if not graph['odom_ok'] or odom_count != 1:
+                    self.core.odom = self.core.odom_at = None
+                blocker = 'MOTION_SOURCE_INVALID'
+        elif lease.binding is None and graph['mission_ok'] and graph['status_ok']:
+            binding = context.bind_navigation(self.core._active_goal(now), now)
+        linear, angular, payload, action = self.core.evaluate(
+            now, owned, raw, nav, cmd, status_count, mission_count, odom_count,
+            arm_count, guard_count, pump_count, actuator,
+            session_admission=binding is not None and graph['odom_ok'],
+            session_release_ready=self._navigation_release_evidence(now, graph),
+            allow_rearm=False, defer_release=True)
+        if self.core.stop_latched:
+            lease.stop_latched = True
+        if action == 'CREATE':
+            checked_at = time.monotonic()
+            if (binding is None or self.core.stop_latched or self.core.released or raw or
+                    binding.nav_goal_uuid != self.core.goal_uuid or
+                    context.bind_navigation(self.core.goal_uuid, checked_at) != binding or
+                    not self._navigation_inputs_ok(checked_at, graph)):
+                raise RuntimeError('NAVIGATION_SESSION_ACQUIRE_UNCONFIRMED')
+            self._raw_publisher = LiveNavStopGateway._create_raw_publisher(self)
+            created_at = time.monotonic()
+            lease.created(binding, created_at)
+            self.core.publisher_created(created_at)
+            self.get_logger().warning('[LIVE NAV GATEWAY] navigation lease acquired; first command zero')
+        if linear != 0.0 or angular != 0.0:
+            checked_at = time.monotonic()
+            blocker = self._guard_owned_navigation(checked_at, source_ok=graph['mission_ok'])
+            if (lease.stop_latched or self.core.stop_latched or not graph['raw_ok'] or
+                    blocker is not None or
+                    not self._navigation_inputs_ok(checked_at, graph)):
+                lease.stop_latched = True
+                self.core.request_navigation_stop('NAVIGATION_INPUT_EXPIRED_BEFORE_PUBLISH')
+                linear = angular = 0.0
+                blocker = blocker or 'NAVIGATION_INPUT_EXPIRED_BEFORE_PUBLISH'
+        published_linear = published_angular = 0.0
+        if self._raw_publisher is not None:
+            command = Twist()
+            command.linear.x = 0.0 if action == 'RELEASE' else linear
+            command.angular.z = 0.0 if action == 'RELEASE' else angular
+            self._raw_publisher.publish(command)
+            published_linear, published_angular = command.linear.x, command.angular.z
+            lease.twist_published(self._values(command), time.monotonic())
+        if action == 'RELEASE' and self._raw_publisher is not None:
+            checked_at = time.monotonic()
+            if not self._navigation_release_evidence(checked_at, graph):
+                self.core.stop_since = None
+                action = None
+                blocker = 'NAVIGATION_RELEASE_EVIDENCE_STALE'
+            else:
+                if self.destroy_publisher(self._raw_publisher) is not True:
+                    raise RuntimeError('RAW_PUBLISHER_RELEASE_UNCONFIRMED: gateway')
+                self._raw_publisher = None
+                lease.released(
+                    checked_at=checked_at, released_at=time.monotonic(),
+                    odom_at=self.core.odom_at, cmd_at=self.core.cmd_at,
+                    stationary_since=self.core.stop_since)
+                self.core.publisher_released()
+                self.get_logger().warning('[LIVE NAV GATEWAY] navigation lease released after STOP')
+        # This migration emits owner evidence only. Collector/recovery must
+        # validate it before enabling handoff, next-goal or finish_close.
+        payload['released'] = self.core.released
+        payload['stop_reason'] = self.core.stop_reason
+        payload['fire_latched'] = self.core.fire_latched
+        payload['handoff_ready'] = payload['next_goal_clear_ready'] = False
+        payload['rearm_blockers'] = ['SESSION_RECOVERY_NOT_INTEGRATED']
+        payload['safety']['raw_command_publisher'] = self._raw_publisher is not None
+        payload['command'] = {'linear_x_m_s': published_linear,
+                              'angular_z_rad_s': published_angular}
+        if self.core.stop_latched or lease.stop_latched:
+            payload['state'] = 'RELEASED_STOPPED' if self.core.released else 'STOPPING'
+            payload['safety']['fail_closed_zero'] = True
+        payload['session_owner'] = lease.snapshot(
+            owned=self._raw_publisher is not None, blocker=blocker or context.reason)
+        append_owner_observation(self, payload, report_stamp_ns,
+                                 publisher_owned=self._raw_publisher is not None)
+        state = String()
+        state.data = json.dumps(payload, separators=(',', ':'), allow_nan=False)
         self._state_publisher.publish(state)
 
     def destroy_node(self):

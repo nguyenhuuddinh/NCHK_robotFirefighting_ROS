@@ -92,9 +92,14 @@ def test_first_acquisition_needs_two_fresh_confirmed_observations():
     core = MissionSupervisorCore()
     refresh_target(core, 0.0)
     assert core.evaluate(0.0)['state'] == 'FIRE_CANDIDATE'
-    assert core.evaluate(0.5)['state'] == 'FIRE_CANDIDATE'
+    # A timer cannot count one old image as fresh acquisition evidence.
+    expired = core.evaluate(0.5)
+    assert expired['state'] == 'FAULT'
+    assert 'SOURCE_TIMESTAMP_STALE' in expired['health']['blockers']
     refresh_target(core, 0.51)
-    assert core.evaluate(0.51)['state'] == 'FIRE_TRACKING'
+    assert core.evaluate(0.51)['state'] == 'FIRE_CANDIDATE'
+    refresh_target(core, 1.02)
+    assert core.evaluate(1.02)['state'] == 'FIRE_TRACKING'
 
 
 def test_center_requires_a_second_hold_before_alignment_ready():
@@ -132,6 +137,172 @@ def test_target_loss_requests_safe_stop_immediately_after_acquire():
     assert result['state'] == 'TARGET_LOST'
     assert result['decision']['intent'] == 'REQUEST_SAFE_STOP'
     assert result['decision']['command_published'] is False
+
+
+def test_pre_spray_extinguished_fire_clears_only_with_ir_and_pump_off():
+    core = MissionSupervisorCore(fire_acquire_hold_s=0.5,
+                                 pre_spray_clear_hold_s=1.5)
+    core.update_goal_statuses([(GOAL_UUID, 2)], 0.0)
+    refresh_target(core, 0.0)
+    core.evaluate(0.0)
+    refresh_target(core, 0.6)
+    assert core.evaluate(0.6)['state'] == 'FIRE_TRACKING'
+    core.update_goal_statuses([(GOAL_UUID, 5)], 0.7)
+    no_flame_ir = {
+        'schema_version': 1, 'mode': 'OBSERVE_ONLY',
+        'observe_only': True, 'zone': 'UNKNOWN',
+        'ir_band': 'NO_FLAME_SIGNATURE', 'stable_samples': 5,
+        'ir_receive_age_ms': 20.0,
+        'blockers': ['NO_IR_FLAME_SIGNATURE', 'FIRE_NOT_CONFIRMED'],
+    }
+    off = {
+        'schema_version': 1, 'mode': 'COMMAND_TELEMETRY_ONLY',
+        'pump_pwm_commanded_on': False,
+        'servo_pwm_commanded_on': False, 'servo_phase': 'IDLE',
+    }
+    for now in (0.7, 1.5):
+        core.update_detection(detection(False, False), now)
+        core.update_alignment(alignment('NO_TARGET', 'STOP', 0.0), now)
+        core.update_odom(0.0, 0.0, now)
+        core.update_ir(no_flame_ir, now)
+        core.update_actuator(off, now)
+        assert core.evaluate(now)['state'] == 'TARGET_LOST'
+    now = 2.3
+    core.update_detection(detection(False, False), now)
+    core.update_alignment(alignment('NO_TARGET', 'STOP', 0.0), now)
+    core.update_odom(0.0, 0.0, now)
+    core.update_ir(no_flame_ir, now)
+    core.update_actuator(off, now)
+    cleared = core.evaluate(now)
+    assert cleared['state'] == 'IDLE'
+    assert cleared['lifecycle']['pre_spray_clear_goal_uuid'] == GOAL_UUID
+    # The next Nav2 goal can arrive before the gateway receives IDLE.
+    core.update_goal_statuses([('cd' * 16, 2)], 2.4)
+    core.update_detection(detection(False, False), 2.4)
+    navigating = core.evaluate(2.4)
+    assert navigating['state'] == 'NAV2_NAVIGATING'
+    assert navigating['lifecycle']['pre_spray_clear_goal_uuid'] == GOAL_UUID
+
+
+def test_pre_spray_clear_survives_slow_off_telemetry_but_needs_fresh_end():
+    core = MissionSupervisorCore(pre_spray_clear_hold_s=1.5)
+    core._ever_acquired = True
+    core._acquired_goal_uuid = GOAL_UUID
+    core._acquired_goal_canceled = True
+    core.update_goal_statuses([(GOAL_UUID, 5)], 0.0)
+    ir = {'schema_version': 1, 'mode': 'OBSERVE_ONLY',
+          'observe_only': True, 'zone': 'UNKNOWN',
+          'ir_band': 'NO_FLAME_SIGNATURE', 'stable_samples': 5,
+          'ir_receive_age_ms': 20.0,
+          'blockers': ['NO_IR_FLAME_SIGNATURE']}
+    off = {'schema_version': 1, 'mode': 'COMMAND_TELEMETRY_ONLY',
+           'pump_pwm_commanded_on': False,
+           'servo_pwm_commanded_on': False, 'servo_phase': 'IDLE'}
+    for tick in range(36):
+        now = round(tick * 0.05, 6)
+        core.update_detection(detection(False, False), now)
+        core.update_alignment(alignment('NO_TARGET', 'STOP', 0.0), now)
+        core.update_odom(0.0, 0.0, now)
+        core.update_ir(ir, now)
+        # A 0.6 s publisher cadence, then one missed sample at 1.2 s.
+        if tick in (0, 12):
+            core.update_actuator(off, now)
+        state = core.evaluate(now)['state']
+        if now < 1.8:
+            assert state == 'TARGET_LOST'
+    assert core._pre_spray_clear_since == 0.0
+    # The old OFF sample cannot finish a hold after its freshness expires.
+    assert core.evaluate(1.80)['state'] == 'TARGET_LOST'
+    core.update_actuator(off, 1.81)
+    result = core.evaluate(1.81)
+    assert result['state'] == 'IDLE'
+    assert result['lifecycle']['pre_spray_clear_goal_uuid'] == GOAL_UUID
+
+
+@pytest.mark.parametrize('bad_fields', [
+    {'pump_pwm_commanded_on': True},
+    {'mode': 'UNKNOWN'},
+])
+def test_pre_spray_clear_fresh_bad_report_restarts_hold(bad_fields):
+    core = MissionSupervisorCore(pre_spray_clear_hold_s=1.5)
+    core._ever_acquired = True
+    core._acquired_goal_uuid = GOAL_UUID
+    core._acquired_goal_canceled = True
+    core.update_goal_statuses([(GOAL_UUID, 5)], 0.0)
+    ir = {'schema_version': 1, 'mode': 'OBSERVE_ONLY',
+          'observe_only': True, 'zone': 'UNKNOWN',
+          'ir_band': 'NO_FLAME_SIGNATURE', 'stable_samples': 5,
+          'ir_receive_age_ms': 20.0,
+          'blockers': ['NO_IR_FLAME_SIGNATURE']}
+    off = {'schema_version': 1, 'mode': 'COMMAND_TELEMETRY_ONLY',
+           'pump_pwm_commanded_on': False,
+           'servo_pwm_commanded_on': False, 'servo_phase': 'IDLE'}
+    for now, actuator in ((0.0, off), (0.6, off),
+                          (1.2, {**off, **bad_fields}),
+                          (1.8, off), (2.4, off), (3.31, off)):
+        core.update_detection(detection(False, False), now)
+        core.update_alignment(alignment('NO_TARGET', 'STOP', 0.0), now)
+        core.update_odom(0.0, 0.0, now)
+        core.update_ir(ir, now)
+        core.update_actuator(actuator, now)
+        result = core.evaluate(now)
+        if now < 3.31:
+            assert result['state'] == 'TARGET_LOST'
+    assert result['state'] == 'IDLE'
+
+
+def test_pre_spray_clear_rejected_if_pump_has_started():
+    core = MissionSupervisorCore()
+    core._ever_acquired = True
+    core._acquired_goal_uuid = GOAL_UUID
+    core._acquired_goal_canceled = True
+    core.update_goal_statuses([(GOAL_UUID, 5)], 1.0)
+    core.update_pump({'state': 'FIRING', 'pump_on': True,
+                      'goal_uuid': GOAL_UUID}, 1.0)
+    core.update_detection(detection(False, False), 1.0)
+    core.update_alignment(alignment('NO_TARGET', 'STOP', 0.0), 1.0)
+    core.update_odom(0.0, 0.0, 1.0)
+    core.update_ir({'schema_version': 1, 'mode': 'OBSERVE_ONLY',
+                    'observe_only': True, 'zone': 'UNKNOWN',
+                    'ir_band': 'NO_FLAME_SIGNATURE', 'stable_samples': 5,
+                    'ir_receive_age_ms': 20.0,
+                    'blockers': ['NO_IR_FLAME_SIGNATURE']}, 1.0)
+    core.update_actuator({'schema_version': 1,
+                          'mode': 'COMMAND_TELEMETRY_ONLY',
+                          'pump_pwm_commanded_on': False,
+                          'servo_pwm_commanded_on': False,
+                          'servo_phase': 'IDLE'}, 1.0)
+    assert core.evaluate(1.0)['state'] == 'TARGET_LOST'
+    assert core._pre_spray_clear_since is None
+
+
+def test_pre_spray_clear_rejected_while_pump_publisher_exists():
+    core = MissionSupervisorCore()
+    core._ever_acquired = True
+    core._acquired_goal_uuid = GOAL_UUID
+    core._acquired_goal_canceled = True
+    core.update_goal_statuses([(GOAL_UUID, 5)], 1.0)
+    core.update_pump_owner_count(1)
+    core.update_detection(detection(False, False), 1.0)
+    core.update_odom(0.0, 0.0, 1.0)
+    core.update_ir({'schema_version': 1, 'mode': 'OBSERVE_ONLY',
+                    'observe_only': True, 'zone': 'UNKNOWN',
+                    'ir_band': 'NO_FLAME_SIGNATURE', 'stable_samples': 5,
+                    'ir_receive_age_ms': 20.0,
+                    'blockers': ['NO_IR_FLAME_SIGNATURE']}, 1.0)
+    core.update_actuator({'schema_version': 1,
+                          'mode': 'COMMAND_TELEMETRY_ONLY',
+                          'pump_pwm_commanded_on': False,
+                          'servo_pwm_commanded_on': False,
+                          'servo_phase': 'IDLE'}, 1.0)
+    assert core.evaluate(1.0)['state'] == 'TARGET_LOST'
+    assert core._pre_spray_clear_since is None
+    core.update_pump_owner_count(0)
+    # A short-lived pump owner must not be forgotten merely because the
+    # publisher has already disappeared by the next mission sample.
+    assert core.evaluate(1.1)['state'] == 'TARGET_LOST'
+    assert core._pump_started_uuid == GOAL_UUID
+    assert core._pre_spray_clear_since is None
 
 
 def test_confirmed_detection_with_no_alignment_target_can_recover():

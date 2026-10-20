@@ -478,13 +478,52 @@ class IrApproachLiveCore:
             blockers.append('SCAN_' + error)
         return blockers, direction, band, clearance
 
-    def step(self, now, counts, owned):
+    def request_session_stop(self, reason, now, *, reset_hold=False):
+        """Latch STOPPING without resetting distance, goal, arm or review history."""
+        if reason not in ('SESSION_CONTEXT_INVALID', 'SESSION_CLOSE_REQUESTED'):
+            raise ValueError('invalid IR session stop')
+        if self.phase in ('ACQUIRING', 'MOVING', 'STOPPING'):
+            odom = self._input('odom', now)
+            if self.start_pose is not None and self._odom_valid(odom):
+                self.step_progress_m = max(self.step_progress_m, math.hypot(
+                    odom[0][0] - self.start_pose[0], odom[0][1] - self.start_pose[1]))
+            if self.phase != 'STOPPING':
+                self.phase = 'STOPPING'
+                self.stop_reason = reason
+                self.stopping_at = now
+                self.zero_since = None
+            elif self.stop_reason == 'SPRAY_CANDIDATE_STOP':
+                # Closing a session needs a safe release, not spray confirmation.
+                self.stop_reason = reason
+            if reset_hold:
+                self.zero_since = None
+
+    def publisher_released(self, *, account_abort=False):
+        """Commit a qualified release once, after the adapter confirms its effect."""
+        if type(account_abort) is not bool:
+            raise ValueError('IR abort accounting gate must be bool')
+        if self.phase != 'STOPPING' or self.stop_reason == 'SPRAY_CANDIDATE_STOP':
+            raise RuntimeError('IR_RELEASE_NOT_PENDING')
+        self.phase = ('COMPLETE' if self.stop_reason in (
+            'STEP_DISTANCE_REACHED', 'STEP_PROGRESS_TIME_LIMIT',
+            'SPRAY_RANGE_REACHED', 'REALIGN_REQUIRED',
+            'APPROACH_DISTANCE_LIMIT') else 'ABORTED')
+        if self.integrated_handoff and (
+                self.phase == 'COMPLETE' or account_abort):
+            self.step_count += 1
+            self.total_progress_m += self.step_progress_m
+
+    def step(self, now, counts, owned, *, session_admission=True,
+             session_release_ready=True, allow_rearm=True, defer_release=False):
         """Return (linear_x, telemetry, CREATE/RELEASE/None)."""
         now = float(now)
+        if any(type(flag) is not bool for flag in (
+                session_admission, session_release_ready, allow_rearm, defer_release)):
+            raise ValueError('IR session gates must be bool')
         new_uuid = counts.get('goal_uuid')
         review = self._input('review', now) or {}
         actuator = self._input('actuator', now) or {}
-        if (self.phase == 'COMPLETE' and
+        if (allow_rearm and self.phase == 'COMPLETE' and
                 self.stop_reason == 'SPRAY_RANGE_REACHED' and
                 self.goal_uuid and counts.get('review_source_ok') is True and
                 review.get('schema_version') == 1 and
@@ -509,7 +548,7 @@ class IrApproachLiveCore:
         # Re-centering can bring the flame into spray range without any
         # further IR motion. Resolve the old recoverable stop using fresh,
         # exact canceled-goal and stationary proof; never claim raw motion.
-        if (self.integrated_handoff and self.continuous_approach and
+        if (allow_rearm and self.integrated_handoff and self.continuous_approach and
                 self.phase == 'COMPLETE' and not owned and self.goal_uuid and
                 new_uuid == self.goal_uuid and counts.get('pump') == 0 and
                 self._recovery_ready(now) and
@@ -522,7 +561,7 @@ class IrApproachLiveCore:
                 self.last_review_pulse = self.pending_review[0]
                 self.pending_review = None
             self.stop_reason = 'SPRAY_RANGE_REACHED'
-        if (self.integrated_handoff and self.continuous_approach and
+        if (allow_rearm and self.integrated_handoff and self.continuous_approach and
                 self.phase == 'COMPLETE' and not owned and
                 (self.stop_reason in (
                     'REALIGN_REQUIRED', 'APPROACH_DISTANCE_LIMIT') or
@@ -562,20 +601,20 @@ class IrApproachLiveCore:
             all(abs(v) <= 0.02 for v in odom_clear[1][:3]) and
             all(abs(v) <= 0.05 for v in odom_clear[1][3:]) and
             self._zero_twist(self._input('cmd', now), 0.001))
-        if (self.integrated_handoff and
+        if (allow_rearm and self.integrated_handoff and
                 self.phase in ('COMPLETE', 'ABORTED') and not owned and
                 self.goal_uuid and
                 counts.get('pre_spray_clear_uuid') == self.goal_uuid and
                 counts.get('pump') == 0 and counts.get('raw') == 0 and
                 clear_stationary):
             self._clear_cycle()
-        if (self.integrated_handoff and self.phase == 'COMPLETE' and
+        if (allow_rearm and self.integrated_handoff and self.phase == 'COMPLETE' and
                 not owned and self.goal_uuid and new_uuid and
                 new_uuid != self.goal_uuid and
                 new_uuid not in self.used_goal_uuids and
                 counts.get('handoff_ok') and counts.get('pump') == 0):
             self._clear_cycle()
-        if (self.integrated_handoff and not self.continuous_approach and
+        if (allow_rearm and self.integrated_handoff and not self.continuous_approach and
                 self.phase == 'COMPLETE' and
                 not owned and self.stop_reason != 'SPRAY_RANGE_REACHED' and
                 self.step_count < MAX_INTEGRATED_STEPS and
@@ -607,6 +646,8 @@ class IrApproachLiveCore:
         if self.phase == 'WAITING_FOR_ADMISSION':
             blockers, direction, band, clearance = self._checks(
                 now, counts, owned=False)
+            if not session_admission:
+                blockers.append('SESSION_ADMISSION_MISSING')
             if blockers:
                 self.admission_since = None
                 self.pending_direction = 0
@@ -774,28 +815,22 @@ class IrApproachLiveCore:
                     self._zero_twist(cmd, 0.001)):
                 if self.zero_since is None:
                     self.zero_since = now
-                elif (now - self.zero_since >= self.zero_hold and
+                elif (session_release_ready and
+                      now - self.zero_since >= self.zero_hold and
                       self.stop_reason != 'SPRAY_CANDIDATE_STOP'):
-                    self.phase = ('COMPLETE' if self.stop_reason in (
-                        'STEP_DISTANCE_REACHED',
-                        'STEP_PROGRESS_TIME_LIMIT',
-                        'SPRAY_RANGE_REACHED',
-                        'REALIGN_REQUIRED',
-                        'APPROACH_DISTANCE_LIMIT') else 'ABORTED')
-                    if self.phase == 'COMPLETE' and self.integrated_handoff:
-                        self.step_count += 1
-                        self.total_progress_m += self.step_progress_m
+                    if not defer_release:
+                        self.publisher_released()
                     action = 'RELEASE'
-                elif (self.stop_reason == 'SPRAY_CANDIDATE_STOP' and
+                elif (session_release_ready and
+                      self.stop_reason == 'SPRAY_CANDIDATE_STOP' and
                       now - self.zero_since >= self.zero_hold and
                       self._motion_ir_band(self._input('ir', now)) ==
                       'SPRAY_RANGE' and
                       self._input('ir', now).get('zone') == 'SPRAY_RANGE' and
                       self._input('ir', now).get('blockers') == []):
                     self.stop_reason = 'SPRAY_RANGE_REACHED'
-                    self.phase = 'COMPLETE'
-                    self.step_count += 1
-                    self.total_progress_m += self.step_progress_m
+                    if not defer_release:
+                        self.publisher_released()
                     action = 'RELEASE'
             else:
                 self.zero_since = None

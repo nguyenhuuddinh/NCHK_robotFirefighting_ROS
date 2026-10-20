@@ -103,7 +103,18 @@ def preflight_checks(context, *args, **kwargs):
             f"[{allowed}], got: {cmd_vel_output_topic}")
 
 
-def generate_launch_description():
+def snapshot_preflight(context):
+    preflight_checks(context)
+    if (context.launch_configurations.get('cmd_vel_output_topic') !=
+            MISSION_SHADOW_CMD_VEL_OUTPUT_TOPIC):
+        raise RuntimeError('snapshot navigator is restricted to isolated shadow output')
+    if context.launch_configurations.get('use_sim_time') != 'false':
+        raise RuntimeError('snapshot navigator requires system ROS time')
+
+
+def generate_launch_description(*, snapshot=False):
+    if type(snapshot) is not bool:
+        raise ValueError('snapshot selection must be an explicit bool')
     pkg_share = get_package_share_directory('fire_robot_navigation')
 
     declare_use_sim_time = DeclareLaunchArgument(
@@ -116,7 +127,8 @@ def generate_launch_description():
     declare_rviz = DeclareLaunchArgument('rviz', default_value='false', description='Launch RViz')
     declare_cmd_vel_output_topic = DeclareLaunchArgument(
         'cmd_vel_output_topic',
-        default_value=PRODUCTION_CMD_VEL_OUTPUT_TOPIC,
+        default_value=(MISSION_SHADOW_CMD_VEL_OUTPUT_TOPIC if snapshot else
+                       PRODUCTION_CMD_VEL_OUTPUT_TOPIC),
         description=(
             'Final Nav2 Twist output. Use the default for robot operation; '
             'the mission shadow wrapper forces the isolated shadow topic.'))
@@ -176,7 +188,7 @@ def generate_launch_description():
         declare_autostart,
         declare_rviz,
         declare_cmd_vel_output_topic,
-        OpaqueFunction(function=preflight_checks),
+        OpaqueFunction(function=snapshot_preflight if snapshot else preflight_checks),
         start_rviz_cmd,
 
         Node(
@@ -221,8 +233,8 @@ def generate_launch_description():
             parameters=[configured_params],
             remappings=remappings + [('cmd_vel', cmd_vel_output_topic)]),
         Node(
-            package='nav2_bt_navigator',
-            executable='bt_navigator',
+            package='fire_robot_navigation' if snapshot else 'nav2_bt_navigator',
+            executable='bt_navigator_snapshot' if snapshot else 'bt_navigator',
             name='bt_navigator',
             output='screen',
             parameters=[configured_params, bt_navigator_params],

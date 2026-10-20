@@ -12,6 +12,22 @@ fire_mission_supervisor:
     state_topic: "/fire_mission/state"
 
     publish_rate_hz: 10.0
+    # Optional M3 migration telemetry; never grants live control authority.
+    enable_fire_session_observer: false
+    # Owner-only collection requires observer + explicit external four-owner roster.
+    # Does not launch owners, authorize cleanup, or enable commands.
+    enable_close_owner_collection: false
+    close_owner_manifest: ""
+    # Opt-in post-close graph/odom/cmd/ACT/Nav2 proof; never closes/rearms.
+    enable_global_stop_collection: false
+    # Optional SHADOW lifecycle only; requires both collectors and an explicit
+    # approved manifest. No live owner rearm or actuator authorization.
+    enable_shadow_session_cleanup: false
+    shadow_budget_file: ""
+    # First deployment only; missing/corrupt state otherwise fails startup.
+    initialize_shadow_budget: false
+    # M3 source snapshot profile requires BOTH Nav2 actions to be observed.
+    require_through_status: false
     detection_timeout_s: 0.50
     alignment_timeout_s: 0.50
     odom_timeout_s: 0.50

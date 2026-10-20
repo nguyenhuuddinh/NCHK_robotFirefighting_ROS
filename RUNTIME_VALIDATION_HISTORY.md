@@ -680,3 +680,415 @@ Nav2stop. Same telemetrythresholds. CurrentC4packetpin201mustnotbeusedwithC5sour
 No repeatbuild/QA/firmwareflash orrobotrunneededbeforeapproval.
 
 NEXT_STEP=C5_REVIEWED_COMMIT_PUSH_APPROVAL_THEN_PREPARE_RUNTIME
+
+
+## C5-RUNTIME-TOOLS-PREPARED-AND-ACCEPTANCE-ROADMAP-20261020-23
+
+User requested preparation after C5 push and asked which C milestone ends the
+roadmap. Confirmed C5commitfdea296746161c4233364b7de95fdca0adf105b1 already pushed,
+source204 matches4C+++59Python QA; PiC259283c5/N8R2/15FPS/model unchanged.
+Prepared qa_c5_pose_runtime_tools_20261020 from immutable41input C4pose basis.
+New46pinnedinputs, no inheritedPASSmarker. Verify204laptop/199Pi Gitblob hashes,
+204currentlaptopfile hashes and exacttestedlocalbinary, Pythonparse/shellsyntax/
+diffonly. Assistant didnotrunpytest/build/ROS/SSH/serial/hardware.
+
+Tools pinC5identity andbinaryhash beforeCOMopen; no moredirtyQAfilewhitelist,
+onlydocumentationhistorypermitted. Probe/PhaseGate/thresholds/Pirunner/UART/
+observer/commoncleanup identical toC4. StartupQAmeasurementconstant now20s,
+matchingPhaseGate; actualreadinesstimecontrolunchanged. Existing20saftermanualpose,
+5sstableready,180sposewait and480sPifallback. Nav2SIGINTbeforePiSTOP, same10sINT/
+2sTERM/KILLtimeouts. Finalpolicy unchanged; newgate_findings.json exposesindependent
+telemetry/JPEGfailchecks andNav2shutdownPASS/BLOCKED/INCOMPLETE, signalsareattempts.
+Regressions coverbinarysymlink/missing/tampered/nonexec/manifestpath,oldC4SHAreject,
+telemetryfailwithshutdownstatusvisible andincompleteevidencenotgracefulPASS.
+
+Newpacket OFFLINE_QA_NOT_RUN/RUNTIME_NOT_RUN. C5sourcePASS/C4tools60PASS donotcertify
+newtools. Userrunsverify_tools.sh onlaptop(noPi/build/realportsneeded), sendsLOG_QA;
+reviewraw/hashbeforepairedWiFicapture. No runtimeorfirmwareedits. Newrunbook and
+BASELINE_ACCEPTANCE_ROADMAP_2026-10-20.md define nofixedlastC: R1statictelemetry+
+cleanup, then R2YOLO/timedstatic, R3baselinegoals/cancel, R4baselinefirebehavior.
+R2–R4plansonly,hardwareopt-in/armseparate; C6onlyforconcreteremainingdefect.
+Useracceptsshortjitter/recovery butnonewperformancegateapproved; donotrelaxguards
+orretroactivelyPASSC4. README/index/checkpoints/ledgercurrentupdated toavoid stale
+"currentC1" pointers. docs/rawlocalignored, keepseparatebackup; historyconnects
+nextcommit. AftertoolsQA recordPASS/BLOCKED+NEXT_STEP, thenprovideoperatorcommands.
+
+NEXT_STEP=USER_RUN_C5_RUNTIME_TOOLS_OFFLINE_QA
+
+
+## C5-RUNTIME-TOOLS-OFFLINE-QA-PASS-REVIEWED-20261020-24
+
+User run qa_c5_pose_runtime_tools_20261020/offline_runs/20261020_235552,
+72passed0.25s,RC0,END23:55:52+07. Assistantverified4rawlogs/46toolinputs/
+204currentlaptopsourcehashes andpinnedC5binary; tools_usedexactcurrentmanifest,
+OFFLINE_QA_OK markerhashcorrect. No tool/runtimechangesafterPASS. Evidence:
+packet offline_gate_review_20261020_235552.json. Pi199sources/C2HEAD verifiedby
+operatorpreflightonPi, notassumedfromlaptopQA. Tooltests usefakefiles/Git/time/
+signals/serial; no realROS/network/hardware. C5NAV2_RUNTIME_NOT_RUN remains.
+
+Updatedcanonicalrunbook/ledgerMD+JSON/reportindex/roadmap/checkpoint including
+exact72PASS andlimits; immutablepacketREADMEkeepsprepared-timecontext. Nextuser
+copyexactpacket+QAmarkertoPiAP, nativeESPUSBPi/COMlaptop, bothEthernetDOWN,
+oldROS/RViz/SerialMonitorclosed,motor/pumpOFF,brightemptycamera. A laptopSSH-tPi
+run_pi;B exactLOG_PI run_laptopwithin180s. PiIO30s/Nav2laptop20s/minimalRViz,
+manualInitialPosemap9_10/correctpositionorientation,5sstablethen20smeasure;
+posewait180s,fullsessionusually3–5minupto~7min,keepAPthroughcopy. No goal/arm/YOLO/
+newbuild/flash/repeatedsourceQA. StopNav2beforePi,signalsattemptslogged,independent
+findingsdonotrelaxfinalpolicy. SendLOG_LAPTOP/verdict/exit;reviewraw/hashandsave
+PASS/BLOCKEDmetrics before nextaction. C4blockedgap/TERMhistoricunchanged.
+Laptoppushedfdea296/Pi59283c5/N8R2/15FPS/model unchanged,historyonlydirtyallowed.
+
+NEXT_STEP=COPY_C5_TOOLS_AND_USER_RUN_ONE_STATIC_POSE_SHUTDOWN_GATE
+
+
+## C5-RUNTIME-BLOCKED-CHILD-CRASH-CORRECTION-20261021-25
+
+User qa_c5_pose_runtime_tools_20261020/runqa_baseline_combined_laptop_20261020_235849,
+START23:58:49Oct20/END00:00:45Oct21+07,finalBLOCKED_READINESS_OR_TELEMETRY/RC2.
+LaptoppushedC5fdea296/PiC259283c5/N8R2/15FPS/model unchanged. Verified100outer/
+43nestedPi/3UART/46tool/204laptopsource/1binaryhash; nestedalreadyinouter.
+Testedtoolmanifest/markerexact,sourcebeforeafterlap204/Pi199correctSHA,copyRC0,
+sourcecheckRC0,processafterbothclean,nonzeroinvalid/forbidden0bothhosts. Rawuntouched.
+
+Manualpose/AMCL/mapTFproof/8lifecycleactivebeforeafter20.000026s,00:00:11.774012–
+31.774038Oct21+07. Noobservedexit/posechange. Countsodom184/TF343/scan93/mapTF75/
+zerocmd183;JPEG263/13.149983FPS. Sixfailingchecks:odomgap579.938014/TF443.328932/
+scan1293.551711ms,ages890.333359/983.636973/1182.460606ms. JPEGgap743.870484ms,
+age1005.321896msfail500ms;rate/currentPASS. Endcurrentrecoversbutmaxfailretained.
+Pi5sbinsodom49–50/gap151–156ms,TF100/gap54–58ms,scan26/gap199–201ms,JPEG75/
+gap76–82mswhilelapstallsacrosstopics. CPU10smeanslap3.96–4.35%total/Nav2~17–18%
+onecore,Pi31.65–34.36%total;notproofnoCPUspikes. Samplermissesreadiness_driver
+perprocCPU. Pingfullcapturelap106/106/0lossavg106.451max2064.033ms;Pi98/92/6.122%
+lossavg74.539max1407.335ms;not20s-only. iwmissing/noRFtracedata. RPCerrors7controller/
+1safetyaccumulatedbeforemeasurement,nogrowthduring. NoUSBdetach/CDCstallinrun;
+UARTstartupwatchdogbeforemeasurement,notUSBreset. NoWiFirootcauseproven.
+
+CRITICALCORRECTION: rawgate_findings.nav2_shutdown=PASSisfalseacceptancefromlaunchRC0.
+ContainerPID169827afterSIGINT loggedMagickSIGSEGVsignal11thenchildexit-6. NoTERM/
+KILLattempt,cleanupwithin~5.517sdoesnotprovegraceful;processdied. Bondbt_navigator
+error/reset/transitioncollisionsoccurafterSIGINT;pollingdoesnotproveanysubsecond
+lifecyclehistory. LastDestroyingbehavior/Magicktextdoesnotidentifycausalplugin.
+NoexactC5executablecorefoundin/var/crash,oldunrelatedreportsnotopened. Rootcause
+teardownUNDETERMINEDwithoutbacktrace. PreserveC5local4C+++59PythonPASSbutC5actual
+shutdownBLOCKED_CONTAINER_CRASH. Do notretroactivelymarkC4orC5runtimePASS.
+
+CanonicalC5_STATIC_RUNTIME_RESULT_2026-10-21.md/performanceMDJSON/reportindex/
+checkpoint/historyupdated,one-runC4C5postposecomparisondistinctstartup15s.
+Derivedruntime_review_20261020_235849.jsoncontainsCPU/bins/errors/correction.
+Preparedseparateqa_c5_shutdown_evidence_fix_20261021:4pinnedinputs,6puretextcases,
+parserrequirescleancontainerchildexit+INT/nonforcedlaunchRC;fatal/deathblocks,
+missingchildproofINCOMPLETE. NEW_QA_TOOLS_NOT_TESTED; assistantparse/syntaxonly.
+Noeditimmutable46inputpacket/raw/runtimesource/Pifirmware. NotC6runtimepatchyet.
+Userrunonlynewverify_tools,sendLOG_QA,thenreviewandprepareboundedteardownbacktrace
+withchildexitproof. No uninstrumentedrobotrepeat/build/flash/72toolretest/YOLO/
+goals/actuators. ResidualWiFigapseparateopenissue;R1notcomplete.
+
+NEXT_STEP=USER_QA_CHILD_EXIT_EVIDENCE_FIX_THEN_PREPARE_TARGETED_TEARDOWN_BACKTRACE
+
+
+## CHILD-EXIT-PARSER-PASS-AND-GDB-TOOLS-PREPARED-20261021-26
+
+User parserqa_c5_shutdown_evidence_fix_20261021/offline_runs/20261021_001326_xPlhnC:
+6PASS0.01s/RC0,END00:13:26+07;4raw/4toolhashes andexacttestedmanifestverified.
+No parserchangesafterPASS. CorrectedC5runtime remainsBLOCKED_CONTAINER_CRASH;
+launchRC0cannotcertifychildcleanexit. NoC5runtimeorfirmwarefixmadehere.
+
+Prepared qa_c5_teardown_gdb_tools_20261021,55pinnedinputsderivedC5pose46+parserbasis.
+NewtoolsQANOTRUN/runtimeNOTRUN. Source204lapfdea296/Pi19959283c5/binarypinnedand
+unchanged,N8R2/15FPS/model/mission/guardsunchanged. UsedinstalledHumbleros2launch
+CLIlaunchprefix+regexfilterforonlyfire_robot_component_container_isolated; no
+sourcelaunchchanges. OwnchildGDB—notattach. GDBpassINT/TERM,stopfatalSEGV/ABRT/
+BUS/ILL/FPEbeforehandler,savefirstsignal/time/allthreadbt30/sharedlibsmax2MiB,
+thenquitstoppedinferior. Verifiedtraceframe#0beforemarkingbacktracecaptured.
+Inferiorexitseparatefromgdb/launchRC,wrapperstoresdebuggerreceipt,330sdeadline;
+externalownedcleanup10sINT/2sTERM/KILLandPi480sremain. No globalptracepolicy/
+sudo/cores/networksymbols. RuntimeCAPTRACE isdiagnostic,neverperformanceor
+staticreadinessPASS. No-reproducecleanexitunderGDBnotfixedproof. Originalgate
+retainedinsummary forsafety/copy/source; debuggerstate separateanderrorsvisible.
+
+TestsfakeGDBeventscoverfataltrace/normalexit/INT/missingframes/timeouts/prefixscope,
+plusverified6parsercasesandinheritedgatecontrols. UserverifyalsoGDBPythonAPIcheck
+withoutinferior. AssistantonlyPythoncompile/shellsyntax/diff/hash,noGDB/pytest/
+build/ROS/SSH/serialrun. Useroneofflinecommand,sendLOG_QA;reviewbeforecopyandpaired
+AP/manualpose/20sobserve/teardowncapture. Debuggersignal/timingperturbationdocumented,
+noWiFigapcausalclaim. C5crashrootcauseawaitsbacktrace,nospeculativepluginfix orC6.
+Updatecanonicalplan/ledger/index/checkpointswith6PASSand55newtoolNOT_RUN.
+
+NEXT_STEP=USER_RUN_TEARDOWN_GDB_TOOLS_OFFLINE_QA
+
+
+## GDB-TOOLS-OFFLINE-PASS-REVIEWED-20261021-27
+
+User qa_c5_teardown_gdb_tools_20261021/offline_runs/20261021_002311:
+71PASS0.24s/RC0/END00:23:11+07,GDB_PYTHON_API_OK1(capabilitywithoutinferior).
+Verified5rawlogs/55toolinputs/204currentlaptopsources/1binaryhash,exacttested
+manifestandOFFLINE_QA_OKmarker. No tool/runtimeeditsafterPASS. Evidencepacket
+ offline_gate_review_20261021_002311.json. Pi199sources/C2HEADactualpreflightby
+operatornotassumedfromlaptopQA. GDBbacktraceruntimeNOTRUN. C5runtime235849still
+BLOCKEDtelemetry+childSIGSEGV/-6,rawshutdownPASSfalsecorrectionpreserved.
+
+CanonicalC5_TEARDOWN_GDB_RUN_2026-10-21.md providescopyandtwo-terminalcommands;
+plan/ledger/index/checkpoint/historyupdated. UserAPPi10.0.0.1,bothLANdown,
+nativeESPUSBPi/COMlaptop,oldROS/RViz/Monitorclosed,motorpumpOFF,brightemptycamera.
+Copyexact55inputs+marker, A laptopSSH-tPi run_pi,B exactLOG_PIwithin180srun_laptop.
+PiIO30s/Nav2underGDB20s/minimalRViz/manualposemap9_10/correctlocationorientation,
+5sstablethen20sobserve,INTNav2beforePiSTOP,backtraceandautocopy. Usually3–5min,
+upto~7minpose/copy,keepAPuntilbothdone. No goal/arm/YOLO/build/flash/QAloop.
+
+FINAL_VERDICTDIAGNOSTIC_/FINAL_EXIT_RC2bydesign evenondiagnosticcleanexit; not
+performanceorgracefulacceptance. Fataltracecapturedreviewstackbeforefix;no
+reproductionnotfixedproof,norepeatblindly. GDBchangesignal/timing,ownnewchildonly,
+noattach/sudo/globalptrace/symbolfetch/core. Capturedeadlines330sGDB/Pi480s and
+10sINT/2sTERM/KILLcleanupunchanged. SendLOG_LAPTOP/verdict/exit,thenraw/hash/
+stackreviewandnextstep. C5fdea296/Pi59283c5/N8R2/15FPS/model unchanged,historyonly
+dirtyallowed. NoC6codepatchyet orprovencrashrootcause;R1incomplete/R2–R4notrun.
+
+NEXT_STEP=COPY_GDB_TOOLS_AND_USER_RUN_ONE_INSTRUMENTED_TEARDOWN_CAPTURE
+
+
+## GDB-FATAL-BACKTRACE-REVIEWED-AND-LOCAL-AB-PREPARED-20261021-28
+
+
+## 21/10 — C5 GDB runtime 002615: fatal backtrace captured, đã review
+
+[Báo cáo stack và bước tiếp](docs/codex/current/C5_TEARDOWN_BACKTRACE_RESULT_2026-10-21.md).
+Laptop fdea296 / Pi59283c5, ESP32-S3 N8R2, camera15FPS. 105 raw ngoài /43 Pi /
+3 UART (nested đã nằm trong outer),55 tool/204 source/binary khớp. Cleanup sạch.
+SIGINT attempt00:28:01.782324; GDB capture update00:28:07.473882, SIGSEGV thread1
+trong LifecycleNode destructor qua NodeInstanceWrapper/map clear/container dtor.
+Không TERM/KILL; GDB RC86 đúng thiết kế, trace đủ. FINAL_EXIT_RC2 diagnostic,
+không runtime PASS và không lỗi thu log. Component executor threads không còn
+trong snapshot; không loại trừ race/hỏng heap xảy ra trước đó.
+
+Disassembly offset0x22179 tương ứng weak control block release/virtual call;
+Spin/Wait libs vắng trong sharedlib list. Giả thuyết plugin bị unload trước base
+node weak references, chưa chứng minh root cause. Chưa sửa runtime, không quy lỗi
+cho WiFi/ESP/Magick. Pi kernel không entries; UART watchdog đầu phiên rồi recovery
+trước đo. Odom gap733.303ms/age594.394;TF717.451/588.775;scan1061.254/971.416;
+JPEG242/20.024535s=12.0852FPS,gap867.007/age613.826ms;zero nonzero commands.
+Các số dưới GDB chỉ lưu truy vết, không dùng so hiệu năng C4/C5 thường.
+
+Soạn packet riêng qa_c5_plugin_lifetime_ab_20261021,10 pinned input, syntax-only,
+BUILD/TEST/PROBE NOT_RUN. Một lệnh user chạy kiểm verdict+compile1job+2case GDB trên
+installed BehaviorServer INACTIVE: A không giữ lib; B giữ Spin/Wait owner đến sau
+node destructor rồi trả owner. Không robot/Pi/serial/activate/goal/actuator; ROS
+localhost tạm thời, domain/firmware/model/guard/15FPS không đổi. A không reproduce
+phải INCONCLUSIVE; không gọi clean B là fix. Sau raw A/B review mới runtime patch.
+Lệnh trong báo cáo; thường1–3min, cap configure180s/build180s/case40s. Chưa commit.
+
+**NEXT_STEP=USER_RUN_ONE_LOCAL_BEHAVIOR_PLUGIN_LIFETIME_AB**
+
+
+## LOCAL-PLUGIN-LIFETIME-AB-INCONCLUSIVE-REVIEWED-20261021-29
+
+
+## 21/10 00:43:15 — local lifetime A/B INCONCLUSIVE, đã review
+
+[Chi tiết](docs/codex/current/C5_PLUGIN_LIFETIME_AB_RESULT_2026-10-21.md). Build probe thành công,
+2 unit checks PASS; A/B đều configure INACTIVE, cleanup và EXIT0, không timeout.
+RC2=`INCONCLUSIVE_CONTROL_DID_NOT_REPRODUCE`, không phải bản vá đạt. 24 raw/10tool/
+204 source/binary/4 installed library hash và exact tested manifest khớp.
+Spin/Wait vẫn mapped sau node destroy và lease release ở cả A/B; chưa tái hiện
+unload thấy trong full container. Probe direct-links behavior_server_core và
+không activate, khác runtime dynamically loaded/multi-node ACTIVE. Chưa chứng
+minh library retention là fix; không lặp bài này, không áp patch suy đoán.
+Runtime/firmware/15FPS/model/guards không đổi; C5 crash và WiFi/odom còn mở.
+Bước tiếp rà offline dynamic loader/ownership/active teardown; chưa có lệnh user
+mới hoặc runtime patch/commit/push. Sau fix được QA mới static telemetry acceptance.
+
+**NEXT_STEP=OFFLINE_REVIEW_DYNAMIC_COMPONENT_LOADING_AND_ACTIVE_TEARDOWN_BEFORE_NEXT_PROBE**
+
+
+## DYNAMIC-COMPONENT-OWNERSHIP-REVIEW-AND-PROBE-PREPARED-20261021-30
+
+
+## 21/10 — đã rà dynamic ownership và soạn probe đúng manager C5
+
+[Source review và lệnh local](docs/codex/current/C5_DYNAMIC_COMPONENT_REVIEW_AND_PROBE_2026-10-21.md).
+Không thấy lý do bỏ join hoặc đổi thứ tự member loader/wrapper từ stack hiện có.
+Bài direct-link004315 khác đường nạp/factory/executor/ACTIVE của container thật.
+Packet riêng qa_c5_dynamic_component_ab_20261021:11 pinned input, nguyên header C5
+fdea296, factory/resource thật, executor/destructor C5. Không direct link component
+hay Spin/Wait (ELF check bắt buộc). Bốn điều kiện INACTIVE/ACTIVE x control/retain,
+đúng1case/process mỗi điều kiện; không retry. GDB có registers/mappings/control
+block reads khi fatal. Scope local một component, chưa full multi-node/signalrace.
+
+STATIC/SYNTAX ONLY: AST/bash/header exact/204sourcehash đạt; build/5unitcases/probe
+NOT_RUN. Không sửa runtime/Pi/firmware/model/15FPS/mission/QoS/guard. Domain hiện tại
+được giữ cho child, localhost tạm thời; không Pi/AP/USB/camera/goal/arm/actuatorAPI.
+ACTIVE trong probe chỉ local lifecycle, cmd_vel namespace QA. User1command thường
+1–3min,cap~9min configure/build/4case40s. Sau rawreview mới cân nhắc targetedpatch;
+cleancontrol vẫn INCONCLUSIVE, không gọi retain sạch là robotPASS. Chưa commit/push.
+
+**NEXT_STEP=USER_RUN_ONE_LOCAL_DYNAMIC_COMPONENT_LIFETIME_AB**
+
+
+## DYNAMIC-PROBE-V1-BUILD-BLOCKED-AND-V2-INTERFACE-FIX-20261021-31
+
+
+## 21/10 00:53:40 — dynamic V1 build FAIL; đã soạn V2 sửa công cụ
+
+[Build failure và lệnh V2](docs/codex/current/C5_DYNAMIC_PROBE_BUILD_FIX_2026-10-21.md). User run005340:
+5 unit checks PASS, compiler thiếu smclib/statemap.hpp, bốn case GDB NOT_RUN,
+runnerRC2/sourcecheck0. Header có sẵn; CMake probe thiếu transitive includes do
+assistant dùng header nội bộ Nav2. Không phải lỗi firmware hoặc Nav2 runtime.
+12 raw/11 input/204 source hash khớp. V1/raw giữ nguyên, không ghi đè.
+
+V2 riêng qa_c5_dynamic_component_ab_v2_20261021:11 inputs. Bỏ header/cast Nav2,
+configure/activate và xác nhận state qua dịch vụ chuẩn ChangeState/GetState từ
+client local. Manager C5/resource/factory/dynamic load/executor/destructor/4case
+và guard giữ nguyên; không cần thêm smclib hoặc link component. Wait3s/RPC5s nằm
+trong process cap40s. Runner ghi LAST_STAGE/STOP/error-tail/BLOCKED result nếu chưa
+hoàn tất. V2 STATIC/SYNTAX ONLY; compile/tests/probe NOT_RUN, không lấy5PASS V1
+làm PASS V2. Runtime204/fdea296/Pi59283c5/N8R2/15FPS/model/mission không sửa.
+
+User một lệnh laptop V2, không cần Pi/AP/USB/camera/goal/actuator; chỉ probe build
+1job +4fixedcases, thường1–3min/cap~9min. GửiLOG_QA/verdict, review trước patch;
+không chạy V1 cũ hoặc loop. Chưa commit/push. C5crash và R1telemetry còn mở.
+
+**NEXT_STEP=USER_RUN_FIXED_V2_LOCAL_DYNAMIC_COMPONENT_PROBE**
+
+
+## DYNAMIC-LIFETIME-FAULT-CONFIRMED-AND-C6-CANDIDATE-WRITTEN-20261021-32
+
+
+## 21/10 00:59:05 — V2 tái hiện lifetime fault; C6 candidate đã viết
+
+[Báo cáo bằng chứng + bản vá + lệnh QA](docs/codex/current/C6_BEHAVIOR_LIBRARY_LIFETIME_CANDIDATE_2026-10-21.md).
+V2 run005905: buildOK,5unitchecksPASS; INACTIVE/ACTIVE control đềuSIGSEGV đúng
+LifecycleNode destructor, cả2retainEXIT0. RC0/fourcasesđủ/khôngtimeout;34raw/11tool/
+204source/binary/4installedlib hash vàtestedmanifestkhớp. RAX vtable thuộc vùng
+Spin trước unload, saufatalkhôngđọcđược: INACTIVE0x7f95fdf0db88,ACTIVE0x7616508c0b88;
+ELFvirtual0x3eb88/fileoffset0x3db88 (RELROLOADdelta0x1000). Casegiữlibmappedqua
+managerdestroy rồiunmapsaulease. Đãxácnhậncơchếtronglocalreproducer,fullcontainer
+002615phùhợpcùnginstruction/stack;chưafullruntimefixed hoặcWiFi/odomPASS.
+
+Áp C6candidate5file navigation, parentfdea296/branchbaseline: newretainedmanager
+đọcIDs/types từloadNodeOptions, dùngpluginlibregistry/mỗiresolvedlibrary1owner,
+khônghardcodeSpin/Wait/path hoặc tạo behaviorinstancephụ. Retainerbasekhaitrước
+C5managerbase đểmanager/nodewrappershủytrước, rồi mớiunloadlib. ChỉBehaviorServer,
+khôngđổirequest/remap/params/timer/thread/loop/scheduling/join/signals. Dependency
+pluginlib/interfaceheadersnav2_core+smclibimportedheadertarget, khônglinkserver/
+pluginvàkhôngsửa/opt/ros.7C++testsmới parameter/default/type/error/dedup/parity.
+
+C6STATIC_REVIEW_ONLY: chưa compile/test/regression/commit/push. Packet riêng
+qa_c6_behavior_library_lifetime_candidate_20261021 pin206sources/expectedstatus.
+Onecommanduser buildnav1job,4C5+7newC++ tests/launchinstalledparity,2realcomponent
+INACTIVE/ACTIVE C6actualheader/hookkhôngexternallease, ELFdirectlinkcheck/hash/
+cleanup. Khôngreruncontrolđãtáihiện. ROSlocalhost/domainhiệntạigiữ,khôngPi/AP/COM/
+camera/goals/actuatorAPI;namespaceQA. FirmwareN8R2/Pi59283c5/camera15/model/mission/
+QoS/watchdog/thresholds khôngđổi. UserLOG_QA→raw/diffreview→userduyệtcommit+push
+→mớimộtfullstaticWiFi/pose/shutdowngate;R1vẫnchưađạt/R2–R4chưachạy.
+
+**NEXT_STEP=USER_RUN_C6_LOCAL_BUILD_AND_REAL_COMPONENT_LIFETIME_QA**
+
+
+## OLD-C5-PROBE-PREFLIGHT-BLOCKED-ON-C6-CANDIDATE-20261021-33
+
+
+## 21/10 01:13:17 — chạy nhầm probe C5 V2 sau khi áp C6
+
+Run `qa_dynamic_lifetime_ab_20261021_011317_Kj90SF` BLOCKED_PREFLIGHT/RC2 ngay
+trong cùng giây, chưa build hoặc chạy A/B. Manifest C5 cũ khác đúng3file C6 đã
+sửa: CMakeLists.txt/package.xml/component_container_isolated.cpp. Không phải C6
+QA FAIL hoặc lỗi runtime mới. Không reset source, không sửa manifest C5 để ép qua.
+7 raw/11 old tool hash khớp; candidate C6 hiện tại206 source/15tool hash và exact
+expectedstatus vẫn khớp. C6 build/tests/regression vẫn NOT_RUN. Dòng raw cũ
+runtime_patch_applied=false chỉ nói probe không áp patch, không phủ nhận source
+candidate C6 đã tồn tại; giữ raw và giải thích bằng review dẫn xuất.
+
+Lệnh hiện hành trên laptop:
+
+```bash
+bash '/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_c6_behavior_library_lifetime_candidate_20261021/verify_offline.sh'
+```
+
+Đóng launch/RViz/probe cũ, không cần Pi/AP/COM. Gửi LOG_QA và
+C6_LOCAL_BUILD_AND_LIFETIME_QA_OK hoặc STOP. Chưa commit/push hoặc chạy robot.
+
+**NEXT_STEP=USER_RUN_C6_LOCAL_BUILD_AND_REAL_COMPONENT_LIFETIME_QA**
+
+
+## C6V1-BUILD-DEPENDENCY-BLOCK-AND-V2-METADATA-ONLY-FIX-20261021-34
+
+
+## 21/10 01:14:59 — C6V1 build chặn; V2 bỏ implementation header không cần
+
+[Chi tiết lỗi và lệnh C6V2](docs/codex/current/C6_BUILD_HEADER_FIX_2026-10-21.md).
+Run011459 RC2/BUILD_NAVIGATION: thiếu include rcl_lifecycle/rcl_lifecycle.h trong
+chuỗi nav2_core/behavior.hpp. C++tests/parity/componentregression NOT_RUN.
+17raw/15tool/206source hash khớp. Lỗi dependency do assistant thêm, không phải
+firmware/mạng; header ROS có sẵn, không cần cài lại hay sửa /opt/ros.
+
+V2packet qa_c6_behavior_library_lifetime_v2_candidate_20261021 giữ V1/raw. Sửa3file
+CMake/package/header: forwarddeclare đúng nav2_core::Behavior vì chỉ dùng API
+pluginlib registry/path/load/destructor, khôngcreateinstances/sizeof/typeid/delete
+Behavior. Đã đọc pluginlib5.1.3 administrative methods/member declarations không
+cần completeBehavior. Bỏ implementationheader/includeDirs và nav2_core/smclib build
+deps; nav2_core runtime registry giữ. RegressionCMake tương ứng, khôngdirectlink
+server/plugin. Logicretainer/baseorder/params/tests/mission/QoS/guard không đổi.
+
+V2STATIC/SYNTAX ONLY: diff/AST/bash/XML/source206 kiểm; compile/tests/regression
+NOT_RUN. Không dùng A/B005905 làm PASS candidate. User1lệnhV2 build1job+4C5/7newC++/
+parity/2realcomponent; childlocalhost/domaingiữ, khôngPi/AP/USB/camera/goal/actuator.
+GửiLOG_QA/QAmarker→rawreview→userduyệtcommitpush→fullstaticruntime, chưadeploy/flash.
+
+**NEXT_STEP=USER_RUN_C6_V2_LOCAL_BUILD_AND_REAL_COMPONENT_QA**
+
+
+## C6V2-INCOMPLETE-TYPE-FAIL-C6V3-STANDARD-DEPS-AND-STATUS-20261021-35
+
+
+## 21/10 01:18:32 — C6V2 compile fail; trạng thái R1 và dữ liệu được chốt rõ
+
+[Trạng thái thực tế, dữ liệu, R1–R4 và lệnh V3](docs/codex/current/DEVELOPMENT_STATUS_AND_REMAINING_GATES_2026-10-21.md).
+Run011832 BUILD_NAVIGATION/RC2: incomplete Behavior vì pluginlib virtualisClassLoaded
+instantiate RTTI. Forward-declaration assumption của assistant là sai; tests/
+regressions chưa chạy.17raw/16tool/206source verified. V1/V2 compile failures là
+lỗi build/code integration assistant, không3lỗirobotmới hoặc evidence mất dữ liệu.
+
+C6V3 khôi phục complete header, dùng ament_target_dependencies nav2_core+smclib
+chuẩn thay copy include dirs/incomplete type. Regression CMake cùngdependency;
+logicownership/order/tests/params/mission không đổi. Link có thể thêm thư viện
+Nav2, không tạo node/behavior/timer/thread phụ; không khẳng định overhead0. ELF
+vẫn chặn directSpin/Wait/behaviorcore. V3STATIC/SYNTAX_ONLY; build/testNOT_RUN.
+
+R1 đang xử lýshutdown+telemetry; dữ liệuđãnhậnnhưngchưaổnđịnh. NonGDBC5last20s:
+odomgap579.938ms/TF443.329/scan1293.552;JPEG13.15FPS nhưnggap743.870ms vàtuổi1005ms.
+8active/pose vàzerostreamcóproof, chưa nghiệmthu nonzero command/goal/IR/actuator.
+USBquiettrongcửasổkhôngchứngminhổnlâudài. R2YOLO/R3goal-cancel/R4firebehavior
+vẫnchưađạt;khôngcamkếtcònlạichỉ3lầntest. Userjittertolerancetracked, khôngnớiguard.
+
+V3packet qa_c6_behavior_library_lifetime_v3_candidate_20261021 mộtlệnhlocalQA cùng
+scope,khôngnhánhdiagnostic/hardwaremới. SaureviewQA/userduyệtcommitpushmớifull
+staticWiFi/pose/shutdown. Pi59283c5/N8R2/15FPS/model/baseline giữ;chưadeploy/flash.
+
+**NEXT_STEP=USER_RUN_C6_V3_STANDARD_DEPENDENCY_LOCAL_QA**
+
+
+## C6V3-LOCAL-QA-PASS-REVIEWED-AND-POSTPOSE-LATENCY-CLARIFIED-20261021-36
+
+
+## 21/10 01:26:19 — C6V3 localQA PASS, raw/source đã review
+
+[Báo cáo QA và giải thích startup/postpose](docs/codex/current/C6_LOCAL_QA_RESULT_2026-10-21.md).
+Run012619SKeNUQ01:26:19–01:26:45+07/RC0. Buildnav10.6s/colcon10.8s;4C5C++37ms+
+7newC++31msPASS,CTest0.38s;59PythonPASS0.87s. ActualcandidateINACTIVE/ACTIVE đều
+EXIT0,retained2libs/active/destroymarkers đủ,no timeout. Khôngexternallease hoặc
+directlinkbehaviorcore/Spin/Wait. Processbefore/afterrỗng.43raw/16tool/206source/
+2binaryhashkhớp;exacttestedmanifest/status/sourcebefore-after/currentkhớp.
+Source/toolgiữnguyênsauPASS. FullNav2/WiFi/USB/YOLO/goals/actuatorNOT_ACCEPTED.
+
+Userhỏi gapchỉstartup? Đínhrõ sốC5nonGDB20s đượcđosaupose/readiness:
+Nav2loganchor23:59:32.408;measurement00:00:11.774–31.774,~39.37s saulaunchanchor.
+Odomgap579.938/TF443.329/scan1293.552ms,JPEG13.15FPSgap743.870/age1005.322ms vẫn
+xuấthiệntrongcửasổnày. Cuốilượt since-last odom~90/scan100/TF0.28ms đãhồiphục;
+khôngngắtliêntục nhưngchưachứngminhchờstartupxonglàluônổn. Headeragekhôngđồng
+nghĩaonewayWiFidelay. StartupDDSburstvàpostposespikesđượctáchphạmvi,khôngtrộnsố.
+
+C6LOCAL_QA_PASS_REVIEWED; chưa commit/push/deploy/flash. Đãsoạnbody/allowlist6file
+5navigation+history. Userduyệtcommitthìpushluôncùnghistory, rồi pinSHApacket mới
+mộtfullstaticWiFi/pose/shutdowngate;khônglặpQA/probeC5. R1fullruntimepending;
+R2YOLO/R3goalcancel/R4baselinefire chưađạt. Pi59283c5/N8R2/15FPS/model/missiongiữ.
+
+**NEXT_STEP=C6_REVIEWED_COMMIT_PUSH_APPROVAL_THEN_ONE_STATIC_WIFI_RUNTIME**

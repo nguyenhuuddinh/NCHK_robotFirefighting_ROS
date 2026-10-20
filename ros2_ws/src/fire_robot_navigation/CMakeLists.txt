@@ -10,11 +10,17 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(Threads REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(nav2_core REQUIRED)
+find_package(smclib REQUIRED)
 
 # Local Humble shutdown backport; never replaces /opt/ros or the baseline profile.
 add_executable(fire_robot_component_container_isolated src/component_container_isolated.cpp)
 target_compile_features(fire_robot_component_container_isolated PRIVATE cxx_std_14)
-ament_target_dependencies(fire_robot_component_container_isolated rclcpp rclcpp_components)
+ament_target_dependencies(fire_robot_component_container_isolated rclcpp rclcpp_components pluginlib nav2_core smclib)
+# Consume the complete Behavior interface through normal ament dependencies.
+# This propagates imported target requirements, including lifecycle headers.
+# Do not manually copy only INCLUDE_DIRS or directly link behavior plugins.
 target_link_libraries(fire_robot_component_container_isolated Threads::Threads)
 install(TARGETS fire_robot_component_container_isolated DESTINATION lib/${PROJECT_NAME})
 find_package(rclpy REQUIRED)
@@ -27,6 +33,10 @@ if(BUILD_TESTING)
   target_compile_features(test_isolated_shutdown PRIVATE cxx_std_14)
   ament_target_dependencies(test_isolated_shutdown rclcpp rclcpp_components)
   target_link_libraries(test_isolated_shutdown Threads::Threads)
+  ament_add_gtest(test_behavior_library_retention test/test_behavior_library_retention.cpp TIMEOUT 30)
+  target_compile_features(test_behavior_library_retention PRIVATE cxx_std_14)
+  ament_target_dependencies(test_behavior_library_retention rclcpp rclcpp_components pluginlib nav2_core smclib)
+  target_link_libraries(test_behavior_library_retention Threads::Threads)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

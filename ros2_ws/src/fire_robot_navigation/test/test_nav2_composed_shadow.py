@@ -75,7 +75,7 @@ def test_one_isolated_container_no_extra_robot_nodes_and_exit_propagates(profile
     entities = composed.generate_launch_description().entities
     containers = [a for a in entities if isinstance(a, ComposableNodeContainer)]
     assert len(containers) == 1
-    assert render(context, containers[0].node_executable) == 'component_container_isolated'
+    assert render(context, containers[0].node_executable) == 'fire_robot_component_container_isolated'
     assert len([a for a in entities if isinstance(a, Node)]) == 1
     handlers = [a for a in entities if isinstance(a, RegisterEventHandler)]
     assert len(handlers) == 1

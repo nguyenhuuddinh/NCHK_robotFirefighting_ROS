@@ -380,3 +380,303 @@ Push completion and commit SHA must be checked against the remote, then recorded
 in canonical checkpoint; do not claim remote success from a local commit alone.
 
 NEXT_STEP=VERIFY_C4_REMOTE_COMMIT_THEN_USER_BUILD_LAPTOP_NAVIGATION
+
+
+## C4-BUILD-TOOLS-AND-TRACKED-MAP-ALLOWLIST-20261020-15
+
+C4 commit2ab8806 push was confirmed against remote SHA; all9 blobs/body and201
+committed candidate hashes matched. User requested the next build step.
+While preparing installed-artifact validation, static review found a pre-existing
+baseline fixture mismatch: tracked maps/fire_room_demo.pgm and .yaml are installed
+by CMake, but absent from the test's required/optional lists. Original C4 offline
+gate correctly deferred installed-artifact validation; it did not detect this.
+
+QA-only follow-up adds these exact2 tracked assets to both required fixture lists;
+no wildcard/validator relaxation and unknown installed artifacts remain rejected.
+Production C4 source/parameters/BTs/Pi/mission/model/15FPS/N8R2 unchanged.
+This QA test edit is NOT_TESTED/NOT_COMMITTED and must be distinguished from
+commit2ab8806's previously verified58PASS. Do not rewrite that gate's raw evidence.
+
+Prepared user-run packet qa_c4_build_tools_20261020: clean baseline build environment,
+only fire_robot_navigation build (300s deadline), source/share byte verification,
+read-only installed component/library availability, show-args introspection,
+then the full artifact/invariants file (includes the deferred test and mutation
+fixtures), with pinned201sources and structured stage/RC/hash logs. No ROS nodes,
+serial, camera, GPU inference, Pi build or firmware upload. Assistant static syntax/
+diff/hash review only; BUILD_AND_INSTALL_GATE_NOT_RUN. Failed artifact checks
+must preserve the files for review, never silently delete unexpected maps.
+
+NEXT_STEP=USER_RUN_C4_LAPTOP_BUILD_INSTALL_GATE
+
+
+## C4-BUILD-PASS-AND-CAPTURE-TOOLS-20261020-16
+
+User build gate run qa_c4_build_laptop_20261020_222047_D0DCyU:
+START22:20:47/END22:21:12+07 on2026-10-20, RC0, C4_LAPTOP_BUILD_INSTALL_OK=1.
+fire_robot_navigation built0.72s / total0.98s. User installed-invariants file:
+**6 passed in0.10s**, including the previously deferred installed-artifact check
+and exact tracked-demo-map fixture/mutation follow-up. Assistant verified25raw
+log hashes,7tool hashes,201source hashes before/after,14installed resource bytes,
+10registered component manifests/libraries, correct baseline prefix/share and
+installed profile import. show-args rviz/use_sim_time false. No matching robot
+processes before/after. No runtime node/container, Pi, serial or inference launched.
+The QA-only map fix is now PASS_REVIEWED but remains NOT_COMMITTED; runtime C4
+commit2ab8806 unchanged. Evidence: qa_c4_build_tools_20261020/build_gate_review.json.
+
+User resumed after quota interruption. Rechecked raw/hash/source and finished
+qa_c4_composed_capture_tools_20261020 from immutable C3 basis.37pinned tool inputs;
+27/33 C3 inputs unchanged. New identity checks: PiC2sha59283c5/199sources versus
+laptopC4sha2ab8806/201sources with the tested QA-only file pinned; no arbitrary dirty
+or staged changes permitted. Installed C4 bytes/plugins verified before opening UART.
+Laptop launches composed shadow only; CPU sampler recognizes container and launch
+request wall/monotonic timestamp is recorded. Pi runner/capture backend/caps/safety/
+observer/UART/delays unchanged. No goal/arm/RViz/YOLO/Pi build/ESP upload.
+
+Tool tests cover fake per-host source/SHA/status checks and container sampling,
+plus inherited31regressions for owned cleanup, capture limits, UART no-write and
+safety stop/RPC timeout evidence. Assistant reviewed diff/hash/Python+shell syntax
+only. **CAPTURE_TOOLS_OFFLINE_NOT_RUN; C4_RUNTIME_NOT_RUN**. Do not reuse C3's QA
+marker as C4 PASS. User must run new verify_tools.sh; assistant reviews raw/hash
+before copy/run. Build and58-test gate need no repeat.
+
+After tools PASS review: one paired static WiFi capture (max90s capture,200kpacket,
+128byte snapshot,ring32MB; full session about2–4min, Pi240sfallback), native USBPi/
+COMlaptop/15FPS/brightemptycamera, AP connected/both EthernetDOWN. Compare matched
+15sstartup with C3, not total90s versus C3~17s. Report coverage/caps/drop/truncation,
+participant/SEDP/HB/ACK, odomTF/JPEG both hosts, SSH/CPU/clock bounds/UART/kernel.
+RC0 only capture completion, not readiness/steady/live behavior acceptance. QA-only
+follow-up commit remains subject to user authorization (then commit+push).
+
+NEXT_STEP=USER_RUN_C4_CAPTURE_TOOLS_OFFLINE_QA
+
+
+## C4-CAPTURE-TOOLS-OFFLINE-PASS-20261020-17
+
+User ran qa_c4_composed_capture_tools_20261020/offline_runs/20261020_223518:
+**42 passed in0.16s**, RC0, END2026-10-20T22:35:19+07:00.
+Assistant verified4/4 raw-log hashes,37/37 immutable tool hashes, exact tools_used
+manifest and OFFLINE_QA_OK digest. All201 laptop source hashes still match the
+built/tested C4 plus exact QA-only mapallowlist follow-up. No source/tool edits
+after this PASS. Evidence: packet offline_gate_review.json. Pi199-source identity
+is pinned but actual Pi validation is deferred to operator-run preflight; assistant
+did not SSH or launch anything in this review. Runtime C4 remains NOT_RUN.
+
+Next: user copies this exact packet+QA marker to Pi over AP10.0.0.1, keeps native
+USBPi/COMlaptop,15FPS/brightemptycamera/motor+pumpOFF and both EthernetDOWN.
+Two laptop terminals: B copies packet and sudo -v (tcpdump only), A opens ssh -t
+and runs Pi runner; B uses exact LOG_PI from A within180s. Runner starts PiI/O,
+UART/odomTF/JPEG/CPU/WiFi observers then only composed Nav2laptop; no RViz/YOLO/
+pose/goal/arm. Max90s UDP capture/200kpacket/128byte/ring32MB; about2–4min full
+session with owned cleanup/autocopy and Pi240sfallback. Keep WiFi until logs copy.
+After LOG_LAPTOP review outer/nestedPi/UART hashes and matched15sstartup against
+C3. RC0 marks capture completion only; not readiness/steady or motion acceptance.
+No repeated build/58-test gate/firmware upload needed. QA-only follow-up commit
+still pending user authorization; no commit/push performed in this tools review.
+
+NEXT_STEP=COPY_C4_TOOLS_AND_USER_RUN_ONE_PAIRED_STATIC_WIFI_CAPTURE
+
+
+## C4-STARTUP-CAPTURE-RESULT-20261020-18
+
+User pairedWiFi capture223923/Pi223859 completedRC0,copyRC0. Assistant reviewed99
+outer/42nestedPi/3UART hashes independently (nested included in99),37tool/201laptop
+sources, Pi199/laptop201beforeafter checks. Laptop2ab8806/Pi59283c5, actualASYNC2Pi
+processes, bothEthernetDOWN/AP/NTPyes. No nonzero/forbidden commands; finalmatching
+processes0. No assistant runtime/test/build execution or source changes.
+
+C4capture68190packets/89.251s first-to-last,90stimeoutRC124;68476receivedfilter,
+0kerneldrops. Same15s launchlogcreation anchors: C3 185308packets→C4 39485(-78.69%);
+observed laptopGUIDprefix11→3,Pi9→9; discovery+builtin originalframebytes27003910→
+3683264(-86.36%); HB136509→6550(-95.20%); repeatedsamepeerSEDP10147→167.
+Fragment attribution uses observed initial src/dst/IPid/protocol within2s and valid
+UDPoffset;16C4/9C3fragments remainunknown,128bytesnapshot may hide mixedsubmessages.
+Totaloriginalframebytes30703392→31509067(+2.62%): not allWiFibytes reduced. Userwriter
+traffic increases; do not infer allJPEG or RFpacketloss/airtime from captures.
+
+Laptop gaps fullyinside15s: odom2229.9→710.4ms,TF1609.7→552.4ms,JPEG2225.0→1320.4ms.
+PiC4full123.26s maxodom169.2ms/JPEG162.4ms/TF402.3ms. Many5sbins10Hz/15FPS butlaptop
+stilldips andsourceage~880msodom/JPEG,976msTF. Wholeobserver130.77s includesstartup
+silence;steady0, notfullreadiness. CPUlaptop2.32–4.18%/Pi29.79–65.08%, container37
+threads/~84.4MiB. SSH44RC0/max2s;pingloss1.53%/2.4%,max~2.04/2.14s. iwmissingboth
+hosts;clockboundRTT102–107ms, noonewaylatency/radioretryclaim.
+
+UART264lines. ROMPOWERON/nativeUSBre-enumeration coincides withCOMopen22:39:26,
+beforePiI/O/Nav2; onebridgeopen/sameknownELF, nonewstall/recovery/USBdetach later.
+ThisdoesnotcertifyUSBintermittentfixed. Nav2loaded10components/localizationactive;
+navigationwaitingmapTFwithoutInitialPose asdesigned. NoREADY/YOLO/mission/liveproof.
+ContainerSIGINT22:41:39.255 butTFwaitthrough22:41:49.195, Nav2launchRC143/TERMfallback;
+cleanupfinallyclean doesnotprovegracefulshutdown. Preserve that limitation.
+
+Evidence: qa_c4_composed_capture_tools_20261020/runtime_review_20261020_223923.json,
+matched15s/fragment/anchor outputs and offline analysis scripts; canonical
+C4_WIFI_STARTUP_RESULT_2026-10-20.md. Discoveryreduction supported in one startup,
+residualWiFigaps/readiness/cleanup stillopen. Nextprepare boundedstaticreadiness,
+userInitialPosemap9_10/minimalRViz/no goal orarm; freshlifecycle/TF/safety andowned
+cleanup, onlythenYOLO/longerstatic. Newgateplanonly, notimplemented/tested. No same
+capture repeat/build/flash. QA-onlymapallowlistfix6PASS stillpendingcommitapproval.
+
+NEXT_STEP=PREPARE_BOUNDED_C4_INITIAL_POSE_READINESS_AND_GRACEFUL_CLEANUP_GATE_NO_GOAL
+
+
+## C4-PERFORMANCE-LEDGER-AND-POSE-TOOLS-20261020-19
+
+User explicitly requested durable metric history for comparing code revisions and
+future report writing. Canonical PERFORMANCE_COMPARISON_LEDGER.md/.json now holds
+C1/C2/C3/C4 status, full runtimeSHAs/toolIDs/runIDs, exact matched15s metric values,
+conditions/methods/raw paths and limitations. REPORT_EVIDENCE_INDEX.md explains
+how to trace hashes/analysis and separate requirements, offline/build, startup,
+pose-readiness, YOLO and live behavior evidence. docs/codex/rawQA remain local
+Gitignored; do not claim pushed. This tracked history is the commit/run linkage.
+
+For durable report reference, C3/C4 matched15s: laptopGUID11→3/Pi9→9; packets
+185308→39485(-78.69%); discovery+builtinframebytes27003910→3683264(-86.36%);
+HB136509→6550(-95.20%); ACK22866→5990; totalframebytes30703392→31509067(+2.62%).
+Laptop monotonicgapodom2229.8555→710.3643ms/TF1609.7366→552.3951/JPEG2224.9947→
+1320.4450ms. One run/profile, not statistically repeated; same15s launchloganchor,
+RTPSentity+initialfragmentattribution,128Bsnaplimitations, no RFairtime/topicpayload
+inference. RawC3run214023/C4run223923 immutable. New20spost-pose row must be separate,
+NOT_RUN until evidence arrives; never overwrite earlierblocked/failed results.
+
+User requested continued development of the bounded C4 pose/readiness gate.
+Prepared qa_c4_pose_readiness_tools_20261020,41pinned inputs derived from immutable
+C4capturebasis. Runtime201laptop/199Pi source hashes unchanged. New driver reuses
+one Combined observer/Probe with boundedservicefutures, waits explicitRVizstage
+then180s for userpose and5sstablefreshTF/lifecycle/safety/JPEG, measures20s only
+after proof. No autopose/goal/arm/YOLO/UDPcapture. ExistingProbe report thresholds
+unchanged; JPEG adds>=10FPS andgap/age/current<=500ms. Startupmetrics reset at
+measurement start; safetyviolations retained, posechanges/lifecycleexits recorded.
+
+Cleanup now stops ownedNav2 before PiI/O, thenRViz andobservers. ExistingINT10s/
+TERM2s/KILL strategy retained but records eachsignal/PID/label/time andNav2exitRC;
+finalpolicy neverclaimsgracefulPASS ifTERMorKILL used. Requires verifiedcopiedPi
+manifest/sourceRC/cleanup andreadiness/JPEG proofs. Pi runner fallback480s needed
+for warmup+manualpose180s+measure20s+cleanup; watchdog/TF/command guards notchanged.
+Includes inheritedtoolregressions plus fakeclock/posechanges/no-pose/telemetry/
+owned-signals/corrupt-copy tests. No actual signals/ROS/ports/SSH in offlinegate.
+
+Assistant staticdiff/Python+shellsyntax/hash review only.
+**NEW_TOOLS_OFFLINE_NOT_RUN; POSE_READINESS_RUNTIME_NOT_RUN; NO_NEW_COMMIT_PUSH**.
+User runs new verify_tools.sh then sends LOG_QA; assistant reviews raw/hash before
+copy/run. Existingruntime C4 stays2ab8806/Pi59283c5/N8R2/15FPS/model unchanged;
+QAmapallowlistfix6PASS andhistory remain dirty awaiting commit approval. No need
+rebuild/flash or repeat58source tests/startup capture. After measuredreadiness+
+SIGINTcleanupPASS, onlythenYOLOlast/longerstatic beforelivebehavioracceptance.
+
+NEXT_STEP=USER_RUN_C4_POSE_READINESS_TOOLS_OFFLINE_QA
+
+
+## C4-POSE-TOOLS-OFFLINE-PASS-20261020-20
+
+User run qa_c4_pose_readiness_tools_20261020/offline_runs/20261020_231436:
+**60 passed in0.23s**,RC0,END2026-10-20T23:14:36+07:00. Assistant verified4rawlog
+hashes,41toolinputs,exacttestedmanifest+OFFLINE_QA_OK marker and201currentlaptop
+sourcehashes. No tool/runtime edits afterPASS. Evidence: packet offline_gate_review.json.
+Pi actualsource199/SHA59283c5 validated by operator-run preflight, not assumed from
+laptopQA. C4laptop2ab8806/PiC2/N8R2/model/15FPS unchanged. QA-onlymapallowlist6PASS
+andhistory remain dirty; no newcommit/push here. Gate status: TOOLS_OFFLINE_PASS,
+MANUAL_POSE_RUNTIME_NOT_RUN. Ledger/index now records toolstage separately without
+filling newruntime metrics or mixing post-pose20s with startup15s.
+
+Next user copy exactpacket+marker toPi overAP, bothEthernetDOWN, nativeUSBPi/COMlap,
+noSerialMonitor/oldROS,motor+pumpOFF,brightemptycamera. TerminalA laptopSSH-tPi
+run_pi.sh, B exactLOG_PI run_laptop.sh within180s. PiI/O30s→Nav2laptop20s→minimalRViz;
+user2DPoseEstimate correctmap9_10/location/orientation when prompted, nogoal/arm.
+Waitdeadline180s then20smeasurement only after5sstablefreshpose/lifecycle/TF/safety/
+JPEG. Do not change pose duringmeasurement. Normalfullsession3–5min, up to~7min
+if posewait/cleanup/copy take time, PiIOfallback480s. KeepWiFi untilbothfinish.
+Nav2shutdown beforePi, recordownedINT/TERM/KILL. Only fullfinalverdict andRC0 plus
+raw/hash/cleanup review can pass thisstaticgate; notYOLO/motion/actuatoracceptance.
+No sudo/tcpdump laptop, noPi build/ESPflash/repeated58source tests needed.
+Send LOG_LAPTOP/receipt. Updateledger/report/history afterrun includingBLOCKED;
+ifready+cleanupPASS thenYOLOlast/longerstatic, otherwise diagnose failed proof.
+
+NEXT_STEP=COPY_POSE_TOOLS_AND_USER_RUN_ONE_STATIC_MANUAL_INITIAL_POSE_GATE
+
+
+## C4-POSE-RUNTIME-BLOCKED-AND-C5-SHUTDOWN-CANDIDATE-20261020-21
+
+User capture qa_c4_pose_readiness_tools_20261020/run232003 finished FINAL_VERDICT
+BLOCKED_READINESS_OR_TELEMETRY, FINAL_EXIT_RC2. Verified99outer/43nestedPi/3UART
+hashes (nested already inouter),41testedtools and201laptop source atcapture;
+Pi199/C2 manifests source before/after correct. No raw/tool edits. RuntimeC4
+laptop2ab8806f826f4ad7fa1f0bb4842da5deb46bb207/Pi59283c550ece98acd4c8d78174ae016bf81ce199.
+Manualpose acknowledged; all8lifecycle active start/end; no observed exits/posechanges.
+20.020859s postpose from23:21:37.090334+07: countsodom191/TF364/scan101/mapTF86/
+zerocmd191; forbidden/nonzero0. Three checks fail only: gapsodom257.514306ms,
+TF256.983625ms vs250; scan525.647864ms vs500. Ageodom149.666974/TF219.701880/
+scan378.797156ms withinexistinggates. JPEG278/13.885518FPS,gap257.493668ms,
+age186.883013ms; allJPEGchecksPASS. Stationaryamclcount0 has preservedpriorposeproof;
+10controllerRPCtimeouts accumulatedbeforemeasure, notnewfailuresduring20s.
+
+Additionalblocker: Nav2SIGINT23:21:57.559, lastpreshutdown~8.526slater, TERM10.031s
+afterINT, attemptedKILLlogged; launchRC143. Final emptyprocesslists bothhosts and
+RVizRC0 do not provegracefulshutdown. First-failurepolicytelemetry hides thissecond
+blocker. Pi overlappingbins remain nearodom104–111/TF55–100/scan201–205/JPEG74–84ms
+gaps while one laptop5sbin stallsacrosstopics. Transport/receiversidehypothesis,
+notproofRFvsDDSvsCPUscheduler. Fullcapturepingloss1.626%lap/7.759%Pi, different
+scope from20s. Headerage notpureonewaylatency,clockRTTbound131ms. USBPOWERON/detach
+alignsCOMopenbeforeIO; no newdetach/stallduringmeasure, notlongtermUSBacceptance.
+
+Canonical C4_POSE_READINESS_RESULT_2026-10-20.md, performanceMD/JSON separatepostpose
+row/runtime_runs, reportindex/checkpoints updated. PriorC3/C4startup15s preserved,
+notdirectlycomparable. runtime_review_20261020_232003.json keepsrawpaths/SHA/limits.
+
+Static inspection found installedHumble ComponentManagerIsolated::cancel_executor
+waitswhile!is_spinning withoutcontextguard. Aftershutdown spinhasreturned, wait
+canneverfinish. Upstreamros2/rclcpp#2083/#2085 andHumbleheadercontextguard support
+targetedbackport. No capturedstack proves thisissolecause ofNav2RC143. Prepared
+C5 localbinary/privateApacheheader withguardrclcpp::ok(context), samepercomponent
+SingleThreadedExecutors/manager. Composedprofileonly pointsatlocalbinary andchecks
+itsinstallation. Exactly10components/params/routes/BT/lifecycle/mission unchanged.
+No /optROS/Pi/N8R2/camera15FPS/model/QoS/watchdog/TFthreshold edits. CMakebuilddeps
+and4realC++localcontexttests: empty, executorsalreadyreturned, immediatecontext
+shutdown, liveunloadwhileothercomponentruns. CTest30s boundsregressionhang; no
+detachedthreadhidingfailure. UserQA builds onlynavigation, thenlocalC++/Python
+parity/installed tests. Loopbackdummynodesonly,no robotlaunch/ports/commands.
+
+Packetqa_c5_isolated_shutdown_candidate_20261020 pins204sources/6toolinputs,
+expectedstatus/headerbeforeSHA. C5candidate7filespluspreservedQAmapfix/historydirty;
+assistantstaticdiff/syntax/hashonly. C5BUILD_QA_RUNTIME_NOT_RUN, NO_COMMIT_PUSH.
+C5 fixesashutdowncandidate, notresidualWiFigaps. Do notrepeattheoldC4runtimepacket
+withchangedsource. NextuseronelocalQAcommand, reviewLOG_QA, thencommit/pushonly
+onuserapproval beforepreparingnewruntimegate.
+
+NEXT_STEP=USER_RUN_C5_SHUTDOWN_LOCAL_BUILD_AND_REGRESSION
+
+
+## C5-LOCAL-BUILD-SHUTDOWN-QA-PASS-REVIEWED-20261020-22
+
+User ran qa_c5_isolated_shutdown_candidate_20261020/verify_offline.sh,
+runqa_c5_shutdown_20261020_233644_oJ6zWj,23:36:44–23:36:56+07,RC0/stageCOMPLETE.
+Build fire_robot_navigation7.67s/colcon7.85s withrclcpp/components16.0.19,
+nav2_bringup1.1.20/rmw_fastrtps_cpp6.2.10. FourrealC++dummy localcontext testsPASS:
+EmptyManager10ms; ShutdownAfterAllExecutorsAlreadyReturned8ms;
+ShutdownImmediatelyAfterExecutorCreation5ms;
+LiveExecutorUnloadsAndRemainingExecutorStillRuns16ms. gTest39ms/CTest0.20s,
+30stesttimeout nothit. Pythonlaunchparity/installed/session checks59PASS0.94s,
+no deselection. Broadlintconfiguredbutnotrun; do notclaimfull-lintPASS.
+
+Assistant verified29rawhashes/6toolinputs/204currentcandidate sources, testedtool
+manifestexact, statusbefore/afterunchanged/processlistsbothempty. Installedlocal
+binarySHA2562b233273d573bf5649f49c9b47f829a2de6b704d2c317842fbce85c62bc24c8f
+matchesrawreceiptfile. InstalledbasisheaderSHAverified. No source/toole editsafter
+PASS; onlyreviewdocs/historyupdated. Derivedreview offline_gate_review_20261020_233644.json,
+raw_verification_20261020_233644.json andsavedgTestXML atpacketroot. Rawimmutable.
+Canonical C5_ISOLATED_SHUTDOWN_QA_RESULT_2026-10-20.md/performanceledger/index updated.
+
+Status C5LOCAL_BUILD_AND_SHUTDOWN_QA_PASS_REVIEWED, parent2ab8806 +dirtycandidate;
+C5NOT_COMMITTED/NOT_PUSHED. Tests uselocaldummyROS/loopbackonly, no fullNav2stack,
+Pi/USB/camera/YOLO/goal/actuator. Thealreadyreturnedexecutor case nowcompletes,
+notproofofallpluginshutdownsorallschedulerinterleavings. C5realNav2SIGINTshutdown
+andWiFi performanceNOT_RUN. C4pose232003remainsBLOCKED:3gapoverruns andTERM/RC143.
+NeverlabelitPASSbecauseC5unittestsPASS. N8R2/PiC2/camera15FPS/mission/model/QoS/
+watchdog unchanged; QAmapallowlistfix6PASS preserved andcoveredbycurrent59tests.
+
+Reviewedcandidate/diff/hash readyforusercommitapproval. Whenuserauthorizescommit,
+commitANDpushwithfullbodyplus thishistory; include7C5files,existingQAmapfix and
+historyonly, notmainphase3dirtyfiles/localrawlogs. ThenpinnewSHAandprepareone
+boundedstaticmanualpose20s/readiness+SIGINTcleanupcapture, PiI/O keptaliveuntil
+Nav2stop. Same telemetrythresholds. CurrentC4packetpin201mustnotbeusedwithC5source204.
+No repeatbuild/QA/firmwareflash orrobotrunneededbeforeapproval.
+
+NEXT_STEP=C5_REVIEWED_COMMIT_PUSH_APPROVAL_THEN_PREPARE_RUNTIME

@@ -8,11 +8,25 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
+find_package(Threads REQUIRED)
+
+# Local Humble shutdown backport; never replaces /opt/ros or the baseline profile.
+add_executable(fire_robot_component_container_isolated src/component_container_isolated.cpp)
+target_compile_features(fire_robot_component_container_isolated PRIVATE cxx_std_14)
+ament_target_dependencies(fire_robot_component_container_isolated rclcpp rclcpp_components)
+target_link_libraries(fire_robot_component_container_isolated Threads::Threads)
+install(TARGETS fire_robot_component_container_isolated DESTINATION lib/${PROJECT_NAME})
 find_package(rclpy REQUIRED)
 find_package(nav2_bringup REQUIRED)
 find_package(slam_toolbox REQUIRED)
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_isolated_shutdown test/test_isolated_shutdown.cpp TIMEOUT 30)
+  target_compile_features(test_isolated_shutdown PRIVATE cxx_std_14)
+  ament_target_dependencies(test_isolated_shutdown rclcpp rclcpp_components)
+  target_link_libraries(test_isolated_shutdown Threads::Threads)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

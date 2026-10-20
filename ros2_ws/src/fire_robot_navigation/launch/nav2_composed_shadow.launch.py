@@ -33,8 +33,8 @@ COMPONENTS = (
 
 def verify_runtime_components():
     """Fail before spawning when the installed Humble component set is incomplete."""
-    executable = os.path.join(get_package_prefix('rclcpp_components'), 'lib',
-                              'rclcpp_components', 'component_container_isolated')
+    executable = os.path.join(get_package_prefix('fire_robot_navigation'), 'lib',
+                              'fire_robot_navigation', 'fire_robot_component_container_isolated')
     if not os.path.isfile(executable) or not os.access(executable, os.X_OK):
         raise RuntimeError('Missing executable: ' + executable)
     for _, package, plugin in COMPONENTS:
@@ -104,8 +104,8 @@ def build_components(package_dir):
 def generate_launch_description():
     package_dir = get_package_share_directory('fire_robot_navigation')
     container = ComposableNodeContainer(
-        name='nav2_container', namespace='', package='rclcpp_components',
-        executable='component_container_isolated', output='screen',
+        name='nav2_container', namespace='', package='fire_robot_navigation',
+        executable='fire_robot_component_container_isolated', output='screen',
         composable_node_descriptions=build_components(package_dir))
     # A dead container must end the launch even when its optional RViz is still up.
     container_exit = RegisterEventHandler(OnProcessExit(

@@ -188,3 +188,25 @@ kết thúc buổi demo.
 Log mỗi node và nhật ký sự kiện JSONL nằm dưới thư mục
 `/tmp/fire_robot_session_*` được in lúc khởi động. Đây là luồng tích hợp thử
 nghiệm: unit test không thay thế bài chạy phần cứng có người giám sát.
+
+
+## Profile Nav2 composition C4 (tùy chọn trên laptop)
+
+C4 thêm `--nav2-composed` cho `start_demo.sh`. Khi chọn, Nav2 dùng một
+`component_container_isolated` chứa đúng 10 component của baseline. Các node có
+executor riêng; tham số/YAML, cây hành vi no_reverse, topic goal/cancel, đầu ra
+vận tốc shadow và các cổng kiểm tra dừng–căn–IR–phun giữ nguyên. Không bật cờ thì
+script vẫn dùng `nav2_motion_shadow.launch.py` như trước. Chọn profile không tự
+cấp quyền `--live`, không thay firmware ESP32-S3 N8R2 hoặc camera 15 FPS.
+
+Trạng thái lúc thêm profile: **candidate chưa qua offline QA/build/runtime**.
+Đọc `RUNTIME_VALIDATION_HISTORY.md` để biết gate mới nhất trước khi dùng trên xe.
+Không chạy demo chuyển động để thay cho phép đo static C4.
+
+Sau khi được nghiệm thu, thêm cờ này vào lệnh demo đã được phép chạy, ví dụ chế
+độ căn hướng dùng `./scripts/start_demo.sh --align-only --nav2-composed`.
+Fallback: kết thúc phiên hiện tại, xác nhận cleanup, rồi mở phiên theo lệnh cũ
+không có `--nav2-composed`; không chạy hai profile cùng lúc. Container hỏng có
+thể dừng toàn bộ Nav2; launch sẽ shutdown, các watchdog và arm của Pi/mission
+vẫn phải được giữ. C4 nhằm giảm participant/discovery DDS; mức giảm trễ thực tế
+chỉ được kết luận sau khi so capture cùng cửa sổ startup.

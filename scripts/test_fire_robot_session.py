@@ -274,3 +274,26 @@ def test_align_demo_reports_target_loss_without_auto_exit():
     assert SESSION.alignment_demo_outcome(
         alignment, guard, gateway, 0) == (
             'FAILED', 'Alignment: TARGET_NOT_REACQUIRED')
+
+
+@pytest.mark.parametrize('flag, expected', [
+    (False, 'nav2_motion_shadow.launch.py'),
+    (True, 'nav2_composed_shadow.launch.py'),
+])
+def test_nav2_profile_is_opt_in(monkeypatch, flag, expected):
+    argv = ['fire_robot_session.py', 'demo', '--align-only']
+    if flag:
+        argv.append('--nav2-composed')
+    monkeypatch.setattr('sys.argv', argv)
+    args = SESSION.parse_args()
+    assert SESSION.nav2_launch_profile(args) == expected
+    assert args.align_only and not args.ir_only
+    assert not args.live
+    # A transport selection never authorizes a live session or runs Pi preflight.
+    with patch.object(SESSION, 'ensure_pi', side_effect=AssertionError('unexpected Pi call')):
+        with pytest.raises(SESSION.SessionError, match='--live'):
+            SESSION.demo(args)
+
+
+def test_legacy_session_arguments_keep_baseline_launch():
+    assert SESSION.nav2_launch_profile(SimpleNamespace()) == 'nav2_motion_shadow.launch.py'

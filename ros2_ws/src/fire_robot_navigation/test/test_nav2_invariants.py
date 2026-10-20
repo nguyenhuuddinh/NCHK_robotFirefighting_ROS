@@ -140,6 +140,7 @@ class TestNav2Invariants(unittest.TestCase):
         expected_paths = [
             'launch/nav2.launch.py',
             'launch/nav2_motion_shadow.launch.py',
+            'launch/nav2_composed_shadow.launch.py',
             'launch/slam.launch.py',
             'config/nav2_params.yaml',
             'config/mapper_params_online_async.yaml',
@@ -199,6 +200,7 @@ class TestNav2Invariants(unittest.TestCase):
         expected_paths = [
             'launch/nav2.launch.py',
             'launch/nav2_motion_shadow.launch.py',
+            'launch/nav2_composed_shadow.launch.py',
             'launch/slam.launch.py',
             'config/nav2_params.yaml',
             'config/mapper_params_online_async.yaml',

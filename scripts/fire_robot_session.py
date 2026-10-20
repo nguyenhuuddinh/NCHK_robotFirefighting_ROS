@@ -712,6 +712,13 @@ def ir_telemetry_overdue(ir, last_seen_at, now, timeout_s=1.0):
     return ir is None and now - last_seen_at >= timeout_s
 
 
+def nav2_launch_profile(args):
+    """Select an opt-in transport profile without changing mission policy."""
+    return ('nav2_composed_shadow.launch.py'
+            if getattr(args, 'nav2_composed', False)
+            else 'nav2_motion_shadow.launch.py')
+
+
 def demo(args):
     """Start a supervised alignment-only or full live demo session."""
     if not args.live:
@@ -724,7 +731,7 @@ def demo(args):
     try:
         session.monitor = TelemetryMonitor(on_change=session.event)
         session.launch('nav2', 'fire_robot_navigation',
-                       'nav2_motion_shadow.launch.py',
+                       nav2_launch_profile(args),
                        'use_sim_time:=false', f'map:={map_path}',
                        'rviz:=true')
         wait_until('Nav2 active + map_server',
@@ -1096,6 +1103,9 @@ def parse_args():
     demo_parser.add_argument('--live', action='store_true',
                              help='Explicitly authorize live motion; pump '
                                   'only in the full demo mode')
+    demo_parser.add_argument('--nav2-composed', action='store_true',
+                             help='Opt-in isolated Nav2 container on laptop; '
+                                  'same shadow output and mission gates')
     trial = demo_parser.add_mutually_exclusive_group()
     trial.add_argument('--align-only', action='store_true',
                        help='Live Nav2, fire stop/cancel and body '

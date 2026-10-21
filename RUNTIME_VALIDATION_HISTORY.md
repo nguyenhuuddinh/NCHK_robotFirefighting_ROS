@@ -1092,3 +1092,346 @@ mộtfullstaticWiFi/pose/shutdowngate;khônglặpQA/probeC5. R1fullruntimependin
 R2YOLO/R3goalcancel/R4baselinefire chưađạt. Pi59283c5/N8R2/15FPS/model/missiongiữ.
 
 **NEXT_STEP=C6_REVIEWED_COMMIT_PUSH_APPROVAL_THEN_ONE_STATIC_WIFI_RUNTIME**
+
+
+## C6-STATIC-WIFI-TOOLS-PREPARED-120S-AND-CHILD-EXIT-PROOF-20261021-37
+
+## 21/10 — C6 đã push; chuẩn bị một lượt R1 static có giới hạn
+
+C6 commit/push hoàn tất: `4e2fe97c5c9dd92a22973c8a3e1f7f0d6e06fae5`,
+parent fdea296, branch codex/laptop-baseline-recovery, remote SHA verified.
+Local candidate QA012619SKeNUQ đạt build10.6s/11C++/59Python/2componentEXIT0;
+không dùng localQA thay full10component/WiFi runtime. Source sau commit giữ nguyên.
+
+Packet mới `.codex_qa_backups/qa_c6_static_wifi_tools_20261021` ở repo chính;
+[flow/scope/lệnh hiện hành](docs/codex/current/C6_STATIC_WIFI_RUNTIME_2026-10-21.md).
+Kế thừa tools C5 nonGDB có kiểm hash và parser shutdown đã sửa. Pin206source
+laptop4e2fe97,199sourcePi59283c5, container binary từ C6build đãQA. Khôngpull/build
+Pi, khôngflash. Raw cũ giữ nguyên. Tool/docs localGitignored, phải sao lưu riêng.
+
+Một observer mỗi máy, không decodeJPEG/pcapbus. COM5s→PiI/O30s→Nav2laptop20s→RViz
+pose operator; đợipose<=180s/ready5s→đo120s. Cùng lượt lưu20s đầu để soC4/C5,
+không resetstats/latchedsafety ở20s; startup tách riêng, sample5s/host10s/ping1Hz.
+Giữ threshold/QoS/watchdog/safety/staticroute/N8R2/15FPS/model/missionbaseline.
+Logodom/TF/scan/JPEG/IMU, lifecycle, DDSendpoints, network/CPU, kernelUSB và UART.
+Khôngbyte-levelRTPS, khôngnghiệmthuYOLO/goal/motion/pump trongR1.
+
+Final gate kế thừa source/overlay/Pimanifest/latchedsafety/cleanup, yêu cầu120s
+và20s cùngstart, captureUART/clock/host/kernel đầy đủ, actualcleancontainerchild
+exit sauINT. LaunchRC0/processrỗng khôngthaycleanchildproof; childcrash/forced
+TERM/KILL/missingproof chặn. Findings telemetry/shutdown riêng để khôngche lỗi.
+C6 sửa lifetime shutdown; chưa có bằng chứng giảm jitter hoặc dữ liệu đã ổn định.
+
+STATIC_DIFF/AST/BASH/SOURCE+BINARY_HASH_REVIEW_ONLY. **TOOLS_OFFLINE_QA_NOT_RUN;
+C6_FULL_RUNTIME_NOT_RUN.** Không chạy test/build/ROS/SSH/serial bởi assistant.
+User chạy một lệnh verify_tools.sh (fakefiles/time/UART/ROS/signals, <=60s), gửi
+LOG_QA→reviewraw/hash→copy tools và một pairedWiFi/manualpose/120s/shutdown.
+Thông thường4–6phút; deadlinePiI/O480s/observer420s, có thể8–9phút với pose/copy.
+R1 vẫnpending; R2YOLO/R3goal-cancel/R4baselinefire theo sau kết quả thực tế.
+
+**NEXT_STEP=USER_RUN_C6_STATIC_WIFI_TOOLS_OFFLINE_QA**
+
+
+## C6-STATIC-WIFI-TOOLS-97PASS-REVIEWED-20261021-38
+
+## 21/10 02:21:42 — QA công cụ C6 đạt, chờ một lượt thực tế qua WiFi
+
+User chạy packet `qa_c6_static_wifi_tools_20261021`, run `20261021_022141`:
+**97 passed in0.39s, RC0**. Assistant chỉ đọc và review; không chạy lại tests.
+4file raw khớp SHA256.55input công cụ/manifest exacttested/OFFLINE_QA_OK khớp;
+manifest b00fa7920f4b565f79c0d03562aa6ffac9e75eca59dac990426d7a101cf8bf4f.
+206source laptop khớp working tree và commit4e2fe97; binary bf286522… đúng bản
+C6 đãbuild. Pi199source vẫn pin59283c5; không kiểmPi live trong review offline.
+Code/tools giữ nguyên sauQA, chỉ nối Markdownhistory; chưa commit mục37–38.
+
+Đạt **OFFLINE_TOOLS_QA_PASS_REVIEWED**, không phải fullNav2/WiFi/robotPASS.
+[Runbook ba khối lệnh, đều gõ laptop](docs/codex/current/C6_STATIC_WIFI_RUN_2026-10-21.md).
+Copy packet+marker qua AP; A tựSSH Pi chạyI/O, B local chạyNav2+minimalRViz và
+COMcapture. User tựInitialPose/map9_10, khônggoal/arm. Mộtlượt120s sau readiness,
+20s đầu cùng lượt đểsoC4/C5, startup tách riêng. Khởi động theo từng bước để hạn
+chế tải đột ngột; không thêmpcapbus hoặcJPEGdecode. Giữ camera15FPS vàESP N8R2.
+
+Không cần pull/buildPi hoặc flashESP. Runtime C6 chưa chạy; chưa kết luận jitter
+hoặc shutdownfull10component đãhết lỗi. Giữ motor/bơmOFF, SerialMonitor/ROS cũ
+đóng, Ethernet hai máyDOWN, nativeESPUSB→Pi/COM→laptop. C6khôngđổi hànhvibaseline.
+Thường4–6phút, cóthể8–9 với pose/copy; giữ AP tới khi hai terminal dừng/copyxong.
+GửiLOG_LAPTOP/FINAL_VERDICT/FINAL_EXIT_RC. Rawreview→cập nhật metrics/status/
+ledger/reportindex; R1pending,R2YOLO/R3goal-cancel/R4fire theo kết quả thực tế.
+
+**NEXT_STEP=USER_RUN_ONE_C6_PAIRED_STATIC_WIFI_120S_AND_SHUTDOWN_CAPTURE**
+
+
+## C6-STATIC-WIFI-120S-BLOCKED-TELEMETRY-AND-FORCED-SHUTDOWN-20261021-39
+
+## 21/10 09:06:00 — C6 đã đo đủ120s; R1 chưa đạt
+
+[Báo cáo, bảng so sánh và lệnh snapshot tiếp theo](docs/codex/current/C6_STATIC_WIFI_RESULT_2026-10-21.md).
+Run qa_baseline_combined_laptop_20261021_090600, Pi copy folderqa_baseline_combined_20261012_145507
+nhưng receipt/log thật là21/10. Laptop4e2fe97,Pi59283c5,N8R2,camera15FPS,map9_10.
+104outer/43Pi/3UARTrawhash/55toolhash verified; exact tested toolsmanifest và206/199
+source manifests khớp. Sourcebefore/after/Pi sourcecheck thànhcông, binaryC6pin khớp.
+Assistant đọc log/phân tích dữ liệu; không chạy lại tests/build/ROS/SSH/serial.
+
+Đo09:07:37.682464–09:09:37.684168+07,120.001962s; first20.000190s cùngstart.
+Bắt đầu ~51.634s sau Nav2startmarker. 8lifecycleactive, operatorpose/safety đúng,
+nonzerocmd0/forbiddenpublishers0 cảhai, cleanup sạch, RUNNER_RC0/COPY0.
+FinalBLOCKED_READINESS_OR_TELEMETRY/RC2; không phải thiếupose hoặc bàiđobịcắt.
+
+Toàn120s laptop: odom1130msg/gap912.720ms/age1090.641ms; TF2150/gap810.924/
+age1187.062;scan586/gap1790.124/age1277.828;JPEG1634/13.616FPS/gap1142.397/
+age1027.536ms. JPEG5gap>500ms. Cuối đo odom24ms/TF0.13/scan188ms đãphụchồi.
+Sau20s vẫn có spikes đến+114s; không gọi chỉstartup. So20s đầuC6 với20sC5
+lưu riêng, n=1/khácđiềukiện nên không quy nhân quả tăng/giảm doC6.
+
+23wholebins≈115s tươngứng:Pi odomgapmax108.557/TF106.318/scan203.271ms,
+PiJPEG có1gap502.085ms; laptop trễ rõ hơn. Ping cùngcửađo laptop→Pi mean76.20/
+max1754ms; ngược mean55.64/max1431ms. Wholepingloss gồmstartup/cleanup1.333%/
+6.912%, không phảiDDSloss. CPUbusy10s tổngmáy laptop2.53–3.58%,Pi30.80–32.66%:
+chưa có bão hòaCPU kéo dài; không loại trừ transient/one-thread/kernel stall.
+Ưu tiên nhánh WiFi/driver/receive laptop; chưa chốt radio/powersave/DDS rootcause.
+Cảhai thiếuiw nên không có actualPS/MCS/stationretry. IdlePSA/Bcũ khôngcải thiệnrõ.
+
+UART413lines/COMPLETE, USBactivity/IDLE→MANUAL/PumpOFF; khôngCDCstall/reset/panic
+thêm trong log. InbandBOOT1lần firmware0343c56…/uptime581508ms, không phải reset
+trongđo. Pi kernel khôngESPdisconnect; cameraUSBreset09:06:22.623 trướcmeasurement,
+chưa xácnhận nguyênnhân. PiNTP=no, SSHclockbounds rộng; wall-minus-monotonic netdelta
+tronghostsamples≈0.0015ms laptop/0.0158msPi, không có bằngchứng netclocksteptrongđo.
+TênfolderOct12 khôngthểdùng suyra đồnghồ đanglệch9ngày trongmeasurement. Headerage
+khôngonewayWiFi/acquisitionage; mapTFfuturestamp không tựchứngminhclockfault.
+
+Shutdown: retainedSpin/Wait2libs cólog. INT09:09:38.315;cleanup qua cácnode,
+cuối bt_navigatorCleaningup09:09:41.864; runnerTERM09:09:48.351 sau10.04s,
+NAV2_EXIT_RC143, khôngcleanchildexitline. KhôngSIGSEGV/abort quan sát trướcTERM,
+nhưng không nghiệmthu C6fullteardown hoặc khẳngđịnh crashđãfix. Chưa stackđiểmkẹt;
+khôngtự tăngtimeout/bỏBTplugin/đổiwatchdog đểépPASS. RàheadersHumbleon_cleanup
+chuỗiNavigator/BtActionServer; chưa xácđịnhdòngreset nào chậm/kẹt.
+
+Bước tiếp: user lấy snapshot WiFi hiện tại bằnginspect_wifi.sh đãQA (khôngROS/
+scan/reconnect/mutation), copyPi snapshot vềlaptop. Assistant tiếp tục rà BTcleanup
+offline; cần bằngchứngđịnhvịtrướcpatch. Không lặp full120s hoặc chạyGDBtoànbài
+chưachọnmụcđích. R1BLOCKED,R2YOLO/R3goal-cancel/R4fire chưa nghiệmthu.
+Tools/code giữ nguyên; chỉ docs/history+derivedanalysis cậpnhật, chưacommit mục39.
+
+**NEXT_STEP=READ_CURRENT_WIFI_CONFIGURATION_AND_REVIEW_BT_NAVIGATOR_CLEANUP_OFFLINE**
+
+
+## PRACTICAL-ACCEPTANCE-AND-WIFI-REBOOT-SNAPSHOT-20261021-40
+
+## 21/10 — user chấp nhận jitter vừa phải có phục hồi; chuyển trọng tâm sang chức năng
+
+User báo đã tắt Pi qua đêm và mở lại buổi sáng. Không dùng việc restart bình thường
+để kết luận ESP lỗi. User nhắc rõ: chấp nhận độ trễ vừa phải/ngắn nếu tự hồi phục;
+không cần không-trễ, không muốn debug kéo dài để đạt sự hoàn hảo.
+
+[Quyết định nghiệm thu thực dụng và phạm vi R2](docs/codex/current/PRACTICAL_ACCEPTANCE_UPDATE_2026-10-21.md).
+Assistant đã để ngưỡng thống kê nghiêm ngặt chặn bước tiếp quá lâu. Chốt lại: các
+ngưỡng đo cũ giữ để so lịch sử, không tự chặn chuẩn bị perception đứng yên chỉ vì
+một max-gap vượt. Guard runtime/watchdog/E-stop/stale/arm/ownership không đổi.
+User chưa phê duyệt số ms tối đa cho mọi hành vi; không tự đặt ngưỡng mới hoặc
+coi gap1790ms đã được nghiệm thu cho xe đang chạy.
+
+Snapshot laptop092911/Pi092914:2file mỗi máy/4hash khớp. Vẫn WiFi AP10.0.0.1↔
+10.0.0.253, EthernetDOWN, bg/kênh11/2462MHz, driver/kernel như20/10. Laptop
+profilePS0default/runtimebuson, PiPS2disable/busauto; iw thiếu cảhai. Không có thay
+đổi cấu hình lớn được quan sát, chưa có actualradioPS/MCS/retry hoặc rootcause.
+Không cài/đổi AP/channel/powersave hoặc lặp ping riêng để tiếp tục lúc này.
+
+C6run090600 giữ FINAL_VERDICTBLOCKED/RC2 gốc. Đã có đủ120s,8active/pose/safety,
+nhận telemetry/camera13.616FPS và hồi phục; thêm đánh giá
+READY_TO_PREPARE_R2_STATIC_WITH_KNOWN_LIMITATIONS. Không ghi lại robotPASS vào raw.
+Jitter và shutdown cầnSIGTERM ởbt_navigator vẫn là lỗi mở; C6fullgraceful chưa đạt.
+Không cần R1 hoàn hảo mới chuẩn bị R2 đứng yên có giới hạn/owned-process cleanup.
+
+R2: reuse observer/hash/metrics, source laptop4e2fe97/Pi59283c5/N8R2/15FPS,
+Nav2+YOLOlaptop. Sourceperception.launch.py giữ modelbest_final/GPUvenv/threshold,
+chỉdetections/annotated/alignmentpreview, không mission/actuatorpublisher. Viewer
+nhẹ và user xác nhận SHOW/HIDE sau khi sắp cảnh; một cửa sổ dự kiến5phút,
+đo YOLO+telemetry+CPU/WiFi+USB/UART cùng lượt. R2runner chưa viết/test/chạy.
+Ghi functional/recovery/scenecoverage riêng, không test lặp tất cả build cũ.
+Goal/cancel rồi căn/IR/phun theo baseline và phần hardware được cấp quyền sau.
+Nhánh shutdown rà riêng, không dùng nó kéo dài vô hạn test đứng yên.
+
+Assistant chỉ review/config/data và sửa MD; code/tools/model/runtimeguards giữ
+nguyên. Không test/build/ROS/SSH/serial hoặc commit/push lần này. History40dirty.
+
+**NEXT_STEP=PREPARE_ONE_R2_STATIONARY_YOLO_FUNCTIONAL_CAPTURE_USING_BASELINE_MODEL_AND_GUARDS**
+
+
+## R2-STATIONARY-YOLO-VIEWER-TOOLS-PREPARED-20261021-41
+
+## 21/10 — chuẩn bị một lượt R2 có viewer và nhãn cảnh do operator xác nhận
+
+User: “ok chuẩn bị yolo”. Theo tiêu chí thực dụng mục40, giữ recoveredjitter làm
+metrics/giới hạn, không ép mọi max-gap đạt mới kiểm chức năng đứng yên.
+[Scope, lệnh QA và flow R2](docs/codex/current/R2_STATIONARY_YOLO_PREPARATION_2026-10-21.md).
+
+Packet qa_r2_yolo_static_tools_20261021 mới,54input, manifest
+e38b336f9c81316b02cdb0d7d375915fd4527bda233a1c9700bd5daca2a195f3.
+Kế thừa C6testedbasis; không sửa packet/rawC6. Pin laptop4e2fe97/206source/binary
+bf286522…, Pi59283c5/199source, N8R2/camera15FPS/map9_10/modelbest_final758c18bc…/
+GPUvenv/configYOLOgiữ. Không sửa ROSsource/firmware/model/QoS/watchdog/stale/arm.
+
+COM5s→PiI/O30s→Nav2laptop20s→RViz/operatorpose→YOLOcuối/warmup<=120s. Mộtwindow
+300s, tail<=15s chỉ chứng minh phục hồi cuối; không gộp làm đẹp metrics mainwindow.
+Viewer trên cùng observerlaptop, decode/display<=5FPS,16raw+1annotated,5snapshots
+max; không node/inference/DDSsubscriptionphụ. Box/khungcăn là annotatedbaseline,
+rawfallback cóWAIT/STALE rõ, windowchưa map không tựthoát; Q/Esc ghiincomplete.
+
+User sắp cảnh trước, bấm1EMPTY/2SHOW/3HIDE/4SHOW/5HIDE, giữ15s mỗi cảnh; chưa bấm
+UNLABELLED. Không yêu cầu thao tác đúng thời điểm countdown tự chuyển nhãn. Scene
+không được gated theo detector đã thấy để tránh bias. Chỉ tính distinctfreshsource
+sau floor, agehiệntại−20..300ms theo baselinealignment, bỏ2ssettle. SHOW>=3confirm;
+EMPTY/HIDE>=3fresh tail5s và khôngconfirmởtail. Thiếucảnh/data ghiINCOMPLETE,
+không tựcoimodelhỏng. Ảnh điệnthoại không nghiệmthuIR/bơm.
+
+Ghi YOLOpayload/age/scenes, telemetry/CPU/GPU/WiFi/USB/UART nhưC6; kếtquảchức năng/
+jitter/safety/shutdown riêng. R2FUNCTIONAL_PASS_WITH_KNOWN_LIMITATIONS cho scope
+đứngyên, khôngđổirawC6BLOCKED hoặcgọiNav2TERM graceful. Nonzero/forbiddenowner,
+thiếusafety/source/copy/hash/cleanup hoặcchưa hồi phục cuối khôngPASS.
+
+PiI/O900s/observer900s/UART1000s giới hạn QAphiên, không đổiwatchdogrobot. Thường
+7–10phút tổng, cóthể12–14phút với pose/warmup/copy. No-goal/no-arm/motorpumpOFF.
+
+STATIC_DIFF/AST/BASH/PINNED_SOURCE_BINARY_REVIEW_ONLY. **TOOLS_QA_NOT_RUN;
+R2_RUNTIME_NOT_RUN.** Tests fakeROS/OpenCV/clock/UART/file không đụngGPU/GUIthật.
+Assistant không chạy tests/build/ROS/SSH/serial. User một lệnhverify_tools.sh<=60s,
+gửiLOG_QA→reviewraw/hash→copyvàpairedruntime. Chưa commit/pushhistories mới.
+
+**NEXT_STEP=USER_RUN_R2_STATIONARY_YOLO_TOOLS_OFFLINE_QA**
+
+
+## R2-TOOLS-58PASS-REVIEWED-AND-VIEWER-SCENE-INSTRUCTIONS-20261021-42
+
+## 21/10 10:05:22 — QA công cụR2 đạt, sẵn sàng một lượt pairedYOLO đứng yên
+
+Run qa_r2_yolo_static_tools_20261021/offline_runs/20261021_100522:
+**58passed/0.20s,RC0**.4rawhash/54toolhash, exacttestedmanifest/QAmarker khớp.
+206source laptop khớp working tree/commit4e2fe97, binaryC6 vàmodelbest_final758c18bc…
+đúngpin. Pi199manifest giữ59283c5; không livePi trong reviewoffline. Chỉhistorydirty;
+code/tool/model khôngđổi sauQA. Assistant chỉđọc/hash, khôngruntests/build/ROS/GUI/serial.
+[Runbook copy/A/B và giải thích thao tác](docs/codex/current/R2_STATIONARY_YOLO_RUN_2026-10-21.md).
+
+User hỏi viewer5FPS và các phím1–5. Ghi rõ: viewer làcửa sổ xemảnh cậpnhật<=5/s,
+camera vẫnconfig15FPS, tham sốYOLO khôngbịép5. Nhịp thực tếcamera/inference đo
+riêng; khônghứa15inferences/s. Annotated/khungcăn do baselineYOLO vẽ, khôngđổi.
+User sắp cảnh xong, click cửa sổảnh (khôngterminal), bấmphím đượcnhắc:1EMPTY,
+2SHOW1,3HIDE1,4SHOW2,5HIDE2,giữ15s mỗi cảnh. Thời gian chưa bấmUNLABELLED.
+Sau5cảnh giữkhônglửa chờđủ300s; khôngQ/Esc/đóngwindowvìsẽdừngsớmINCOMPLETE.
+Mẫuảnh/videođiệnthoại, khôngcầnlửathật/IR. WAIT/STALE thìđợiframemới.
+
+OFFLINE_R2_TOOLS_QA_PASS_REVIEWED, **R2_RUNTIME_NOT_RUN**. Không lấy58fake tests
+thaynhận diệnthật. Flow COM5s→PiI/O30s→Nav2laptop20s→pose→YOLOwarmupcuối<=120s→
+đochính300s/recoverytail<=15s. Tổngthường7–10phút,cóthể12–14vớiwait/copy.
+NativeUSB→Pi/COM→laptop,WiFiAP/LANDOWN,motorpumpOFF/no-goal/no-arm. Khôngbuild/
+pull/flashlại. Runtime guards/model/15FPS/N8R2/map9_10/Baselinegiữ.
+
+GửiLOG_LAPTOP/FINAL_VERDICT/FINAL_EXIT_RC. Review scene evidence/raw/hash rồi
+cập nhậtfunctional/jitter/recovery/shutdown riêng; C6TERMvẫnlỗimở,khôngfullNav2PASS.
+Khôngtựlặptoànbài hoặcđổingưỡngkhioperatorlàmthiếucảnh. Goal/cancel/IR/phun chưa
+nghiệmthu. Trackedhistory42 nối, chưacommit; sourceC6đãpush,tool/docs/rawlocalignored.
+
+**NEXT_STEP=USER_RUN_ONE_R2_PAIRED_STATIONARY_YOLO_CAPTURE_WITH_VIEWER**
+
+
+## R2-RUNTIME-FUNCTIONAL-PASS-WITH-LIMITATIONS-20261021-43
+
+Run101514: **R2_FUNCTIONAL_PASS_WITH_KNOWN_LIMITATIONS, RC0**, main300.007753s
+10:18:09.362700–10:23:09.369558+07. Laptop4e2fe97/Pi59283c5/N8R2/model758c18bc…/
+camera15FPS/map9_10 giữ.119outer/43Pi/3UART/54toolhash/exacttestedmanifest/
+206source laptop/199Pimanifest/binary xác minh; raw và inputs đã test giữ nguyên.
+
+Đếm độc lập5cảnh: EMPTY125/0confirmed; SHOW1129/129; HIDE1160/0; SHOW2160/148;
+HIDE2121/0. Ba cảnh khônglửa tailconfirmed0;5JPEG gốc phù hợp nhãn đã mở. Không
+lấy số này thành recallbenchmark.3325ok/20camera_stale trong3345resultsmain;
+inference mean16.271/max24.11ms,processing mean17.400ms (không endtoend).
+JPEG11.073FPS/gap3407.243ms,odomgap1174.817/TF1160.021/scan1874.074ms; cuối đo
+current lại. PiTF618.607/JPEG1683.619ms nên không quy mọi gap choDDS/WiFi.
+
+Safetyzero/8active/pose đạt, không observed lifecycleexit. KernelPi noentries,
+UART931 COMPLETE: watchdog10:15:17.784→validRX10:15:34.420 hồi MANUAL trước main;
+không gọi BOOT/reset/USBfault trong main.3335libjpegwarnings nhưng60stats
+maxdecode_errors0/inference_errors0, nguyên nhân chưa rõ. YOLOEXIT0; Nav2INT10s→
+TERM/143, dòng cuối smoother_serverCleaningup; cleanup hai máy sạch. Jitter và
+shutdown vẫn knownlimits, C6strictBLOCKED không đổi; chưa goal/motor/IR/phunPASS.
+
+User yêu cầu viewer mượt hơn trêni5gen12/RTX3050 6GB. Soạn candidate riêng cap5→15,
+AST/diff một dòng; GUI_NOT_RUN/nextpacketpending. Annotatedbaselinecap10, không
+sửa model/threshold hoặc hứa15FPS box. Không lặp R2 vì displaycap. Docs có result,
+JSONmetrics, sceneproof, kếhoạchR3 và checkpoint. Chưa chạy tests/ROS/GUI/SSH/
+serial bởi assistant; chưa commit/push lịch sử mới, runtime source không đổi.
+
+**NEXT_STEP=PREPARE_R3_GOAL_CANCEL_PLAN_AND_USE_VIEWER15_NEXT_SESSION_NO_R2_REPEAT**
+
+
+## R3-NORMAL-GOAL-REARM-CANDIDATE-PREPARED-NOT-APPLIED-20261021-44
+
+User hỏi Nav2forcedshutdown: R2 đo active, không observed crash giữa bài; khi kếtthúc
+SIGINT10s chưaexit thìTERM/143. Teardownlimit riêng chưa sửa/đạt bởiR3.
+
+Rà baseline4e2fe97 LiveNavStopCore thấy normalgoalSUCCEEDED/operatorCANCELED không
+đủ proof fullfirecycle nên releasedgateway không nhậngoal mới. Đây là findingtừ
+source, không suy từR2 khônggoal. Soạn candidate mộtgateway trong packet riêng
+qa_r3_goal_rearm_candidate_20261021: terminal4/5 exactUUID khi inputvalid→zero/
+stationaryrelease cũ→1s liên tụcIDLE/nofire/off/zero→UUID mới với toànadmission cũ.
+ProofIDLE hết hạn bằngmissiontimeout0.35; xửlý callbackreordering trong đúng hạn,
+không phátmotion trong lúcđợi. ABORTED/fault/fire/missingarm/stale/ownerconflict
+không được xóa latch bằng normalterminal. Firecycleproof cũ giữ, khôngframeworkM3.
+
+Thêm4scalar và2stateJSONfields; không node/thread/timer/inference mới. Không đổi
+model/15FPS/N8R2/topic/QoS/firmware/guard. Chưa áp worktree/install/build/Pi; viewer15
+candidate chưaGUI/integrate. Scriptdemo cũ không navigation-only, chưa dùng R3 thật.
+7toolinputhash/206baselinesource pin; verify tạo overlay package tronglog, kiểm
+candidateimportpath rồi gateway/cancel/diagnosticsregression+newcases deadline60s.
+AST/bashsyntax/diff chỉ; **OFFLINE_QA_NOT_RUN; RUNTIME_NOT_RUN**. Assistant không
+chạytests/build/ROS/SSH/serial/GUI. User một lệnhverify_offline.sh→LOG_QA→review
+trướcapply/commitpush/buildlaptop. Chưa cấp quyền motor/goal/arm hoặc nghiệmthuR3.
+Docs có finding/candidate/nextstep; rawR2 vàtested54toolinputs giữ nguyên.
+
+**NEXT_STEP=USER_RUN_ONE_R3_NORMAL_GOAL_REARM_OFFLINE_QA**
+
+
+## R3-NORMAL-GOAL-REARM-111PASS-REVIEWED-APPLIED-UNCOMMITTED-20261021-45
+
+Userrun qa_r3_rearm_20261021_105614_jFrbag: **111passed/0.26s**, EXIT_RC0,
+LAST_STAGEOFFLINE_COMPLETED,10:56:14–15+07.7rawloghash/7toolinputs/exacttestedmanifest/
+206sourcebeforeafter, candidateimportpath và27overlaypackagefiles đãxác minh.
+Reviewdiffkhông finding mới buộc đổi candidate. Không chạy lạiQA bởiassistant.
+
+Đãáp đúng gatewaySHA11cf5424e7b7ea55741cccee9022ca018225064626d748f4a996eb638117148b
+và test_normal_goal_rearm.py đúngbyteđãtest vào baselineworktree.205file nguồnkhác
+khôngđổi; base206/toolmanifest/raw giữ; manifestpostapply207artifactriêng. Cóbackup
+modulecũ tạiqa_r3_goal_rearm_candidate_20261021/before_apply_20261021_105614.
+Core terminalexactUUID4/5→zero/stationaryrelease→1scontinuousIDLE/off/nofire/zero→
+newUUID với admissioncũ. Proofhết hạn0.35s, xửlýcallbackreordering tronghạn. Mấtarm/
+stale/owner/actuator/fire/faultlatch/ABORTED không tựclear, firecycleproof cũgiữ.
+4scalar/timer20Hzcũ, không node/thread/inference/topic/QoS/guard/FW/model/FPS mới.
+
+gitdiff--check sạch; trackedruntime/testapplied+historydirty, HEAD vẫn4e2fe97.
+Chưa commit/pushmới/build/ROS/goal/motor/arm; primarydirty giữ. Pi59283c5/N8R2 và
+camera15FPS/model giữ; patchlaptop không cầnPi pull. Viewer15candidate riêng chưa
+GUI/integrate. R2functionalPASSknownjitter/TERM khôngđổi.111tests khôngrobotR3PASS,
+khôngsửaNav2shutdown hoặcABORTEDrecovery. Docsresult/checkpoint/commitbody đầyđủ.
+
+**NEXT_STEP=USER_AUTHORIZE_COMMIT_PUSH_THEN_LAPTOP_BUILD_AND_PREPARE_R3_RUNTIME**
+
+
+## R3-COMMIT-PUSH-AUTHORIZED-AND-REVIEWED-20261021-46
+
+User: "ok push đi". Commit này đóng gói gatewaynormalgoal vàtest đúngcandidate
+111PASS/0.26s (run105614_jFrbag), kèm các journal37–45 đãreview nhưng chưacommit.
+Base4e2fe97, branchcodex/laptop-baseline-recovery.207sourcepostapplyhash vàexact
+candidate/test khớp trướccommit; gitdiff--check sạch. Chỉ3file: gateway,testnormalgoal,
+RUNTIME_VALIDATION_HISTORY; primaryworktree vàPi khôngđổi. Body ghi scope,QA,limits.
+
+SUCCEEDED/CANCELED exactUUID→zero/stationaryrelease→continuousIDLE/off/nofire1s→
+newUUID cóadmissioncũ. ABORTED/fault/fire/arm/stale/ownership khôngtựclear. Giữ
+camera15FPS/N8R2/model/QoS/guard; no node/thread/worker mới. BUILD_NOT_RUN và
+R3_HARDWARE_RUNTIME_NOT_RUN. Nav2TERM khi shutdown vàWiFijitter củaR2 cònknownlimits;
+không lấy111tests thành acceptancechuyểnđộng. Viewer15candidate chưaintegrate.
+
+SHAcommit và kếtquả push thực tế ghi ở docs/codex/current/R3_COMMIT_PUSH_2026-10-21.md
+(localGitignored; đốichiếu gitlog/remote). Không ghi SHA tự thamchiếu vào commit.
+Saupush chuẩn bị mộtlệnh build/importlaptop cho user, rồi boundednavigation-only
+runtimevớioperator; patchlaptop không cầnPi pull/build hoặcflash. KhônglặpQAđãđạt.
+
+**NEXT_STEP=USER_LAPTOP_BUILD_IMPORT_THEN_PREPARE_BOUNDED_R3_NAVIGATION_RUNTIME**

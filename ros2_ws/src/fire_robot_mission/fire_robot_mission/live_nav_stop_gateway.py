@@ -127,6 +127,10 @@ class LiveNavStopCore:
         self.actuator = None
         self.actuator_at = None
         self.clear_since = None
+        self.normal_terminal = None
+        self.normal_clear_since = None
+        self.normal_clear_seen_at = None
+        self.normal_ready_at = None
 
     def update_mission(self, payload, now):
         self.mission = payload
@@ -241,6 +245,10 @@ class LiveNavStopCore:
                 self._clear_for_next_goal(now, stationary, cmd_zero) and
                 stationary and cmd_zero and self._actuator_off(now)):
             return False
+        return self._start_next_goal(new_goal)
+
+    def _start_next_goal(self, new_goal):
+        """Reset cycle-local evidence only after one admission path passed."""
         self.used_goal_uuids.add(self.goal_uuid)
         self.goal_uuid = new_goal
         self.ever_forwarded = False
@@ -255,7 +263,82 @@ class LiveNavStopCore:
         self.alignment_completed_uuid = None
         self.pump_completed_uuid = None
         self.reviewed_clear_uuid = None
+        self.normal_terminal = None
+        self.normal_clear_since = None
+        self.normal_clear_seen_at = None
+        self.normal_ready_at = None
         return True
+
+    def _normal_terminal_result(self, now):
+        """Require one explicit result for this UUID from the status stream."""
+        if self.status_at is None or now < self.status_at:
+            return None
+        matches = [value for uid, value in self.statuses or ()
+                   if uid == self.goal_uuid]
+        return matches[0] if len(matches) == 1 and matches[0] in (4, 5) else None
+
+    def _normal_cycle_rearm(self, now, blockers, raw_ok, nav_ok, safety_ok,
+                            stationary, cmd_zero, raw_count,
+                            status_count, mission_count, odom_count, arm_count):
+        """Admit a new goal after normal completion, never after a fault stop.
+
+        The previous exact UUID must have SUCCEEDED/CANCELED while all motion
+        inputs were valid. A continuous idle/off/zero interval is required;
+        its proof expires with the existing mission timeout. New-goal admission
+        still requires every normal navigation input and an operator heartbeat.
+        """
+        if self.normal_terminal is None or self.fire_latched:
+            self.normal_clear_since = self.normal_clear_seen_at = None
+            self.normal_ready_at = None
+            return False
+        terminal_ok = (self._normal_terminal_result(now) == self.normal_terminal
+                       and self.stop_reason in (
+                           'NAV_GOAL_SUCCEEDED', 'NAV_GOAL_CANCELED'))
+        mission = self.mission if isinstance(self.mission, dict) else {}
+        perception = mission.get('perception') or {}
+        # Reuse the existing mission safety contract and health checks, allowing
+        # only the expected idle blockers while there is no active goal or cmd.
+        idle_blockers = {'NAVIGATION_NOT_OWNED', 'NAV_GOAL_UUID_UNAVAILABLE',
+                         'NAV_COMMAND_MISSING_OR_INVALID'}
+        passive_ok = (terminal_ok and raw_count == 0 and raw_ok and nav_ok
+                      and safety_ok and status_count == mission_count
+                      == odom_count == arm_count == 1
+                      and set(blockers) <= idle_blockers
+                      and _fresh(self.arm_at, now, self.arm_timeout) and self.arm
+                      and stationary and cmd_zero and self._actuator_off(now)
+                      and perception.get('detected_now') is False
+                      and perception.get('confirmed') is False)
+        new_goal = self._active_goal(now)
+        if (passive_ok and not blockers and new_goal
+                and new_goal != self.goal_uuid
+                and new_goal not in self.used_goal_uuids
+                and _fresh(self.normal_ready_at, now, self.mission_timeout)):
+            return self._start_next_goal(new_goal)
+        # Status, mission and the first command can arrive in different spins.
+        # Retain the last idle proof for its existing bounded lifetime while
+        # waiting for those two expected inputs; no output is authorized here.
+        if (passive_ok and new_goal and new_goal != self.goal_uuid
+                and new_goal not in self.used_goal_uuids
+                and _fresh(self.normal_ready_at, now, self.mission_timeout)
+                and set(blockers) <= {
+                    'NAVIGATION_NOT_OWNED', 'NAV_COMMAND_MISSING_OR_INVALID'}):
+            return False
+        idle_ok = (passive_ok and new_goal is None
+                   and mission.get('state') == 'IDLE'
+                   and (mission.get('navigation') or {}).get('goal_active')
+                   is False)
+        if not idle_ok:
+            self.normal_clear_since = self.normal_clear_seen_at = None
+            self.normal_ready_at = None
+        else:
+            if (self.normal_clear_since is None or not _fresh(
+                    self.normal_clear_seen_at, now, self.mission_timeout)):
+                self.normal_clear_since = now
+                self.normal_ready_at = None
+            self.normal_clear_seen_at = now
+            if now - self.normal_clear_since >= 1.0:
+                self.normal_ready_at = now
+        return False
 
     def publisher_created(self, now):
         self.publisher_created_at = float(now)
@@ -425,7 +508,12 @@ class LiveNavStopCore:
                 action = 'RELEASE'
         elif self.released:
             self._clear_for_next_goal(now, stationary, cmd_zero)
-            if self._rearm_if_new_goal(now, stationary, cmd_zero, raw_count):
+            normal_rearmed = self._normal_cycle_rearm(
+                now, blockers, raw_ok, nav_ok, safety_ok, stationary, cmd_zero,
+                raw_count, status_publishers, mission_publishers,
+                odom_publishers, arm_publishers)
+            if normal_rearmed or self._rearm_if_new_goal(
+                    now, stationary, cmd_zero, raw_count):
                 state = 'WAITING_FOR_INPUT'
             else:
                 state = ('HANDOFF_READY' if self._handoff_ready(
@@ -434,11 +522,25 @@ class LiveNavStopCore:
                     guard_publishers) else 'RELEASED_STOPPED')
         else:
             if self.fire_latched or (self.ever_forwarded and blockers):
+                # Only a clean terminal transition may enable normal rearm.
+                # Never convert an earlier stale/ownership/arm stop into success.
+                perception = mission.get('perception') or {}
+                terminal = self._normal_terminal_result(now)
+                if (not self.stop_latched and not self.fire_latched
+                        and self.ever_forwarded and publisher_owned and raw_ok
+                        and terminal is not None and active_goal is None
+                        and set(blockers) <= {
+                            'NAVIGATION_NOT_OWNED', 'NAV_GOAL_UUID_UNAVAILABLE'}
+                        and perception.get('detected_now') is False
+                        and perception.get('confirmed') is False):
+                    self.normal_terminal = terminal
                 self.stop_latched = True
                 if not self.stop_reason:
                     self.stop_reason = (
                         'FIRE_ACQUIRED' if self.fire_latched else
-                        'NAV_INPUT_OR_TOPOLOGY_LOST')
+                        ('NAV_GOAL_SUCCEEDED' if self.normal_terminal == 4
+                         else 'NAV_GOAL_CANCELED' if self.normal_terminal == 5
+                         else 'NAV_INPUT_OR_TOPOLOGY_LOST'))
             if publisher_owned and not raw_ok:
                 discovery_pending = raw_count == 0 and \
                     self.publisher_created_at is not None and \
@@ -489,6 +591,9 @@ class LiveNavStopCore:
             'ever_forwarded': self.ever_forwarded,
             'released': self.released,
             'stop_reason': self.stop_reason,
+            'normal_terminal_status': self.normal_terminal,
+            'normal_rearm_ready': _fresh(
+                self.normal_ready_at, now, self.mission_timeout),
             'handoff_ready': state == 'HANDOFF_READY',
             'nav_shadow_fingerprint_ok': nav_ok,
             'raw_owner_fingerprint_ok': raw_ok,

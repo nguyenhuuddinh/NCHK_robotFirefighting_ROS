@@ -1,7 +1,6 @@
 """Launch observe-only YOLO and fire-alignment preview on the laptop."""
 
 import os
-import subprocess
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -21,7 +20,6 @@ DEFAULT_MODEL_PATH = (
 DEFAULT_PYTHON_EXECUTABLE = (
     '/home/huudinh/.venvs/fire_robot_yolo/bin/python'
 )
-DEPENDENCY_IMPORT_TIMEOUT_S = 60.0
 
 
 def _validate_paths(context):
@@ -38,26 +36,9 @@ def _validate_paths(context):
             not os.access(python_executable, os.X_OK):
         raise RuntimeError(
             f'YOLO Python is missing or not executable: {python_executable}')
-    try:
-        dependency_check = subprocess.run(
-            [
-                python_executable,
-                '-c',
-                'import torch; import ultralytics',
-            ],
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=DEPENDENCY_IMPORT_TIMEOUT_S,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(
-            f'cannot validate YOLO Python {python_executable}: {exc}'
-        ) from exc
-    if dependency_check.returncode != 0:
-        detail = dependency_check.stderr.strip() or 'unknown import error'
-        raise RuntimeError(
-            f'YOLO Python cannot import torch/ultralytics: {detail}')
+    # Import dependencies once in YoloObserver._load_model, where failures are
+    # logged before any valid detection is published. A separate heavy import
+    # here doubles initialization work and cannot guarantee CUDA/model readiness.
     return []
 
 

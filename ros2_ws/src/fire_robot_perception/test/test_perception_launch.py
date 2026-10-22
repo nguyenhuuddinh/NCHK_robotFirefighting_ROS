@@ -2,7 +2,9 @@
 
 import importlib.util
 from pathlib import Path
-from types import SimpleNamespace
+import subprocess
+
+import pytest
 
 from launch import LaunchContext
 from launch.actions import (
@@ -76,35 +78,36 @@ def test_launch_is_standalone_and_observe_only(monkeypatch, tmp_path):
     ]
 
 
-def test_dependency_import_has_bounded_startup_timeout(monkeypatch, tmp_path):
-    """Allow slow startup imports without changing runtime sensor deadlines."""
+@pytest.mark.parametrize('invalid', [
+    None, 'model', 'params', 'python', 'not_executable',
+])
+def test_launch_validates_paths_without_heavy_import(
+        monkeypatch, tmp_path, invalid):
+    """Bad paths fail early; valid paths launch without a second interpreter."""
     launch_path = PACKAGE_DIR / 'launch' / 'perception.launch.py'
-    spec = importlib.util.spec_from_file_location(
-        'perception_launch_timeout', launch_path)
+    spec = importlib.util.spec_from_file_location('perception_paths', launch_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-
-    model = tmp_path / 'model.pt'
-    params = tmp_path / 'params.yaml'
-    python = tmp_path / 'python'
-    for path in (model, params, python):
+    paths = {name: tmp_path / name for name in ('model', 'params', 'python')}
+    for path in paths.values():
         path.touch()
-    python.chmod(0o700)
-
+    paths['python'].chmod(0o700)
+    if invalid == 'not_executable':
+        paths['python'].chmod(0o600)
+    elif invalid:
+        paths[invalid].unlink()
     context = LaunchContext()
     context.launch_configurations.update({
-        'model_path': str(model),
-        'params_file': str(params),
-        'python_executable': str(python),
+        'model_path': str(paths['model']), 'params_file': str(paths['params']),
+        'python_executable': str(paths['python']),
     })
-    calls = []
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0)
+    def unexpected_process(*args, **kwargs):
+        pytest.fail('Path validation must not spawn a heavy dependency import')
 
-    monkeypatch.setattr(module.subprocess, 'run', fake_run)
-    assert module._validate_paths(context) == []
-    assert calls[0][0] == [str(python), '-c',
-                           'import torch; import ultralytics']
-    assert calls[0][1]['timeout'] == 60.0
+    monkeypatch.setattr(subprocess, 'run', unexpected_process)
+    if invalid:
+        with pytest.raises(RuntimeError):
+            module._validate_paths(context)
+    else:
+        assert module._validate_paths(context) == []

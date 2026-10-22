@@ -9,6 +9,7 @@ start the pump.
 from collections import deque
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 import statistics
 import time
@@ -225,11 +226,40 @@ class TemporalFireGate:
         }
 
 
+class LatencyWindow:
+    """Keep constant-space diagnostic aggregates without retaining images."""
+
+    def __init__(self):
+        self.values = {}
+
+    def add(self, name, value):
+        """Ignore absent/nonfinite samples, retaining signed clock evidence."""
+        if value is None or not math.isfinite(value):
+            return
+        row = self.values.get(name)
+        if row is None:
+            row = [0, 0.0, value, value]
+            self.values[name] = row
+        row[0] += 1
+        row[1] += value
+        row[2] = min(row[2], value)
+        row[3] = max(row[3], value)
+
+    def summary(self):
+        """Describe each measured stage; callers reset after periodic logging."""
+        return {
+            name: {'count': row[0], 'mean_ms': round(row[1] / row[0], 2),
+                   'min_ms': round(row[2], 2), 'max_ms': round(row[3], 2)}
+            for name, row in self.values.items()
+        }
+
+
 class YoloObserver(Node):
     """Run YOLO on current compressed frames and publish observations."""
 
     def __init__(self):
         super().__init__('yolo_observer')
+        startup_begin = time.monotonic()
         self._declare_parameters()
         self._read_and_validate_parameters()
 
@@ -270,12 +300,15 @@ class YoloObserver(Node):
         self._period_decode_errors = 0
         self._period_inference_errors = 0
         self._period_processing_ms = []
+        self._latency_stats = LatencyWindow()
         self._last_input_time = time.monotonic()
         self._last_annotation_time = 0.0
         self._camera_stale = False
         self._started_at = time.monotonic()
 
         self._load_model()
+        self._startup_stage_done(
+            'observer_initialization', startup_begin)
         # Model import and GPU warm-up may take several seconds. Camera health
         # starts after that initialization, not before it.
         self._last_input_time = time.monotonic()
@@ -402,7 +435,18 @@ class YoloObserver(Node):
                     self.annotated_topic, self.fire_class_name)):
             raise ValueError('topic names and fire_class_name cannot be empty')
 
+    def _startup_stage_begin(self, stage):
+        self.get_logger().info(f'[YOLO_STARTUP] stage={stage} status=begin')
+        return time.monotonic()
+
+    def _startup_stage_done(self, stage, began):
+        elapsed_ms = (time.monotonic() - began) * 1000.0
+        self.get_logger().info(
+            f'[YOLO_STARTUP] stage={stage} status=done '
+            f'elapsed_ms={elapsed_ms:.1f}')
+
     def _load_model(self):
+        began = self._startup_stage_begin('dependency_import')
         try:
             import torch
             from ultralytics import YOLO
@@ -412,13 +456,17 @@ class YoloObserver(Node):
                 'fire_robot_yolo venv before building and launching.'
             ) from exc
 
+        self._startup_stage_done('dependency_import', began)
+        began = self._startup_stage_begin('device_check')
         gpu_requested = self.device.casefold() not in ('cpu', '')
         if gpu_requested and not torch.cuda.is_available():
             raise RuntimeError(
                 f'GPU device {self.device!r} requested but CUDA is unavailable'
             )
 
+        self._startup_stage_done('device_check', began)
         self._torch = torch
+        began = self._startup_stage_begin('model_load')
         self._model = YOLO(str(self.model_path))
         names = self._model.names
         if isinstance(names, dict):
@@ -443,6 +491,8 @@ class YoloObserver(Node):
         if self.quantize == 16 and not gpu_requested:
             raise RuntimeError('FP16 inference requires a CUDA GPU device')
 
+        self._startup_stage_done('model_load', began)
+        began = self._startup_stage_begin('gpu_warmup')
         if self.warmup_runs:
             warmup = np.zeros(
                 (self.image_size, self.image_size, 3), dtype=np.uint8)
@@ -451,6 +501,7 @@ class YoloObserver(Node):
                     self._model.predict(warmup, **self._predict_arguments())
             self._synchronize_gpu()
 
+        self._startup_stage_done('gpu_warmup', began)
         device_name = 'CPU'
         if gpu_requested:
             device_name = torch.cuda.get_device_name(0)
@@ -734,6 +785,8 @@ class YoloObserver(Node):
 
     def _on_image(self, msg):
         callback_start = time.perf_counter()
+        self._latency_stats.add('callback_entry_source_age',
+                                self._source_age_ms(msg))
         now = time.monotonic()
         self._last_input_time = now
         self._received += 1
@@ -804,6 +857,7 @@ class YoloObserver(Node):
 
         processing_ms = (time.perf_counter() - callback_start) * 1000.0
         source_age_ms = self._source_age_ms(msg)
+        self._latency_stats.add('post_inference_source_age', source_age_ms)
         self._processed += 1
         self._period_processed += 1
         self._period_processing_ms.append(processing_ms)
@@ -828,6 +882,8 @@ class YoloObserver(Node):
                 processing_ms,
             )
             self._last_annotation_time = now
+        self._latency_stats.add(
+            'callback_total', (time.perf_counter() - callback_start) * 1000.0)
 
     def _check_input_health(self):
         age = time.monotonic() - self._last_input_time
@@ -863,6 +919,10 @@ class YoloObserver(Node):
             f'decode_errors={self._period_decode_errors}, '
             f'inference_errors={self._period_inference_errors}'
         )
+        self.get_logger().info(
+            '[YOLO_LATENCY] ' + json.dumps(
+                self._latency_stats.summary(), separators=(',', ':')))
+        self._latency_stats.values.clear()
         self._period_received = 0
         self._period_processed = 0
         self._period_decode_errors = 0

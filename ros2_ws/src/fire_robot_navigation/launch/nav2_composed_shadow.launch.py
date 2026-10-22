@@ -61,15 +61,24 @@ def preflight_checks(context, *args, **kwargs):
     verify_runtime_components()
 
 
+def configured_parameters():
+    """Pass the same rewritten file to the process and its direct components.
+
+    Humble ControllerServer/PlannerServer construct child costmaps with global
+    NodeOptions. LoadNode parameters alone do not reach those child nodes.
+    """
+    return RewrittenYaml(
+        source_file=LaunchConfiguration('params_file'), root_key='',
+        param_rewrites={'use_sim_time': LaunchConfiguration('use_sim_time'),
+                        'yaml_filename': LaunchConfiguration('map')},
+        convert_types=True)
+
+
 def build_components(package_dir):
     """Keep baseline node names, parameter order, lifecycle groups and routes."""
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
-    configured_params = RewrittenYaml(
-        source_file=LaunchConfiguration('params_file'), root_key='',
-        param_rewrites={'use_sim_time': use_sim_time,
-                        'yaml_filename': LaunchConfiguration('map')},
-        convert_types=True)
+    configured_params = configured_parameters()
     tf_remaps = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
     result = []
     for name, package, plugin in COMPONENTS:
@@ -106,6 +115,7 @@ def generate_launch_description():
     container = ComposableNodeContainer(
         name='nav2_container', namespace='', package='fire_robot_navigation',
         executable='fire_robot_component_container_isolated', output='screen',
+        parameters=[configured_parameters()],
         composable_node_descriptions=build_components(package_dir))
     # A dead container must end the launch even when its optional RViz is still up.
     container_exit = RegisterEventHandler(OnProcessExit(

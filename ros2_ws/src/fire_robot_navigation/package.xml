@@ -29,7 +29,7 @@
   <!-- Reason: active FollowPath plugin; DWB and Rotation Shim are historical only -->
   <exec_depend>nav2_navfn_planner</exec_depend>
   <!-- Reason: using NavfnPlanner -->
-  <exec_depend>nav2_costmap_2d</exec_depend>
+  <depend>nav2_costmap_2d</depend>
   <!-- Reason: using VoxelLayer, InflationLayer, ObstacleLayer, StaticLayer -->
   <exec_depend>nav2_common</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
@@ -52,4 +52,6 @@
   <export>
     <build_type>ament_cmake</build_type>
   </export>
+  <depend>rcl_yaml_param_parser</depend>
+  <depend>rcl</depend>
 </package>

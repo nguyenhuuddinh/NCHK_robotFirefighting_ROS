@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <memory>
 #include "rclcpp/rclcpp.hpp"
-#include "retained_behavior_component_manager.hpp"
+#include "retained_navigation_component_manager.hpp"
 
 int main(int argc, char * argv[])
 {
@@ -10,7 +10,7 @@ int main(int argc, char * argv[])
   // Same default execution model as Humble component_container_isolated:
   // one manager executor, one SingleThreadedExecutor per component.
   auto executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
-  auto manager = std::make_shared<fire_robot_navigation::RetainedBehaviorComponentManager>(executor);
+  auto manager = std::make_shared<fire_robot_navigation::RetainedNavigationComponentManager>(executor);
   executor->add_node(manager);
   executor->spin();
   rclcpp::shutdown();

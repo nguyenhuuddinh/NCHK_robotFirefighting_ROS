@@ -2546,3 +2546,28 @@ user-run bringup build/install/XML check, then one paired120s static WiFi captur
 with native_camera_transport:=wifi_nonblocking. UDP performance remains
 NOT_MEASURED; Nav2 cleanup crash and R3/R4 hardware acceptance remain open.
 NEXT_STEP=VERIFY_PUSH_THEN_PI_UPDATE_AND_USER_BRINGUP_BUILD
+
+
+## NAV2-87 — 2026-10-22: child costmap config and scoped navigation library lifetime
+
+Parent:66d87b43c1f3af394fa52fee30a7a01c5f9bb257; source-only fix applied after QA.
+Evidence:qa_production_lifetime_20261022_195129_kuPTs5 (43rawhashes verified).
+17Python tests PASS0.63s,5C++unitPASS; production container compiled; default/restored
+C6 controls SIGSEGV at unmapped layers vtable, both production-manager cases exit0
+and layers/RPP unmap after complete manager destruction. No external library lease
+in patched probe. Global child parameter matching includes namespace/wildcard/last
+file precedence; invalid plugin configuration fails before component construction.
+
+Change: pass complete rewritten YAML to composed container, retain configured
+controller and costmap layer/filter libraries via pluginlib until whole component
+manager teardown. Preserve existing C6 behavior retention, C5 executor shutdown,
+command routes, parameter values and safety guards. No periodic work is added.
+
+STATUS=OFFLINE_REPRODUCER_PASS_SOURCE_APPLIED_NOT_INSTALLED
+FULL_PACKAGE_BUILD=NOT_RUN
+FULL_NAV2_ACTIVE_RUNTIME_SHUTDOWN=NOT_RUN
+USB_CDC_ODOM_STALL=OPEN_NOT_FIXED
+FIRMWARE_MODIFIED=NO
+PI_MODIFIED=NO
+COMMIT_PUSH=NOT_AUTHORIZED_YET
+NEXT_STEP=REVIEW_APPLIED_DIFF_AUTHORIZE_COMMIT_PUSH_THEN_USER_PACKAGE_BUILD

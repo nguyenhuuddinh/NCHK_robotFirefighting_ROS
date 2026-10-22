@@ -85,6 +85,13 @@ def generate_launch_description():
         description='Native MJPEG DDS publication mode; SYNCHRONOUS for comparison',
     )
 
+    native_transport_arg = DeclareLaunchArgument(
+        'native_camera_transport',
+        default_value='system',
+        choices=['system', 'wifi_nonblocking'],
+        description='Opt-in camera-only Fast DDS UDP nonblocking sends; system restores default transports',
+    )
+
     camera_budget_arg = DeclareLaunchArgument(
         'camera_max_bytes_per_sec',
         default_value='750000',
@@ -157,6 +164,7 @@ def generate_launch_description():
             'use_camera': LaunchConfiguration('use_camera'),
             'camera_backend': LaunchConfiguration('camera_backend'),
             'camera_fps': LaunchConfiguration('camera_fps'),
+            'native_camera_transport': LaunchConfiguration('native_camera_transport'),
             'native_camera_publication_mode': LaunchConfiguration(
                 'native_camera_publication_mode'),
             'camera_max_bytes_per_sec': LaunchConfiguration(
@@ -224,6 +232,7 @@ def generate_launch_description():
         camera_backend_arg,
         camera_fps_arg,
         native_publication_mode_arg,
+        native_transport_arg,
         camera_budget_arg,
         serial_port_arg,
         serial_baudrate_arg,

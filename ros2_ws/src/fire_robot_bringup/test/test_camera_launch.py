@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from launch import LaunchContext
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.utilities import perform_substitutions
 from launch_ros.actions import Node
 from rclpy.qos import DurabilityPolicy, ReliabilityPolicy
@@ -46,8 +46,7 @@ def test_camera_launch_selects_native_mjpeg_or_usb_fallback():
     )
     native_node = next(
         action for action in actions
-        if isinstance(action, Node)
-        and action.node_executable == 'native_mjpeg_camera'
+        if isinstance(action, OpaqueFunction)
     )
     usb_node = next(
         action for action in actions
@@ -238,14 +237,13 @@ def test_native_camera_dds_mode_is_scoped_and_forwarded(mode):
         return module.generate_launch_description().entities
 
     context = LaunchContext()
-    context.launch_configurations['native_camera_publication_mode'] = mode
+    context.launch_configurations.update(native_camera_publication_mode=mode, native_camera_transport='system')
     sensors = load('sensors.launch.py')
     declaration = next(a for a in sensors if isinstance(a, DeclareLaunchArgument)
                        and a.name == 'native_camera_publication_mode')
     assert resolve(context, declaration.default_value) == 'ASYNCHRONOUS'
     assert set(declaration.choices) == {'ASYNCHRONOUS', 'SYNCHRONOUS'}
-    native = next(a for a in sensors if isinstance(a, Node)
-                  and a.node_executable == 'native_mjpeg_camera')
+    native = next(a for a in sensors if isinstance(a, OpaqueFunction)).execute(context)[0]
     env = {perform_substitutions(context, key): perform_substitutions(context, value)
            for key, value in native.additional_env}
     assert env == {'RMW_FASTRTPS_PUBLICATION_MODE': mode}

@@ -17,12 +17,43 @@ Tham số: Đọc từ config/pi_params.yaml, KHÔNG hardcode.
 
 import os
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
+from fire_robot_bringup.camera_transport import camera_process_environment
+
+
+def _native_camera_action(context, bringup_dir):
+    """Resolve the transport only for the enabled native camera child."""
+    pi_params_file = os.path.join(bringup_dir, 'config', 'pi_params.yaml')
+    node = Node(
+        package='fire_robot_bringup',
+        executable='native_mjpeg_camera',
+        name='native_mjpeg_camera',
+        additional_env=camera_process_environment(
+            LaunchConfiguration('native_camera_publication_mode').perform(context),
+            LaunchConfiguration('native_camera_transport').perform(context),
+            os.path.join(bringup_dir, 'config', 'native_camera_wifi_nonblocking.xml'),
+            context.environment,
+        ),
+        parameters=[
+            pi_params_file,
+            {
+                'framerate': ParameterValue(
+                    LaunchConfiguration('camera_fps'), value_type=int),
+                'max_bytes_per_sec': ParameterValue(
+                    LaunchConfiguration('camera_max_bytes_per_sec'),
+                    value_type=int,
+                ),
+            },
+        ],
+        output='screen',
+    )
+
+    return [node]
 
 
 def generate_launch_description():
@@ -57,6 +88,13 @@ def generate_launch_description():
         default_value='ASYNCHRONOUS',
         choices=['ASYNCHRONOUS', 'SYNCHRONOUS'],
         description='Native MJPEG DDS publication mode; SYNCHRONOUS for comparison',
+    )
+
+    native_transport_arg = DeclareLaunchArgument(
+        'native_camera_transport',
+        default_value='system',
+        choices=['system', 'wifi_nonblocking'],
+        description='Opt-in camera-only Fast DDS UDP nonblocking sends; system restores default transports',
     )
 
     camera_budget_arg = DeclareLaunchArgument(
@@ -101,27 +139,9 @@ def generate_launch_description():
     # ── Native MJPEG Camera ──
     # Logitech C210 xuất MJPEG trực tiếp. Node chỉ tách từng JPEG và publish;
     # không decode RGB rồi encode JPEG lại trên Pi.
-    native_mjpeg_camera_node = Node(
-        package='fire_robot_bringup',
-        executable='native_mjpeg_camera',
-        name='native_mjpeg_camera',
-        # Scope asynchronous sends to the native camera process only.
-        additional_env={
-            'RMW_FASTRTPS_PUBLICATION_MODE': LaunchConfiguration(
-                'native_camera_publication_mode'),
-        },
-        parameters=[
-            pi_params_file,
-            {
-                'framerate': ParameterValue(
-                    LaunchConfiguration('camera_fps'), value_type=int),
-                'max_bytes_per_sec': ParameterValue(
-                    LaunchConfiguration('camera_max_bytes_per_sec'),
-                    value_type=int,
-                ),
-            },
-        ],
-        output='screen',
+    native_mjpeg_camera_node = OpaqueFunction(
+        function=_native_camera_action,
+        kwargs={'bringup_dir': bringup_dir},
         condition=native_camera_enabled,
     )
 
@@ -170,6 +190,7 @@ def generate_launch_description():
         camera_backend_arg,
         camera_fps_arg,
         native_publication_mode_arg,
+        native_transport_arg,
         camera_budget_arg,
         camsense_x1_node,
         scan_qos_relay_node,

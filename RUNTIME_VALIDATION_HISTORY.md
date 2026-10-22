@@ -2439,3 +2439,110 @@ build, loaded WiFi PASS, clean Nav2 teardown, or motion acceptance. No firmware,
 model, camera 15 FPS, watchdog, or freshness guard changes.
 
 NEXT_STEP=VERIFY_PUSH_THEN_USER_PI_BASELINE_UPDATE_BUILD_AND_CLOCK_GATED_STATIC_CAPTURE
+
+
+## CAMERA-ASYNC-STATIC-UDP-REVIEW-20261022-78
+
+Runtime under test: 0edb7cbdb6cab459f9442b922c5906a40c05137f on both hosts;
+Nav2/YOLO laptop, Pi I/O/TF/safety, ESP32-S3 N8R2, JPEG640x480 configured15FPS.
+User run qa_baseline_combined_laptop_20261022_162728 completed120s main capture.
+Raw manifests verified:134outer,51nestedPi,3nestedUART (nested included in outer).
+
+Laptop main120.0104s: JPEG12.7156FPS/max-gap2313.27ms; odom9.6242Hz/max-gap1417.17ms;
+odomTFmax-gap861.67ms; scan5.0829Hz/max-gap1013.70ms. YOLO valid-result inference
+mean16.4998ms/p9518.27ms; input-agep95317.30/max2280.34ms,77valid-result ages>300ms,
+1536ok/4camera_stale by main receipt window. Mission health BLOCKED17.1014s in
+10episodes, returnedOK. This is collection completion, not motion acceptance.
+
+Pi observer summary135.1296s includes the laptop measurement tail: odom9.9978Hz,
+max-gap110.02ms, max-age14.84ms. Pi JPEG13.1873FPS/max-gap1461.31ms. Do not compare
+these maxima as identically bounded windows.1501same stamp/frame_id/length JPEGs
+matched in one120s source-stamp window: localPiagep9541.37ms, laptop214.62ms;
+intersection only, not exact frame/packet loss or pureRF delay. Both clocks were
+measured at endpoints only: Pi-laptop before+12.43..+13.74ms, after-0.91..+0.82ms.
+
+Camera process verified ASYNCHRONOUS/rmw_fastrtps_cpp. Image publish call duration
+still reached1206.584ms inside main10s bins; reader queue drops present, budget
+drops0/restarts0. Socket backpressure is a targeted hypothesis, not proved sole
+cause. Aggregate sparseCPUmean laptop6.54%/Pi37.83% does not exclude thread stalls.
+Whole-run ping272sent/264received/loss2.94%, mean189.88/max2752.03ms.
+
+UART511lines COMPLETE; one startup1000ms command watchdog transition recovered
+MANUAL->EMERGENCY->MANUAL. No TX-stall/reset evidence in captured UART. Pi kernel
+camera reset during startup; no ESP detach in captured kernel. Nav2 child still
+crashed during cleanup (SIGSEGV text, exit-6); parentlaunchRC0/emptyprocesses_after
+do not prove clean teardown. No goal/arm/nonzero commands/forbidden publishers.
+
+Compared descriptively with004908: JPEG11.38->12.72FPS, maxgap2.808->2.313s;
+odommaxgap1.313->1.417s, TF1.315->0.862s, scan2.281->1.014s; missionblocked28.5->17.1s.
+One run per revision with different conditions, not controlled causalA/B evidence.
+Raw and derived stats retained for reporting, including failures and units.
+
+Evidence: qa_camera_async_static_wifi_v4_tools_20261022/{runs/qa_baseline_combined_laptop_20261022_162728,
+runtime_review_20261022_162728.json,matched_frames_20261022_162728.jsonl,analyze_162728.py,
+review_162728.sha256}; paths relative to primary repo .codex_qa_backups/.
+Report: docs/codex/current/CAMERA_ASYNC_RESULT_AND_UDP_CANDIDATE_2026-10-22_162728.md.
+
+
+## CAMERA-UDP-NONBLOCKING-OFFLINE-APPLIED-20261022-79
+
+User ran qa_camera_udp_20261022_171008_bUeA4Q,17:10:08.748–17:10:10.914+07;
+27tests PASS0.41s, runnerRC0/PHASECOMPLETED/sourceafter0/statusunchanged0/toolsafter0.
+Verified13raw hashes (including checkerbinary),42candidate/tool input hashes,
+207runtime source pins and30originalbringup pins before/after; all unchanged.
+Shadow imports resolve to tested candidate. C++compilelog empty, checkerRC0:
+FAST_DDS_XML_PROFILE_OK1/NO_PARTICIPANT_CREATED1 against FastDDS2.6.11/RMW6.2.10.
+Named/default participant both select custom nonblockingUDP; socketbuffers/
+maxMessageSize/interface defaults retained. No ROS participant/network/USB test.
+
+Applied exact7tested files plus this Markdown history to laptop-baseline worktree,
+guarded by HEAD0edb7cb and clean status, original/runtime/tool hashes and backups.
+Delta: camera_transport.py, native_camera_wifi_nonblocking.xml, robot/sensors
+launch, setup.py, test_camera_launch.py and test_camera_transport.py. All other
+tracked runtime/package bytes retained. Primary dirty user scripts/maps untouched.
+
+Opt-in native_camera_transport:=wifi_nonblocking uses custom FastDDSUDPv4 with
+non_blocking_send=true only for nativecamera child. Defaultsystem restores normal
+transports. Reject conflicting RMW/XMLQoS/env, error on missing installedXML;
+setup installsXML. Full socket may discard datagrams/JPEGs; DDS can still block
+elsewhere. Disabling builtins removes cameraSHM, so Pi-local camera readers also
+useUDP; measureFPS/drop/CPU before calling this an improvement. No new application
+thread/timer or JPEGdecode/re-encode. Camera15FPS/model/bytes/stamps/depth1/budget
+750000, mission/IR/pump/controlQoS/odom/TF/safety/watchdog/firmwareN8R2 unchanged.
+
+State: OFFLINE_QA_PASS_APPLIED_NOT_COMMITTED_PI_RUNTIME_NOT_TESTED. No commit/push,
+Pi sync/build/upload or physical actuation by this step. Performance after this
+patch is NOT_MEASURED; do not attach162728metrics to the new UDP configuration.
+Nav2 teardown remains a separate open finding. Baseline behavior code exists;
+R3floor goal/cancel/newgoal and R4fullfire/IR/pump integration still need acceptance.
+
+Evidence: qa_camera_udp_nonblocking_candidate_20261022/runs/qa_camera_udp_20261022_171008_bUeA4Q;
+review/application backups and commit-body draft: qa_camera_udp_nonblocking_release_20261022/.
+Next: user authorizes commit+push; Pi fast-forward/buildbringup/XMLverification;
+one paired120s staticWiFi capture with opt-in, comparepublishstall/ages/FPS/
+missionblocked andodomTF to162728. Rollbacksystem if worse; do not weaken guards.
+NEXT_STEP=USER_AUTHORIZE_REVIEWED_CAMERA_UDP_COMMIT_AND_PUSH_THEN_PI_BUILD
+
+
+## AUTHORIZED-CAMERA-UDP-RELEASE-20261022-80
+
+User explicitly authorized commit and push: "ok push đi b" after reviewing gate79.
+This commit contains exactly the seven tested bringup source/config/test files
+and RUNTIME_VALIDATION_HISTORY.md entries78-80. The camera transport remains opt-in;
+system remains default/rollback. Camera15FPS, mission behavior, safety/freshness,
+YOLO model, N8R2 firmware and laptop/Pi placement retain their reviewed contracts.
+
+Pre-commit checks verify exact applied bytes, parent0edb7cb, eight dirty paths,
+empty index, and unchanged207existing plus3new runtime pins. Prior27testPASS0.41s
+and FastDDSXMLcheckerPASS remain the applicable offline gate; not repeated.
+Primary userdirty scripts/maps are excluded. Full commit body records the actual
+120s pre-patch metrics, mechanism, packet-loss tradeoff, rollback, QA and limits.
+
+The final commit SHA and remote verification are recorded after push in
+qa_camera_udp_nonblocking_release_20261022/commit_receipt.json, push.log and
+push_verification.json, and linked from the current docs release ledger.
+Pi is not updated by commit/push. Next: Pi fast-forward to the pushed SHA,
+user-run bringup build/install/XML check, then one paired120s static WiFi capture
+with native_camera_transport:=wifi_nonblocking. UDP performance remains
+NOT_MEASURED; Nav2 cleanup crash and R3/R4 hardware acceptance remain open.
+NEXT_STEP=VERIFY_PUSH_THEN_PI_UPDATE_AND_USER_BRINGUP_BUILD

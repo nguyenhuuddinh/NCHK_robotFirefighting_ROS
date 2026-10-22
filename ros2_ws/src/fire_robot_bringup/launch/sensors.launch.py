@@ -52,6 +52,13 @@ def generate_launch_description():
         description='FPS camera; 15 đã đạt gate LAN và WiFi AP',
     )
 
+    native_publication_mode_arg = DeclareLaunchArgument(
+        'native_camera_publication_mode',
+        default_value='ASYNCHRONOUS',
+        choices=['ASYNCHRONOUS', 'SYNCHRONOUS'],
+        description='Native MJPEG DDS publication mode; SYNCHRONOUS for comparison',
+    )
+
     camera_budget_arg = DeclareLaunchArgument(
         'camera_max_bytes_per_sec',
         default_value='750000',
@@ -98,6 +105,11 @@ def generate_launch_description():
         package='fire_robot_bringup',
         executable='native_mjpeg_camera',
         name='native_mjpeg_camera',
+        # Scope asynchronous sends to the native camera process only.
+        additional_env={
+            'RMW_FASTRTPS_PUBLICATION_MODE': LaunchConfiguration(
+                'native_camera_publication_mode'),
+        },
         parameters=[
             pi_params_file,
             {
@@ -157,6 +169,7 @@ def generate_launch_description():
         use_camera_arg,
         camera_backend_arg,
         camera_fps_arg,
+        native_publication_mode_arg,
         camera_budget_arg,
         camsense_x1_node,
         scan_qos_relay_node,

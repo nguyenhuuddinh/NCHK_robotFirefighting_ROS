@@ -2,6 +2,7 @@
 
 import importlib.util
 from pathlib import Path
+import pytest
 
 from launch import LaunchContext
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -220,3 +221,98 @@ def test_camera_budget_drops_excess_frames_without_backlog():
     assert budget.allow(30, now=0.3)
     assert not budget.allow(90, now=0.3)
     assert budget.allow(90, now=1.0)
+
+
+@pytest.mark.parametrize('mode', ['ASYNCHRONOUS', 'SYNCHRONOUS'])
+def test_native_camera_dds_mode_is_scoped_and_forwarded(mode):
+    from launch.utilities import normalize_to_list_of_substitutions
+
+    def resolve(context, value):
+        return perform_substitutions(context, normalize_to_list_of_substitutions(value))
+
+    def load(name):
+        spec = importlib.util.spec_from_file_location(name + '_dds', PACKAGE_DIR / 'launch' / name)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.get_package_share_directory = lambda _: str(PACKAGE_DIR)
+        return module.generate_launch_description().entities
+
+    context = LaunchContext()
+    context.launch_configurations['native_camera_publication_mode'] = mode
+    sensors = load('sensors.launch.py')
+    declaration = next(a for a in sensors if isinstance(a, DeclareLaunchArgument)
+                       and a.name == 'native_camera_publication_mode')
+    assert resolve(context, declaration.default_value) == 'ASYNCHRONOUS'
+    assert set(declaration.choices) == {'ASYNCHRONOUS', 'SYNCHRONOUS'}
+    native = next(a for a in sensors if isinstance(a, Node)
+                  and a.node_executable == 'native_mjpeg_camera')
+    env = {perform_substitutions(context, key): perform_substitutions(context, value)
+           for key, value in native.additional_env}
+    assert env == {'RMW_FASTRTPS_PUBLICATION_MODE': mode}
+    assert all(not a.additional_env for a in sensors if isinstance(a, Node) and a is not native)
+    robot = load('robot.launch.py')
+    forwarded = next(dict(a.launch_arguments) for a in robot
+                     if isinstance(a, IncludeLaunchDescription)
+                     and 'native_camera_publication_mode' in dict(a.launch_arguments))
+    assert resolve(context, forwarded['native_camera_publication_mode']) == mode
+
+
+def test_native_camera_publish_metrics_preserve_frame_and_reset(monkeypatch):
+    from types import SimpleNamespace
+    import queue
+    from builtin_interfaces.msg import Time
+    from fire_robot_bringup import native_mjpeg_camera as camera
+
+    now = [1_000_000_000]
+    monkeypatch.setattr(camera.time, 'monotonic_ns', lambda: now[0])
+
+    class Publisher:
+        def __init__(self, duration):
+            self.duration = duration
+            self.messages = []
+
+        def publish(self, msg):
+            self.messages.append(msg)
+            now[0] += self.duration
+
+    pending = queue.Queue(maxsize=1)
+    stamp_ns = 1_234_567_890
+    jpeg = b'\xff\xd8payload\xff\xd9'
+    pending.put((stamp_ns, jpeg))
+    node = SimpleNamespace(
+        frame_queue=pending, byte_budget=SimpleNamespace(allow=lambda *_: True),
+        get_clock=lambda: SimpleNamespace(now=lambda: SimpleNamespace(to_msg=Time)),
+        image_pub=Publisher(7_000_000), info_pub=Publisher(2_000_000),
+        frame_id='camera_frame', width=640, height=480, published=0, published_bytes=0,
+        budget_drops=0, restart_count=0, image_publish_max_ms=0.0, publish_pair_max_ms=0.0)
+    camera.NativeMjpegCamera._publish_latest(node)
+    msg = node.image_pub.messages[0]
+    assert msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec == stamp_ns
+    assert bytes(msg.data) == jpeg
+    assert node.info_pub.messages[0].header.stamp == msg.header.stamp
+    assert node.image_publish_max_ms == 7.0 and node.publish_pair_max_ms == 9.0
+    assert node.published == 1 and node.published_bytes == len(jpeg)
+    logs = []
+    node.get_logger = lambda: SimpleNamespace(info=logs.append)
+    node.reader = SimpleNamespace(frames=1, queue_drops=0)
+    node.captured_at_last_stats = node.queue_drops_at_last_stats = 0
+    camera.NativeMjpegCamera._log_stats(node)
+    assert 'image_publish_max_ms=7.000' in logs[0]
+    assert 'publish_pair_max_ms=9.000' in logs[0]
+    assert node.image_publish_max_ms == node.publish_pair_max_ms == 0.0
+
+
+def test_native_camera_budget_drop_does_not_send_or_accumulate_metrics():
+    from types import SimpleNamespace
+    import queue
+    from fire_robot_bringup import native_mjpeg_camera as camera
+
+    pending = queue.Queue(maxsize=1)
+    pending.put((123, b'jpeg'))
+    node = SimpleNamespace(frame_queue=pending,
+        byte_budget=SimpleNamespace(allow=lambda *_: False), budget_drops=0,
+        image_publish_max_ms=5.0, publish_pair_max_ms=6.0)
+    # No clock/publishers are provided: the drop path must not touch them.
+    camera.NativeMjpegCamera._publish_latest(node)
+    assert node.budget_drops == 1 and pending.empty()
+    assert (node.image_publish_max_ms, node.publish_pair_max_ms) == (5.0, 6.0)

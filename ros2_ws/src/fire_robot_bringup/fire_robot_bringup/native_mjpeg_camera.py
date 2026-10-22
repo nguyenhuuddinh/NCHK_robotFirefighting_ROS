@@ -205,6 +205,8 @@ class NativeMjpegCamera(Node):
         self.published_bytes = 0
         self.budget_drops = 0
         self.restart_count = 0
+        self.image_publish_max_ms = 0.0
+        self.publish_pair_max_ms = 0.0
 
         stats_period = float(self.get_parameter('stats_period_s').value)
         if stats_period <= 0:
@@ -316,7 +318,9 @@ class NativeMjpegCamera(Node):
         image.header.frame_id = self.frame_id
         image.format = 'jpeg'
         image.data = frame
+        publish_started_ns = time.monotonic_ns()
         self.image_pub.publish(image)
+        image_published_ns = time.monotonic_ns()
 
         info = CameraInfo()
         info.header.stamp = stamp
@@ -324,6 +328,13 @@ class NativeMjpegCamera(Node):
         info.width = self.width
         info.height = self.height
         self.info_pub.publish(info)
+        pair_published_ns = time.monotonic_ns()
+        self.image_publish_max_ms = max(
+            self.image_publish_max_ms,
+            (image_published_ns - publish_started_ns) / 1_000_000.0)
+        self.publish_pair_max_ms = max(
+            self.publish_pair_max_ms,
+            (pair_published_ns - publish_started_ns) / 1_000_000.0)
         self.published += 1
         self.published_bytes += len(frame)
 
@@ -397,13 +408,17 @@ class NativeMjpegCamera(Node):
             f'[NativeMjpegCamera] captured={captured - self.captured_at_last_stats} '
             f'published={self.published} bytes={self.published_bytes} '
             f'queue_drop={queue_drops - self.queue_drops_at_last_stats} '
-            f'budget_drop={self.budget_drops} restarts={self.restart_count}')
+            f'budget_drop={self.budget_drops} restarts={self.restart_count} '
+            f'image_publish_max_ms={self.image_publish_max_ms:.3f} '
+            f'publish_pair_max_ms={self.publish_pair_max_ms:.3f}')
         self.captured_at_last_stats = captured
         self.queue_drops_at_last_stats = queue_drops
         self.published = 0
         self.published_bytes = 0
         self.budget_drops = 0
         self.restart_count = 0
+        self.image_publish_max_ms = 0.0
+        self.publish_pair_max_ms = 0.0
 
     def stop_capture(self):
         """Stop only the camera subprocess and restore its runtime control."""

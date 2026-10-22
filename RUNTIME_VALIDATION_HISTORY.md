@@ -1435,3 +1435,1007 @@ Saupush chuẩn bị mộtlệnh build/importlaptop cho user, rồi boundednavig
 runtimevớioperator; patchlaptop không cầnPi pull/build hoặcflash. KhônglặpQAđãđạt.
 
 **NEXT_STEP=USER_LAPTOP_BUILD_IMPORT_THEN_PREPARE_BOUNDED_R3_NAVIGATION_RUNTIME**
+
+
+## R3-LAPTOP-MISSION-BUILD-PASS-REVIEWED-20261021-47
+
+Userrunqa_r3_mission_build_laptop_20261021_111156_8rWrl0,11:11:56–59+07:
+**R3_LAPTOP_MISSION_BUILD_IMPORT_OK1,RC0**,package0.64s/colcon0.92s.22rawhash,
+5exacttestedtoolinputs và207sourcebeforeafter/current khớp. Installedamentprefix/
+gatewayimport đúngbaseline, SHA11cf5424… đúng111PASScandidate,entrypointexecutable/
+3resourceskhớp. Gitstatusbeforeafter sạch,processbeforeafter trống; noROSinit/coreexec.
+Assistantchỉđọc/hash, khôngbuild/test/ROS/SSH/serial/GPU. Khônglặp111QA.
+
+HEAD61bf6ea đãpush/remoteverified, Pi59283c5/N8R2/model/camera15/guards giữ. R3hardware
+chưa chạy; runtime runner chưa soạn. Trialspec3UUID: G1SUCCEEDED→G2operatorCANCELED→
+G3SUCCEEDED vớizero/stationaryrelease/normalclear giữa goal. Khôngảnhlửa/IR/phun.
+R2static route/observer không dùngnguyênchoR3live; phảikiểm /cmd_vel_raw vàbounds/
+owner thaystaticnonzeroforbidden. Demo cũ bật thêmalignment/IR/pump khôngphùhợp.
+
+Đã hỏioperator quaasync: sàntrống+ngườitrựccôngtắc/ngắtnguồnmotor, kêbánh haychưa
+sẵn sàng. Chưa cólựa chọn lúcghi; khôngsuybuild/staticpermission thành quyềnarm/motor.
+Sànthật mớiđánhgiáarrival; kêbánh chỉcommand/cancel, khôngfakepose/odom/actuatorOFF.
+AGENTS yêu cầu hardwareopt-in. Maintrial dựkiến<=300s; setup/outerdeadline phảiinrõ
+trongrunner. Giữ fault/stale/ABORTED stop, không restartcore đểxóalatch. KnownR2jitter/
+TERMshutdown vàviewer15candidate chưaruntime vẫnriêng. Docsresult/spec/checkpoint
+đãcậpnhật; trackedhistory47nối, chưacommit. Không cầnPi pull/flash hoặcQA/buildlặp.
+
+**NEXT_STEP=CONFIRM_OPERATOR_MOTION_SETUP_AND_PREPARE_BOUNDED_R3_NAVIGATION_RUNTIME**
+
+
+## R3-FLOOR-OPERATOR-CONFIRMED-TOOLS-PREPARED-NOT-QA-20261021-48
+
+User chọn sàntrống vàtrực côngtắc/ngắtnguồnmotor. Soạnpacket
+qa_r3_navigation_tools_20261021,38inputspinned; source61bf6ea/Pi59283c5/N8R2/camera15/
+model/map giữ. Laptop207/Pi199manifest+C6binary. Không hỏi lại cùngsetup.
+R3core111PASS/buildimport đãđạt khônglặp; packet mới **OFFLINE_QA_NOT_RUN**,
+HARDWARE_RUNTIME_NOT_RUN. Userverify_tools.sh<=60s: purepolicy/fakeclock/cancel/
+OpenCVmock/filefixture+boundarychecks; khôngROSinit/GPU/GUI/USB/SSH/hardware.
+
+R3main<=300s từoperatorA,3UUIDG1SUCCESS→V/stopclear→G2active→Cexactcancel→CANCELED/
+stopclear→G3SUCCESS→V/stopproof. Stagegoal90s,driver900s gồmsetup,cleanup/copyriêng.
+UsertựRVizgoal/InitialPose, khôngfakepose/odom/actuatorOFF. Chỉsupervisor/gateway;
+khôngalignment/IR/pump, khôngdemoold. ToolchỉBoolarm/exactCancelGoal, khôngTwist/
+ActionSendGoal. Startup readiness3s rồiA; noautorearmkhierror. Arm/cancel/stop/proof
+UUID vàterminal/motion/odomdisplacement>=.10m/physicalarrivalV phảiđủ trướcPASS.
+
+ĐổiR2staticrule trong tool sanglive /cmd_vel_raw/boundedTwist0.10/.8/đúngowner;
+guardrobot khôngđổi. Driver cleanupFalsearm trongcontextcònhợplệ, trướcmission/
+Nav2/Pi; ownedgroupkillonly. GiữdisarmedngắnsauDONE đểtránh expectedexit/healthrace.
+Viewer15 cacheảnhmới, khôngdecode/inferencephụ; annotatedbaselinecap10. Metrics/
+clock/CPU/GPU/WiFi/USB/UART dùnghelperR2 hashverified, scope/startup/main/shutdownriêng.
+Childcrash khôngẩn bởilaunchRC0; TERMknownlimit, chưafixNav2teardown/faultrecovery.
+
+AssistantchỉAST/bashsyntax/hash/diff/datareview, khôngtests/ROS/hardware. Docsrunbook
+vàcheckpoints cậpnhật; baentrypointcontext đượcviếtgọn, bảncũgiữ tại
+qa_r3_context_before_floor_tools_20261021. Trackedhistory48nối chưacommit; primarydirty
+giữ. GửiLOG_QA→reviewraw/exactmanifest→mộtfloortrialđãopt-in, khôngPi pull/flash.
+
+**NEXT_STEP=USER_RUN_ONE_R3_NAVIGATION_TOOLS_OFFLINE_QA**
+
+
+## R3-FLOOR-TOOLS-OFFLINE-QA-PASS-REVIEWED-20261021-49
+
+User chạy qa_r3_tools_20261021_114930_43q5vL, 11:49:30–31+07:00:
+**64 passed / 0.35s, RC=0, LAST_STAGE=COMPLETE**. Assistant đọc và kiểm hash:
+5 file raw, 38 input đúng bản đã test, marker OFFLINE_QA_OK khớp SHA256 manifest
+6129ac10d400441b32b7df7f7c7be0876ffce0709888c3bb7d93e5d664a3dd5b;
+207 source laptop hiện tại, binary C6 và model best_final đều khớp.
+HEAD laptop61bf6ea, Pi59283c5. Không sửa 38 input đã test; preparation.json/README
+trong packet giữ trạng thái lịch sử lúc chuẩn bị, kết quả mới ghi riêng tại
+`offline_gate_review_20261021_114930.json` và hồ sơ này.
+
+Đây là QA policy/cancel/GUI giả lập và parser chứng cứ; **R3_HARDWARE_RUNTIME_NOT_RUN**.
+Không coi 64 test là xác nhận xe chạy sàn. Build/import đã đạt, không cần build/pull
+Pi, nạp firmware hoặc lặp test. Setup sàn trống và operator trực công tắc/ngắt
+nguồn motor đã được user xác nhận. Runbook hiện hành cung cấp copy + terminal A
+SSH Pi + terminal B laptop, giữ WiFi AP tới khi cleanup/copy log xong.
+
+Một lượt R3: tự đặt Initial Pose, chờ READY, A arm trong camera; G1 tới đích/V/stop,
+G2 đang chạy/C hủy đúng UUID/stop, G3 tới đích/V/stop. Goal gần 0.3–0.5m; chỉ đặt
+sau R3_ARMED và WAIT_Gn tương ứng. Main <=300s từ A, stage <=90s, driver <=900s
+bao gồm setup; cleanup/copy riêng. Camera không mẫu lửa; không alignment/IR/pump.
+Q/Esc rút arm; bất thường dùng công tắc motor. Không tự clear fault/ABORTED/stale.
+
+Nav2/YOLO laptop, Pi I/O/rawSerialV2/safety/camera15FPS, N8R2, model/map/guards giữ.
+Thu log odom/TF/scan/JPEG, CPU/GPU/WiFi/DDS graph, kernelUSB và COM/UART, action UUID/
+cancel/arrival/stop. Jitter và TERM shutdown còn là known limitations, không kết
+luận đã fix. Assistant không chạy test/ROS/GUI/hardware. Tracked history49 chờ
+commit lần sau; không có commit/push mới trong bước review này.
+
+**NEXT_STEP=USER_RUN_ONE_R3_FLOOR_TRIAL**
+
+
+## R3-FLOOR-PREFLIGHT-BLOCKED-NO-MOTION-20261021-50
+
+Userrun qa_baseline_combined_laptop_20261021_220912: **RUNNER_RC=1,
+LAST_STAGE=PREFLIGHT, R3_BLOCKED_OR_INCOMPLETE**. 18 raw file SHA256 khớp;
+38 input packet QA64PASS vẫn nguyên bản. Lỗi đầu 22:09:12+07 tại run_laptop.sh:125:
+kiểm gộp kiến trúc x86_64, DISPLAY có giá trị và cổng COM/debug by-id tồn tại.
+Lượt kết thúc 22:09:13. Chưa gọi preflight laptop, chưa mở UART, Nav2/YOLO/mission
+hoặc arm; **floor trial NOT_STARTED**, không coi đây là lỗi robot đang chạy.
+
+User nghi quên cắm debug. Tại lúc review đường dẫn by-id
+usb-1a86_USB_Single_Serial_5972047168-if00 không tồn tại. Thiếu dây debug phù hợp
+với lỗi, nhưng log gộp chưa chứng minh chỉ một điều kiện hỏng; cần user kiểm DISPLAY
+trong terminal local. Không dùng DISPLAY của shell tool để suy terminal user.
+UART_CAPTURE_INCOMPLETE là thiếu capture chưa mở, không bằng chứng ESP reset.
+STOP invalid host role invalid là lỗi kiểm source trong cleanup trước khi source_role
+được khởi tạo, không kết luận source sai HEAD. Không sửa firmware hay guard.
+
+Laptop cleanup trống. Pi log220811 không được copy do runner chưa handshake/release;
+Pi cleanup chưa review, không nói toàn hệ thống đã sạch. Giữ terminal A cho script
+Pi tự hết WAIT_LAPTOP <=180s và cleanup; chờ prompt trước khi bắt đầu A mới.
+Cắm COM/debug ESP vào laptop, giữ nativeUSB→Pi, đóng SerialMonitor, kiểm by-id và
+DISPLAY trên terminal desktop laptop. Sau đó chạy A mới và B với LOG_PI mới theo
+runbook; không dùng log220811 đã hết cửa sổ chờ. Không build/QA/flash lại.
+
+Kết quả QA64PASS vẫn đúng scope offline, R3 hardware chưa nghiệm thu. Không thay
+38 input đã test trong bước phân tích này. Báo cáo JSON runtime_preflight_review_
+20261021_220912.json giữ lỗi đầu/giới hạn kết luận. Assistant chỉ đọc/hash/stat,
+không mở serial/ROS/GUI/SSH hay chạy tests/hardware.
+
+**NEXT_STEP=CONNECT_COM_DEBUG_VERIFY_LOCAL_GUI_THEN_START_NEW_A_B_SESSION**
+
+
+## R3-NO-READY-ROOT-CAUSE-V2-CANDIDATE-20261021-51
+
+Run qa_baseline_combined_laptop_20261021_221702: 22:17:03–22:22:28+07,
+RUNNER_RC0 nhưng CONTROL_EXIT_RC2 / R3_BLOCKED_OR_INCOMPLETE. 118 outer raw hashes
+(bao gồm nested), 43 Pi và 3 UART khớp. User không thấy READY nên không đặt goal:
+đúng quy trình; WAIT_ARM suốt, armed=false, measurement0s, completed_goals=[],
+không có R3_ARMED. Pose/readiness Nav2 đã đạt trước YOLO/mission. Không đổ lỗi thao tác.
+
+Hai blocker xác định trong công cụ: status_seen yêu cầu bản tin action trước goal
+đầu, nhưng action_status0 trong lượt này; và yêu cầu full ready3s liên tục trong
+khi actuator_off dùng freshness350ms, telemetry ACT264 mẫu median gap1000.095254ms
+(max5486.146698ms). Các mẫu đều pumpOFF/servoIDLE/OFF; không thể lấy một cửa sổ
+350ms mỗi giây để chứng minh3s liên tục. 64QA cũ không cover startup/cadence thật.
+
+UART đã hoạt động COMPLETE645 dòng, không thiếu debug. Đã đọc raw: 2 TXstalls,
+available0/offset0/len64 rồi63, task_gap20ms; soft reconnect và watchdog1000ms
+MANUAL→EMERGENCY→MANUAL. Pi kernel ESP disconnect22:19:39.123 và22:21:56.067,
+re-enumerate/recover; ESP uptime16368→154089→291248ms tăng, không kết luận các
+BOOT identity lặp là MCU reset. BootPOWERON ban đầu22:17:06 giữ riêng. Không suy
+cáp hay USB chính là nguyên nhân của 2 lỗi READY trong tool.
+
+Sau timeout/control cleanup, Nav2 nhận SIGINT22:22:08.753, rồi mất bond/teardown,
+containercrash-6 lúc22:22:17.529 (MagickSIGSEGV); parentlaunchRC0 không che crash.
+Đây là lỗi shutdown còn mở, không chứng minh Nav2 chết trướcREADY. Laptop/Pi
+cleanup trống, sourceafterchecks0, UART/model/source đúng; chưa motion acceptance.
+
+Chuẩn bị packet V2 riêng qa_r3_navigation_v2_tools_20261021, không sửa packet V1.
+Không bắt status sample trước goal khi unique server/cancelservice đã sẵn sàng,
+mission/gateway không active, graph/odom/zero/health đúng. Gateway robot vẫn cần
+status/UUID thật trước output. Standby3s cho topology/health/idle và OFF history
+<=1.5s; history KHÔNG cho arm. A chỉ tạo intent<=2s, grant duy nhất khi có OFF mới,
+tổng receive_age_ms + tuổi receipt<=350ms, mọi precondition vẫn đạt. ON/stale/mất
+input/goalactive/Q/clock lỗi hủy intent; expiry cầnA mới, không tựarm.
+
+Thêm pure/fake-clock regression sparse1Hz, no initialstatus, inputloss/ON/stale,
+requestexpiry/repeatedkey/clockjump, real12ACT-event timingfixture; adapter không
+ROSinit. Sửa preflight công cụ để báo riêng DISPLAY/COM/arch. Assistant chỉhash/
+AST/bashsyntax/source/datareview; **V2_OFFLINE_QA_NOT_RUN**. Source61bf6ea/Pi59283c5/
+N8R2/FW/model/camera15FPS/watchdogs/robotfreshness không đổi. Chưa commit/push.
+
+Cùng mismatch ACTcadence tồn tại trong gateway normal_cycle_rearm: freshOFF350ms
+liên tục1s. Phải xử lý đúng hợp đồng telemetry/proof trước full3goal; chưa cho
+runtime V2. Không fakeOFF hoặc lặp bản tin cũ để tươi giả, không nới watchdog.
+Bước hiện tại: user một lệnh verify_tools.sh V2, deadline60s; reviewQA rồi chọn
+fix cadence tại nguồn hoặc proof tương thích nhưng vẫn fresh khi admission.
+Không chạy lại sàn ngay, không QA/build lại phần đã đạt nếu không có thay đổi.
+
+**NEXT_STEP=USER_RUN_ONE_V2_READINESS_OFFLINE_QA_THEN_REVIEW_ACT_CADENCE_CONTRACT**
+
+
+## R3-V2-QA-PASS-ACT-SOURCE-PHASE-CANDIDATE-20261021-52
+
+User QA run qa_r3_tools_20261021_223828_OrUZHw,22:38:28–29+07:
+**94 passed / 0.37s, RC0, LAST_STAGE=COMPLETE**. 5 raw SHA256,42 tool inputs đúng
+bản đã test, marker manifest và207 source laptop hiện tại khớp. V2 readiness QA
+PASS; chưa V2 hardware, không lặp94test khi không sửa packet. Source61bf6ea giữ.
+
+Rà nguồn ACT: firmware TaskSerialComm20ms, IRdivider8/10→tick2,12,22,32,...;
+ACTdivider18/25→tick7,32,57,82,... Alternate ACT trùng IR, sau IRenqueue khiến
+ACT fail điều kiện emptyring. Hợp với medianACT1s ởrun221702. STATE5ticks vàENV25
+còn có thể cần2/3tick đểdrain. Chọn sửa lịch nguồn, giữ nguyên350ms freshness và
+1s normalclear trong gateway; không tăng timeout hoặc lặp payload cũ giảtươi.
+
+Candidate riêng qa_r3_act_cadence_candidate_20261021: TxScheduler thêm ACTdue ở
+tick8,18,28,...5Hz; để đủ thời gian STATE2chunk+ENV1chunk drain, tránh IRtick2.
+TaskSerialComm chỉ thay dividerACT thành schedulerflag; cùng ACTframeformat và
+actuatorStatusSnapshot mới mỗi lần. Giữ STATE10Hz, ENV2Hz, IRphase/priority,
+2slotqueue, ACTbest-effort FIFO>=64/emptyring/deadline150ms, CDCrecovery, allmotor/
+pump watchdogs/pins/owners. Không tác vụ/heap/dependency mới; thêmcounter/flag nhỏ.
+5Hz là lịch cấp slot, chưa phải xác nhận FPS nhận trên phần cứng hay fix USBstall.
+
+Snapshot64 file firmware dirty hiện tại,79 input packet đượcpin,overlay4 file:
+SerialComm.h/TaskSerialComm.cpp và native testmain/newTelemetryCadenceHarness.h.
+Firmware gốc không sửa, FWELF gốc0343c56f… khớp identity ESPrun221702; không coi
+ELFhash chứng minh toàn bộ trạng thái source đãbuild khi thiếu provenance cũ.
+Ros207source/350msguard giữ. Không apply/commit/push/build/test/upload bởiassistant.
+
+Một user-run command tạo shadowfirmware riêng, copycache đúngnative/N8R2(~4MB),
+chạy48nativecũ+4targetedrate/phase/realqueue/FIFO/offline/wrap, buildN8R2singlejob,
+compile traceC++actualscheduler+queue/fakeUSB cho legacy/candidate/blocked, replay
+qua LiveNavStopCore không sửa và normalgoalregression. Expected model legacy10ACT/
+10s vsnew50ACT/10s, STATE/IRkhônggiảm; source/receivecompletiontimes córecord.
+Core phải chứng minhlegacy/stale/ON/lostarm/blockedUSB khôngrearm, newcadence đủ
+fresh350ms/clear1s mới nhận UUIDmới; không gửiROSgoal/Twist/arm hoặc chạmGPIO.
+
+**CANDIDATE_QA_BUILD_NOT_RUN; NOT_APPLIED; NOT_UPLOADED.** Tổngdeadline900s,
+native120s/MCUbuild600s/coreQA60s; originalsourcehash/statusbeforeafter và rawlogs
+đượcgiữ. AssistantchỉAST/bashsyntax/hash/diff/datareview, khôngthực thi test/hardware.
+Sau LOG_QA phảireviewrawtraces/build/newELF rồi mớiapply/commit/upload và cậpnhật
+runtimefirmwarepin; không dùng SHA0343 cũ cho firmwaremới. Nav2teardowncrash và
+USBstalls vẫnopen, khôngcoifixcadence đồngnghĩakhắcphục2vấnđềđó.
+
+**NEXT_STEP=USER_RUN_ONE_ISOLATED_ACT_CADENCE_QA_AND_N8R2_BUILD**
+
+
+## R3-ACT-QA-BUILD-PASS-APPLIED-UPLOAD-PENDING-20261021-53
+
+Userrun qa_r3_act_cadence_20261021_225330_LKHO7F,22:53:30–55+07: RC0/COMPLETE,
+sourceafterFW0/ROS0. **Native52/52PASS0.511s; gateway54PASS0.23s; N8R2build
+SUCCESS23.023s**. 22rawhash/79exacttoolinput/65shadowfiles/64FWoriginalfiles/
+207ROScurrentfiles/2candidatebinaryhash verified. Originalstatusbeforeafter khớp,
+overlay4file byte-identical với shadow đãbuild. Buildlog không có warning/error.
+N8R2 RAM33564/327680bytes,flash387233/3342336bytes; không gọi đây là đoCPU.
+
+Trace mô hình scheduler + TXqueue thực/fakeUSB:10s legacyACT10/candidateACT50,
+maxgap1000→200ms. STATE100 cảhai,IR41 cảhai,healthyexpired0. BlockedUSB ACT0,
+không fakefresh. Gateway không sửa chấp nhậnnewcadence sau normalclear1s,
+350ms freshness cònnguyên; oldcadence/stale/ON/armfault/blockedUSB khôngrearm.
+Đây là offline modeledtraffic, **actualACTcadenceNOT_MEASURED**, USBstall/teardown
+chưa fix. Không lặp94V2QA hoặc52+54test sauapply byteidentical.
+
+Đã backup3oldsource +oldELF/bin/bootloader/partitions vàstatus vào
+qa_r3_act_cadence_candidate_20261021/before_apply_20261021_225330, manifest hashes.
+Áp đúng4file đãtest vào /home/huudinh/Documents/esp_projects/robot_mainboard:
+lib/app/TaskSerialComm.cpp,lib/service/SerialComm.h,test/test_liveness/test_main.cpp,
+newtest/test_liveness/TelemetryCadenceHarness.h. Giữbyte củauser ngoài delta,
+không resetdirtyworktree. Applied65buildinputs khớp shadow; ROS207source giữ.
+**APPLIED_OFFLINE_PASS; UPLOAD_NOT_RUN; NEW_FIRMWARE_RUNTIME_NOT_RUN.**
+
+ReviewedELF f6496e95f6657bf922f561ba748826ffd225e5a9f5671e8efaa64566072bf0ed;
+BIN5e8e1c6f3ae544ceab8cb32516d3c0a326b7435919619f872f5812bc4931f43d.
+Rootfirmware .pio artifact vẫn0343… cũ; upload dùng đúngshadowartifactrun225330,
+không dùngIDEroot trước khi rebuild. Córelease_20261021_225330/upload_reviewed_
+n8r2.sh --upload; pin65applied/65shadow/5binary inclboot files,5releaseinputs.
+Cờ--upload rõràng, đúngby-idWCH COM5972047168, x86laptop, khôngoldROSsession.
+User dừnglaunchPi/laptop,đóngmonitor,tắtnguồn motor/bơm trước nạp; không hỏi lại
+setupfloor đãxácnhận. DùngPIO -t nobuild -t upload (đãđọc builder cài đặt),
+max180s; loghash/receipt/expectedELF. AssistantkhôngchạyPIO/tests/serial/flash.
+
+Chưa commit/push mới. Đãghi QA/apply/rollback/runbook, fwrootACT_CADENCE_VALIDATION_
+2026-10-21.md. Sau userLOG_UPLOAD phảireviewuploadwritehash/postimagehash rồi
+kiểmbootidentityELFf649… vàACTfreshness khiđứngyên trướcREADY/full3goal. Không
+đánhdấu uploaded/runtimePASS từkếtquảcompile. Model/map/camera15FPS/ROSguards,
+GPIO/pumpservoowner/watchdogs khôngđổi. Nav2crash-6saucleanup vàUSBTXstalls giữopen.
+
+**NEXT_STEP=USER_UPLOAD_REVIEWED_N8R2_ARTIFACT_THEN_SEND_LOG_UPLOAD**
+
+
+## R3-ACT-UPLOAD-VERIFIED-STATIC-CAPTURE-PREPARED-20261021-54
+
+Userupload qa_r3_act_upload_20261021_230155_JG2nWD:23:01:55–23:02:00+07,
+RC0/COMPLETE,BINARY_AFTER_RC0.11rawhash/5releaseinputs/5currentbinary/65applied
+source verified; toolsused exact release manifest. PIO5.501s, N8R2 environment,
+esptool chipESP32-S3rev0.2/PSRAM2MB,MAC28:37:2f:1f:73:c8 đúngESP đãdùng.
+**App387600bytes@0x10000 write/hashverified, hardresetRTS.** Nobuild uploadlog
+chỉghi ứngdụng, khôngnói bootloader/partition đượcghi lại; cácfilepin vẫnkhớp.
+ExpectedELFf6496e95f6657bf922f561ba748826ffd225e5a9f5671e8efaa64566072bf0ed.
+**UPLOAD_VERIFIED; RUNTIME_BOOT_IDENTITY_PENDING; ACT_PHYSICAL_RATE_NOT_MEASURED.**
+Không đánhdấuREADY/3goal hoặcUSBfix từesptoolSUCCESS.
+
+Chuẩn bịpacket qa_r3_act_static_tools_20261021,11pinnedinputs. Mộtlệnhlaptop
+--static tựcopy đúngfilepin sangPi, nhậnCOMUART0, settle5s, SSHPiI/O+readonlyprobe.
+PiROS59283c5/laptop61bf6ea sourcepins; sourceFW65khớp đãapply. 20swarmup+60sđo,
+camera15FPS nhưngkhôngsubscriberJPEGquaWiFi, inputwatchdog unusedtopic
+/fire_robot_static/cmd_vel_raw. KhôngNav2/YOLO/RViz/pose/arm/goal/pump command.
+Probechỉ3subscriptionACT/odom/cmd_vel, khôngpublisher/client; ACTraw/sourceESPms/
+receipttime/odomcmdcounts/graph+PiBOOTlog/kernelUSB vàlaptopUARTđượcgiữ.
+Source/payloadfreshness khôngrewrite. Nonzero/invalidCMD,ACTON/servoactive hoặc
+controlpublisher dừngcapture; motor/bơm tiếp tục tắt. GiữnativeESP→Pi,COM→laptop,
+APWiFi/LANdown vàđóngoldlaunch/monitor nhưtrước.
+
+Thường~2phút inclsetup/cleanup/copy; remoteSSHtimeout150s vàcopy45s riêng.
+CAPTURE_RUNNER_COMPLETE chỉlàcollectiondone, **khôngphải physicalacceptance**.
+ReviewrawELF/ACTmedian5Hz/gaps/fresh350ms/continuousOFF1s vàrecovery trướcR3.
+Đây làPi-sideACTsourcecheck, khôngloadedWiFi/DDS/JPEG/Nav2benchmark. Không mởrộng
+thêmsoak dài hoặc lặp94/52/54QA/build saubytekhôngđổi. Utilitymớiread-onlykhông
+bắt thêmregressiongate; assistantAST/bashsyntax/hash/adapterboundaryreview, không
+thực thiROS/tests/hardware. Reusecommon/check_sources/UARThelperđãreview, không
+ngụy tạoOFFLINE_QAmarker hoặc gọipreflight live-floor củaR3.
+
+Journal/status/fwrootMD cậpnhật; khôngcommit/push mới. Firmwarecontrols/guards/
+GPIO/model/map giữ. Rootfirmware .pio artifact cũ0343… còn, release/appJSONstatus
+lúcchuẩnbị làimmutablehistory; upload_review230155 làstatusmới. Nav2teardowncrash
+và2USBTXstallsrun221702 cònopen. Bướctiếp usermộtstaticcapture, gửiLOG_LAPTOP;
+chưaarm hay chạyfloortrial ngay.
+
+**NEXT_STEP=USER_RUN_ONE_STATIC_ACT_BOOT_IDENTITY_CAPTURE_THEN_SEND_LOG_LAPTOP**
+
+
+## R3-ACT-STATIC-CADENCE-PASS-RECOVERY-TAIL-INCOMPLETE-20261021-55
+
+Run `qa_act_static_laptop_20261021_231804_GPK8Nm`,23:18:04–23:19:43+07.
+Collection RC0; verified46outer/27Pi/3UART/11tool SHA256 entries (nested sets overlap).
+Pi199 source pins before/after unchanged; laptop207 source check and FW65 verify
+recorded successful. Both process-after lists empty. UART156lines,COMPLETE.
+BOOT observed ELF `f6496e95f6657bf922f561ba748826ffd225e5a9f5671e8efaa64566072bf0ed`
+confirms the reviewed N8R2 image is running, not merely uploaded.
+
+| 60-second measured window | Result |
+| --- | --- |
+| ACT count / whole-window rate | 285 / 4.75Hz |
+| ACT active receipt-span rate / median gap | 4.9999Hz / 200.000ms |
+| ACT max received-pair gap (raw receipt timestamps) | 202.195ms |
+| ESP source delta / repeated ESP timestamps | 199–201ms,median200 / 0 |
+| Pi residence age at publication | median28.0,max36.7ms; not end-to-end acquisition age |
+| Continuous fresh commanded-OFF interval under350ms residence+receipt guard | 57.116s |
+| ACT tail silence at capture end | 3211.114ms; total residence+elapsed3245.514ms |
+| Odom count / received-pair gap / tail silence | 570 / max105.692ms / 3060.901ms |
+| CMD stream / nonzero or invalid observed | 600 / 0 |
+
+All ACT payloads commanded pumpOFF/servoPWMoff/IDLE; forbidden control publishers0,
+invalidACT0,omitted0. ACT means actuator-command telemetry, not a command to turn
+on actuators and not physical pump/nozzle feedback. No Nav2/YOLO/RViz/arm/goal;
+this is Pi-side ACT cadence, not loaded WiFi DDS/JPEG or floor acceptance.
+
+**ACT_CADENCE_PASS; END_TELEMETRY_STALE; USB_RECOVERY_INCOMPLETE_AT_CAPTURE_END.**
+Received-pair maxima exclude silence after the final message; reporting202ms alone
+would conceal the3.211s end outage. Capture summary RC0 is completion, not PASS.
+USB disconnect23:19:35.387→enumerated36.725; UART TXstall reason1,offset0,len65,
+avail0,taskgap20/max21ms→soft reconnect→watchdog EMERGENCY→MANUAL. Pi reopened
+23:19:37.439, while capture ended37.156:0.283s too early for returnedACT/odom.
+TF correctly stopped on stale odom before USB detach. Cause of TXstall is still
+unresolved; ordering does not establish cable/CPU/firmware root cause. UART reacquired
+hostactivity is not evidence that Pi again published ACT/odom. Cleanup SIGINT has
+some childexit-2; no claim every child exited0. Nav2 shutdown crash remains open
+from the earlier floor attempt; Nav2 was absent here.
+
+Prepared separate `qa_r3_act_recovery_tail_tools_20261021` (11pinnedinputs).
+Original capture packet/raw unchanged. Same read-only3subs/0pubs/0clients, same
+PiI/O/staticunusedinput and UART. Only logger changed:20swarmup+60smain, up to15s
+extra if freshACT/odom have not held3s at the boundary, with end_ages and separate
+recovery_tail counts.95s probe hard limit, remote150/copy45 bounds unchanged.
+RC0 remains collection-only, exhausted tail explicit. No fault injection; if no
+fault occurs, record NO_FAULT_OBSERVED rather than claim fault recovery proven.
+AST/bash syntax/hash inspected, **new utility runtime NOT_RUN**, no new project
+QA/build/flash. Existing94V2/52native/54gateway results not rerun. No robot/FW/
+safety/GPIO/model/map/15FPScamera changes. No commit/push this turn.
+
+NEXT_STEP=ONE_BOUNDED_STATIC_RECOVERY_TAIL_CAPTURE_BEFORE_FLOOR_NO_REBUILD_NO_REFLASH
+
+
+## R3-ACT-STATIC-STABLE-V2-FLOOR-RELEASE-20261021-56
+
+Run `qa_act_static_laptop_20261021_233009_YvBJWl`,23:30:09–23:31:50+07.
+Verified46outer/27Pi/3UART/11tool SHA256 entries (nested sets overlap). Collection
+RC0, Pi/laptop sourceafter0, current207laptop/65firmware source pins verified by
+hash only; Pi199before/after verification successful. Both cleanup process lists
+empty. UART182lines COMPLETE; BOOT ELFf6496e95f6657bf922f561ba748826ffd225e5a9f5671e8efaa64566072bf0ed.
+
+| 60-second main window | Result |
+| --- | --- |
+| ACT | 300 / 5.00Hz; median receipt gap199.996ms,max205.014ms |
+| ESP source delta | 199–201ms,median200ms; no duplicate timestamps |
+| Pi residence at ACT publication | median12.2,max18.3ms; not end-to-end latency |
+| Odom | 600 /10.00Hz; max received-pair gap104.273ms |
+| CMD | 600 /10Hz, no nonzero/invalid observed |
+| End freshness | ACT receipt20.716ms,totalresidence+elapsed37.716ms; odom68.201ms |
+| Collection freshness continuity | 72.221s including warmup, fullmain covered |
+| USB detach / UART TXstall during capture | 0 /0 |
+
+All ACT command payloads pumpOFF/servoPWMoff/IDLE; forbidden controlpublishers0,
+invalidACT0,omitted0. Ends DURATION_COMPLETE_WITH_FRESH_TAIL; no extension needed
+beyond one cmd callback at nominal80s. **PASS_STATIC_ACT_CADENCE_AND_END_FRESHNESS;
+NO_FAULT_OBSERVED.** No fault means recovery from prior TXstall is not demonstrated.
+Do not compare maxgap205ms with the previous3.211s tail as the same metric.
+
+UART logs POWERON at23:30:14, before Pi bridge open23:30:32; cause not established.
+No additional boot/reset observed in main. Watchdog at23:31:45.931 follows launch
+SIGINT and ended measurement, not a main-window outage. Some Pi children exit-2
+on requested SIGINT; empty process lists do not mean universal exit0.
+No Nav2/YOLO/arm/goal in this run. Not loaded WiFi/DDS/JPEG, physical pump/nozzle,
+or floor acceptance. USBstall and Nav2teardowncrash remain open historical items.
+
+Reviewed unchanged V2 tools42pinnedfiles, QAraw5 and OFFLINE_QA_OK manifest marker.
+Prior94PASS0.37s retained; no repeatQA/build/flash. Readiness fixes and5HzACT now
+have source-side evidence; release ONE user-operated bounded R3floor trial using
+`qa_r3_navigation_v2_tools_20261021`. Its pinned README/QAmetadata remain historical
+candidate snapshots; external current runbook is authoritative release record.
+Nav2/YOLOlaptop61bf6ea, PiI/O59283c5, N8R2ELFf649, map9_10, camera15FPS unchanged.
+Already approved emptyfloor/operator motor cutoff; no new confirmation needed.
+A only after READY, goals only after R3_ARMED. G1SUCCESS+V→G2active+C exactcancel/
+stop→G3SUCCESS+V. No fire/alignment/IR/pump, no tools generating goals or Twist.
+Main<=300s fromA,stage90s; setup/pose/cleanup separate, typically7–12minutes total.
+Q/Esc withdraw; abnormalmovement physicalmotorcutoff. Do not clear fault latches or
+restart to forcePASS. Rawreview checks goalUUID/motion/stop/telemetry/USB/shutdown
+separately. No commit/push this turn.
+
+NEXT_STEP=ONE_V2_R3_BOUNDED_FLOOR_TRIAL_NO_REBUILD_OR_REFLASH
+
+
+## R3-V2-STARTUP-AND-POST-ARM-ABORT-20261021-57
+
+Run `qa_baseline_combined_laptop_20261021_234121`:120outer/43Pi/3UART raw hash
+entries verified,42testedinputs/QAmarker unchanged. Sourceafter successful both
+hosts, cleanup empty; UART444lines COMPLETE, Pi kernel noentries. N8R2 BOOTELFf649…
+observed in Pi log. **BLOCKED_POST_ARM_PERCEPTION_SOURCE_STALE_NO_GOAL.**
+A accepted23:45:08.973, stopped23:45:11.270 after2.299s,0goal intents/action goals/
+completedgoals. At23:45:11.268 mission health becameBLOCKED/SOURCE_TIMESTAMP_STALE:
+camera-source age411.6ms > existing300ms, detection receiveage60.8ms; odomfreshtrue,
+odomage80.8ms. All8lifecycle active and safetyfresh in final sample. Trial.update
+withdraws arm immediately on livehealth loss. User had insufficient time to setgoal;
+no evidence of wrongA or main300s expiry. Mission camera-source age is distinct
+from detection-message receiveage and odomgap; do not treat it as YOLOcompute411ms.
+
+| Startup event (local +07) | Observation |
+| --- | --- |
+| Laptop start23:41:22 | Preflight/COM then staged startup |
+| Deliberate QA waits | COM5s +PiI/O30s +Nav2wait20s =55s |
+| Nav2 start23:42:05.133 | Localization active23:42:08.430,about3.3s |
+| RViz pose stage23:42:25.463 | Operator initialpose23:43:10.474 |
+| Navigation lifecycle active23:43:16.544 | About6.1s after pose |
+| Pose/readiness stage completed23:43:24.328 | Includes fresh-data/stability checks |
+| YOLO launch log created23:43:25.620 | Modelready23:44:50.880,about85.3s |
+| First READY23:44:54.568 | MISSION_READY filemtime, matching untimestampedR3_READY stdout |
+| Operator A23:45:08.973 | Runtime2.299s then perceptionhealthfault |
+
+Source audit: perception.launch._validate_paths synchronously imports torch and
+ultralytics in a separate Python process before launching both nodes. Real YOLO
+process imports them again in _load_model, then model/CUDA initialization and
+2warmup predictions. Approx41s prechild startup +44s realprocess initialization
+inferred from sampler/procstartticks and firstalignmentlog; exact import/model/
+CUDA breakdown NOT_MEASURED. Weights loaded by realprocess; do not call this
+2modelcopies. No claim entire Nav2 startup is85s. READY means current standby
+conditions hold3s (pose/lifecycle/safety/mission nofire/freshinputs/owners/zero/
+ACT); it is not permanent data health. Prior READY state can be lost later.
+
+Resource sample: aggregateCPU mean6.22%,max10.54%; MemAvailable min6.876GiB;
+GPUutil6–47%,VRAMmax1017/6144MiB. No evidence of global memory/GPU exhaustion;
+aggregate samples cannot exclude a hot thread or brief pause. YOLO steady5s
+processingmeans17.5/18.3/18.5ms; firstwindowmax585.8ms includes first-usecost.
+Camera noframe1.07s at23:44:57.880 then resumed; sourceage also exceeded300ms
+beforearm. JPEGextraneous-marker warnings observed but decode_errors0; don't
+infer badcable/USB/DDS solely from warning. Exactcamera-age origin not isolated.
+
+Nav2 SIGINT23:45:16.471 follows aborted measurement; teardownagainSIGSEGV/exit-6,
+parentlaunchRC0 is notchildsuccess. Separate open issue, not cause of stop2.3s
+afterA. No actualgoal/navigationrun was measured; cannot claimR3functionalPASS.
+No sourcechanges/tests/build/ROS/hardware this review; user requested explanation.
+
+Next: offline optimize redundantYOLOstartup import and log perstage timing, then
+trace camera timestamp-age path (Pi source→WiFi/DDS→YOLO→mission) before retrying
+floor. Replace fixed waits only with proven readiness checks, retain sequencing
+unless evidence supports change. Do not raise300ms guard or ignore livehealth
+loss to forcePASS. Preserve original42testedV2files/rawlogs and all sourceguards.
+
+NEXT_STEP=OFFLINE_OPTIMIZE_YOLO_STARTUP_AND_TRACE_CAMERA_SOURCE_AGE_BEFORE_ANOTHER_FLOOR_TRIAL
+
+
+## YOLO-STARTUP-SINGLE-IMPORT-CANDIDATE-20261022-58
+
+User authorized nextstep and asked fixedwaits vsreadiness and WiFiPi vsROS2.
+5/30/20s are configured QAsettles (55s total). Pose/readiness59s andYOLO85s are
+observed, not sleeps; READYrequires stableinputs3s. Timeouts are upperbounds,
+not waits to be fully consumed. Keep staggeredstartup and existingsettles fornow.
+
+Reverified run234121120outer/43Pi/3UART raw. Ping237tx/229rx,3.37553%loss,
+RTT0.881/254.262/4303.901ms min/avg/max, substantial link/host jitter even forICMP.
+Cannot call this inherent PiAP limit or pureWiFi/RF delay: endpoint scheduling,
+driver/powersave/competition notisolated. OnPi JPEGmaxgap1456.538ms/maxheaderage
+1386.643ms vs laptop2153.948/2282.837ms. Hostaggregatewindows differ229s/224s,
+not perframematched; do not subtractmaxima as one-waynetworklatency. Piobserver
+still includes localDDS/executor, not physicalcamera-only timing. Around23:44:58,
+Pi already recordsJPEGgap991.933ms/age991.646ms andlaptopgap1012.803/age1349.735ms.
+SSHclockboundsbefore[-48.170,+83.605]ms/after[-64.530,+88.963]ms prevent precise
+one-wayallocation. Evidence supports BOTH source/local and addedcommunication
+pathissues; notjustWiFi,notjustNav2heavy. NoUSBkernelentries inthatcapture.
+
+Prepared isolated candidate `qa_r3_yolo_startup_candidate_20261022`,28pinnedinputs,
+package-onlycopy,4changedcode/testfiles; baseline is NOT modified/APPLIED.
+- launch/perception.launch.py keeps model/config/interpreter pathchecks, removes
+  subprocess torch/ultralytics import; actualnode stillimports/checksdeps once.
+- yolo_observer.py logs begin/done of dependencyimport,devicecheck,modelload,
+  GPUwarmup,overallobserverinit. Originalmodel/CUDAfail behavior retained.
+- Samefile bounded3keystats callback-entrysourceage,post-inferencesourceage and
+  totalcallback(inclannotation), count/sum/min/max,logeveryexisting5s. Noimages
+  retained/newthreads/nodes/dependencies; O(1), no perframe extra listallocation
+  once initialized. Signedages retained as clockevidence; nofakefresh/retimestamp.
+- Launchtests replace obsoleteimportsubprocesstimeout check with validpath/no
+  childprocess andmissingpath/notexecutable checks. Newfakeinitializationtests
+  check missingdeps/CUDAfail/modelonce/warmup2 andboundedstatssigned/nonfinite.
+  Existingperception/aim/alignment helpertests included, excludeslint.
+
+Model/conf/FP16/image_size/warmup2/FPS15/sourceJSON/topics/QoS and300msmission
+freshness unchanged. NoFP/behaviorlogic tweak. Onmissingdeps realYOLO exitsbefore
+validdetections; alignmentpreview maystart earlier butownsno control, missing
+missiondetection stillblocksarm. Parentlaunch mayremain withpreview; existing
+runnerhealth/timeouts retained. Noactualsavedstartupduration measured orpromised.
+Diagnostics overheadnotmeasured. Sourceage entry includes capture/Pi/network/
+DDS/executor/clock, notpureWiFi. Floorstillblockeduntil freshpipelineevidence.
+
+Assistant onlyAST/bash-n/hash/diffinspection, no projectimports/tests/ROS/GPU/
+serial/SSH/hardware. Useronecommandrun_offline.sh: cleanenv,timeout120s tests,
+180soverall,207baselinepins+perceptionbeforeandtoolsbefore/after. Importpath
+assertsshadowpackageandnorealtorch; fakeinitialization doesnotcreateROSNode.
+Noapply/build/flash/commit/push, OFFLINE_QA_NOT_RUN/RUNTIME_NOT_RUN.
+AfterQArawreview applysamebytes, userbuildonlyperception, prepareonestationary
+pairedWifi measurementwithnewstartup/latencystats beforefloorretry. No more
+full3goalattempts merelytolookforREADY. USBstall/Nav2teardownissuesremainopen.
+
+NEXT_STEP=USER_RUN_ONE_OFFLINE_GATE_THEN_REVIEW_CANDIDATE_BEFORE_APPLY_BUILD_STATIC_WIFI
+
+
+## YOLO-STARTUP-QA40-APPLIED-BUILD-PENDING-20261022-59
+
+Userrun `qa_yolo_startup_20261022_001242_Fb4LcT`:00:12:42–43+07, COMPLETE/RC0,
+**40 passed in0.39s**. Reviewed10rawhash/28exacttestedtoolinputs,207baselinepins/
+20perceptionbeforefiles; toolsused exactmanifest,sourceafter0,toolsafter0,
+gitstatusunchanged0. Shadowimport points tocandidate, torch/ultralytics not
+imported bymodule. Fakeinitialization covers dependency/CUDAfailure,warmup2,
+modelonce; signedboundedstats/pathchecks included. No projecttests repeatedby
+assistant; no actualGPUstartup orWiFiage measurement yet.
+
+Appliedbyteidentical4files tobaseline laptopworktreeHEAD61bf6ea afterrechecking
+source/status andtestedmanifest. Backup3oldfiles+filesJSON+gitstatus (5filehash
+manifestverified) atqa_r3_yolo_startup_candidate_20261022/before_apply_20261022_001242.
+Originalhistorydirty preserved, no otherusercode changed. Files:
+- launch/perception.launch.py SHAa10fc08ebcab3699dc151bb0aa7f7f5eabe57354767d567ba7da9df76ae5c23b
+- fire_robot_perception/yolo_observer.py SHA072ec994b0aab2bf396b556f322c20bb600d407a5b8e92c896c674101f9b76df
+- test/test_perception_launch.py SHA82c4531841d463643ad0bf36c01c99a966c2dc2a713886bc8ad6d4568a151dec
+- newtest/test_startup_latency.py SHA3d05565bbc245c788db9982f782c6b3a8fcbd251e4b0f3cb9462cb49279628fd
+
+**QA_PASS_REVIEWED; APPLIED; BUILD_INSTALL_NOT_RUN; RUNTIME_IMPROVEMENT_NOT_MEASURED.**
+Onlyperceptionstartupanddiagnostics changed. No mission/Nav2/FW/guard/model/
+FPS15/QoS/sourceJSON/stamp changes. Missingdependencies now failrealYOLObefore
+validobservations, noCPUfallback; alignmentpreviewearlierownsnooutputs. Existing
+runnerreadinessfailclosed. Do not promise85s→44s fromstaticcodechange alone.
+Keep55sQAsettles asbefore; removingthem needs separateevidence.
+
+Prepared `qa_r3_yolo_startup_build_tools_20261022`,5pinnedinputs. Useronecommand
+buildonlyfire_robot_perception --symlink-install --executor sequential,deadline
+180s;installedimport/hash/launchverification30s,overall300s.207updatedruntimepins
+and21perceptionpins sourcebefore/after,gitstatusbefore/after andunchangedNav2native
+binary enforced. Importverification usesamentselectedinstalledmodule pathwithin
+baseline,checkssourcehash/LatencyWindow/startup/co_names; noNodeinit/realtorch/
+model/GPU/serial/robotlaunch. BuildtoolAST/bashsyntax/hashinspected, NOT_RUN.
+No repeat40QA,Piupdate/firmwareflash required. Sourcepins inoldR3V2correctly
+rejectnewperception;do notsilentlyreuseoldruntimepacket. Prepareseparatepaired
+stationarycapture withnewpins onlyafterbuildreview. RawV2/tools remainimmutable.
+
+Rollbacksourceonly ifneeded:restorethe3backedupfilesandremoveonlynewtest identified
+asbeforeabsent, thenuserrebuildperception; do notgitresetdirtyworktree. No automatic
+rollbackperformed. No commit/push thisturn. ExistingUSBstall/Nav2teardowncrash and
+camera-sourceage>300ms remainopen; nofloorretryuntilpipelineevidence.
+
+NEXT_STEP=USER_BUILD_ONLY_LAPTOP_PERCEPTION_THEN_REVIEW_INSTALL_HASHES
+
+
+## YOLO-STARTUP-BUILD-INSTALL-VERIFIED-STATIC-PREPARED-20261022-60
+
+Userbuild `qa_yolo_startup_build_20261022_001936_J7L03e`,00:19:36–38+07:
+COMPLETE/RC0,BUILD_RC0,sourceafter0/toolsafter0/gitstatusunchanged0.
+Reviewed13raw/5buildtool hashentries,207currentruntime/21perceptionsourcepins.
+Colconperceptionpackage0.66s,total0.98s. Installedamentmodule andlaunch hashes
+072ec994b0aab2bf396b556f322c20bb600d407a5b8e92c896c674101f9b76df /
+a10fc08ebcab3699dc151bb0aa7f7f5eabe57354767d567ba7da9df76ae5c23b matchappliedQA40.
+Heavydependencies notimported byverification; noNodeinit/GPU/model wasrun.
+Nav2nativebinarybf286522… byteidentical before/after. **BUILD_INSTALL_IMPORT_PASS;
+GPU_STARTUP_AND_WIFI_IMPROVEMENT_NOT_MEASURED.** BaselineHEAD61bf6ea+reviewed
+perceptiondelta, Pi59283c5 unchanged, ESPN8R2ELFf649 expected. No newcommit/push.
+
+Prepared `qa_yolo_startup_static_wifi_tools_20261022`,30pinnedinputs. Forkedonly
+usedR2readonlyacquisitionhelpers fromverifiedmanifest, oldR2/R3tools/raw remain
+unchanged. Not using/forgingoldOFFLINE_QAmarker; this is diagnosticlogger, not
+projectQAacceptance. Exactdirtyperceptionallowlist plusupdated207runtime and21
+packagehashes guardlaptop; Pi199sourcepins remain. Buildinstall preflight repeats
+onlyreadhash/import verification, no rebuild. No newprojecttests demandedfor
+reversibleloggingutility; assistantAST/bash-n/hash/dependency/boundaryreviewonly.
+**NEW_CAPTURE_UTILITY_RUNTIME_NOT_RUN.**
+
+Nav2composedshadow+YOLO+laptopviewer15FPScap,PiI/O/camera15FPS/rawserial/safety,
+mapfire_room_9_10_2026. NativeUSB→Pi,COM→laptop, APWiFi/LANdown; motor/pumpOFF,
+cameraEMPTY, closeoldlaunch/monitor. UserplacesInitialPoseonly, noA/arm/goals.
+Pi usesunusedstaticCMDinput, noCMDsource; observerrejectsnonzeroCMD/forbidden
+commandorarm publisher/goal/ACTnonOFF. Recorder hasno publishers/actionclients;
+onlyread-onlyGetState/GetParametersRPCs. Nav2shadow route notrealCMD; no livegateway
+launched. Mission_supervisor observeonlyrecordshealth. BestEffortmission/ACTsubs
+matchsourceQoS. Readonlydriverallowsstaleperceptionhealth tobe loggedthroughout
+staticmeasurement; this neverweakensrealrobothealthguard orauthorizescontrol.
+
+KeepQAsettles5+30+20s andpose-readinessworkflow forcomparison; once realYOLOok+
+JPEGarrivefor3s,collect120s. Modelstartupstageprogressprinted every5s. Pose185s,
+YOLOfirstdata150s,driver600s,Pi900s bounded;usually4–7min inclmanualpose/start/
+cleanup,notguaranteed. ExistingSSHhealth8s/timeoutsretained. Matchedwindow marker
+sentfromlaptoptoPi viaSSH; recordactualmarkerreceipttimes, notassumesimultaneous.
+
+AdditionalJPEGperframe metadata stamp/frame_id/bytes/receiptwall+mono onbothhosts
+permitsmatching samepublishedframe instead ofsubtractingindependentmaxima; noJPEG
+payloadstored. YOLOresults/sourceage/processing/inference andmissionhealthchanges,
+ACTcommandstate,kernelUSB/UART,ping/clockbounds/hostCPU/GPU preserved. Sourceage
+includesclockdifference/capture/localexecutor/network; no"pureWiFi" claim. Whole
+comparison notcontrolledA/B: thisstationaryprofilehasno livegateway/arm/goal; file
+pins/durations/workloadscope recorded. Nav2teardownchildcrashmustbereviewed separately,
+parentlaunch0 notchildsuccess. CollectionRC0/finalCAPTURE_ONLY neverphysicalPASS.
+
+Afterrawreview, compareYOLOdependency/model/warmupstage timing withold85.3s,
+matchsource-stamps acrossPi/laptop, inspectYOLOentryage vsafterinference andmission
+healthage before floorretry. Currentcodefix removesduplicateimport, notyetconfirmed
+camera-agefix; don'traise300ms missionfreshness orchangeAP/model/FPS toforcePASS.
+NoPiupdate/flash/QA40repeat. Source/hardwarecontrols unchangedthisturn.
+
+NEXT_STEP=USER_ONE_PAIRED_STATIC_WIFI_CAPTURE_THEN_REVIEW_TIMING_AND_MATCHED_FRAMES
+
+
+## STATIC-TOOL-PREFLIGHT-STALE-HEAD-FIX-20261022-61
+
+Userrun `qa_baseline_combined_laptop_20261022_003107`,00:31:07–08+07,stoppedat
+PREFLIGHT common.shline88. Verified17raw/30V1tool SHA entries. Laptopreceipt
+RUNNER_RC1/FINAL_EXIT_RC2,sourceafter1,cleanupempty. source_after sayswrongHEAD
+actual61bf6ea…; **actualbaselinewas correct**. V1check_sources copiedR2's old
+expected4e2fe97… even thoughexpected_runmetadata/207sourcepins correctlydescribed
+61bf6ea. This is assistanttoolpreparationbug; AST/syntax/hashinspectiondidnot
+catchsemanticmismatch. **BLOCKED_TOOL_PREFLIGHT_NO_ROBOT_RUNTIME**; no UART,
+Nav2/YOLO/observermain ormeasurement started by laptoprunner; noPiLAPTOP_READY
+release orcopiedPi capture. Cannot assessstartup/WiFiage fromthisattempt. Existing
+QA40PASS/build0.66s/installhashes remainvalid, no evidence ofrobotregression here.
+
+PreservedV1packet/raw untouched. PreparedseparateV2packet
+`qa_yolo_startup_static_wifi_v2_tools_20261022`,32pinnedinputs:
+- check_sources exactlaptopHEAD61bf6ea,Pi59283c5 retained. AssertPROFILESexpected
+  matchesexpected_runmetadataforbothroles; wrongHEADstillrejects andmessagegives
+  actual+expected.207runtime/21package/dirtyallowlist retained, no"ignoreHEAD" bypass.
+- commoncreatesreceiptbeforefirstcheckandcapturesstderrinsource_before, avoiding
+  emptyreasonfileontheoriginalfailure. Otherstaticguards/configurationunchanged.
+- prepare_copy.sh checksmanifest andlocalreadonlyidentitybeforeSSH,stagesonlypinned
+  inputs preservingmaps/subdirs,thenremotehash+PisourcecheckbeforeanyROSlaunch.
+  No oldQAmarker reusedorforged; thispreflightstep is notclaimingnewprojecttestPASS.
+- Capturedrivers,viewer,sourcepins,model,FPS15,5+30+20ssettles,120smain remainbyte
+  identicaltoV1. Robot/FWbaselinecode untouched; no build/flash/QA40repeat.
+
+AssistantAST/literalmetadata/datahash/bash-n/referenceinspectiononly, no project
+code/tests/ROS/SSH/hardware executed. NewV2runtimeNOT_RUN. Userfastprepare_copy
+willactuallyexecute checkerandfailbeforelaunchifidentity/config inconsistency
+remains. OldPiA maystillwait180sforhandshake; Ctrl-Cthatoldsessionifstillopen,
+thenusefreshV2AandnewLOG_PI. No broadprocesskill/resetESP neededfromthisfailure.
+
+Lệnh hiện hành: docs/codex/current/YOLO_STATIC_WIFI_V2_PREFLIGHT_FIX_2026-10-22.md.
+AfterpreparecopyOK useV2A/B foronepreviouslyauthorizedstationarycapture, motor/
+pumpOFF,APWiFi/LANdown/native+COM,cameraEMPTY,userInitialPoseonly,noA/goal.
+No floorretryuntilcapturecontainsactualdata. No commit/push thisturn.
+
+NEXT_STEP=USER_FAST_PREFLIGHT_AND_COPY_THEN_NEW_STATIC_A_B_NO_REBUILD_NO_REFLASH
+
+
+## STATIC-V2-SCP-DOT-COMPATIBILITY-FIX-20261022-62
+
+Userpastedprepare_copy output:32toolhashesOK, laptopHEAD61bf6ea correct and207
+runtimepins/sourceidentitypassed withreviewedperceptiondirtydelta. Then
+`scp: error: unexpected filename: .`. NoSTATIC_V2_SOURCE_PREFLIGHT_AND_COPY_OK,
+no completedremotehash/Pisourcecheck; no newROS/YOLO/UARTmeasurement started by
+prepare_copy. **LOCAL_SOURCE_PREFLIGHT_PASS; COPY_BLOCKED; RUNTIME_NOT_RUN.**
+This is toolcopycompatibilitybug inassistantpreparedscript, notrobot/WiFi failure.
+Source staging/. gets rejected asdotdirectory byreceiver; no needdisableSSH/scp
+filenamechecking oruseunsafe-Tflag. Existingbuild/QA40/installresult remainsvalid.
+
+Preservedpreviousprepare_copy.sh and32inputmanifest withreviewJSON in
+qa_yolo_startup_scp_fix_20261022,3filehashmanifest. UpdatedsameV2packetpath only
+prepare_copy.sh anditsmanifest. Nowmkdirremote/maps, copyexplicit30pinnedroot
+regularfiles+tools.sha256, then2mapfiles toexactmapsdirectory. No sourcename'.',
+recursivecopy,temporaryfolderorunsafeoption. Unexpectednewnestedpathfailsclearly.
+No robot/FW/driver/sourcepins/guard/FPS/map/model/runtimebehavior changes. Same
+32pinnedinputs; before/aftercopytoolSHA saved. Assistantbash-n/hash/dataargument-
+partitioninspectiononly, noexecutingscp/SSH/projectchecks/tests/ROS/hardware.
+ActualremotecompatibilityNOT_RUN; userrerunthesameprepare_copycommand, thenstart
+newV2A/B onlyafterSTATIC_V2_SOURCE_PREFLIGHT_AND_COPY_OK=1. Don'trepeatbuild,
+flash orQA40. IfoldAisstillwaitingCtrl-CitbeforefreshA; userInitialPoseonly,
+motor/pumpOFF/cameraEMPTY/native+COM/APWiFi/LANdown asbefore.
+
+NEXT_STEP=USER_RERUN_SAME_PREPARE_COPY_THEN_STATIC_A_B_AFTER_COPY_OK
+
+
+## YOLO-STATIC-WIFI-MEASURED-20261022-63
+
+User run `qa_baseline_combined_laptop_20261022_004908`, main 120.0004 s.
+**STARTUP_IMPROVED_COLLECTION_COMPLETE_STEADY_WIFI_FRESHNESS_BLOCKED**.
+Verified 112 laptop / 44 Pi / 3 UART / 32 tool manifest entries (overlap);
+207 laptop and 199 Pi source pins unchanged before/after. HEAD laptop 61bf6ea
+plus reviewed 4-file startup delta, Pi 59283c5; N8R2 ELF f6496e95… .
+
+YOLO launch→ready 85.26→43.97 s in these two runs (not controlled benchmark);
+import 41.216 s, GPU warmup 2.241 s. Exact main processing mean 18.03 ms,
+inference 16.90 ms, 1363 ok + 8 camera_stale. Valid ok source age p95 242.38 ms,
+max 2481.36 ms; 59 >300 ms. Mission 8 recovered stale episodes, period 14.8–15.1 s,
+28.50/120 s blocked, final health OK. Main laptop odom gap max 1313.21 ms,
+TF 1315.36 ms, scan 2281.06 ms, JPEG 2808.49 ms / 11.38 FPS.
+
+Matched 1365 common frames: Pi receive age median/p95 18.76/29.67 ms,
+laptop 24.92/210.38 ms. Clock uncertainty prevents exact one-way RF inference.
+Pi-only82 is observer difference, not exact packet loss. Pi steady 134.43 s differs
+from laptop120 s; don't compare their full-window counts as identical scope.
+ACT in common120 s: Pi600/maxgap274.54ms, laptop576/maxgap1320.18ms, all commanded OFF.
+Ping whole run 274/266, loss2.92%, mean346.87ms/max3576.13ms. No aggregate resource
+exhaustion observed; short single-thread/executor blocks remain possible.
+
+UART556 COMPLETE, no main TX stall/reset/USBdetach; startup POWERON+reenumeration
+00:49:15 before I/O/main cause unknown. Nav2 still SIGTERM after INT10s/RC143,
+no crash-6 observed; both cleanup empty. No goals/arm, CMD nonzero0, forbiddenpub0.
+Capture RC0 is not motion acceptance. Raw summary YOLO age with zero stamp is invalid;
+review excludes camera_stale from numeric age, retains states. 5s latency windows
+include boundary/pre-main callbacks; do not call callback584ms main inference time.
+
+Full Vietnamese report: `docs/codex/current/YOLO_STATIC_WIFI_RESULT_2026-10-22_004908.md`.
+Analysis and matched-frame JSONL in `qa_yolo_startup_static_wifi_v2_tools_20261022`.
+Prepared read-only `qa_wifi_periodic_inspection_20261022/inspect.sh`: cached AP info,
+driver/power-save/AP fields, ping20packets; no scans/settings/secrets/ROS/hardware.
+Assistant shell syntax/hash/data review only; new inspector actual execution NOT_RUN.
+No robot/FW/guard/model/FPS changes or commit/push. Preserve old pinned captures;
+future runtime needs a fresh reviewed source/history snapshot.
+
+NEXT_STEP=READ_ONLY_WIFI_DRIVER_POWERSAVE_AND_AP_CONFIGURATION_INSPECTION_BEFORE_NEXT_RUNTIME
+
+
+## WIFI-READONLY-CLOCK-MISMATCH-20261022-64
+
+User `qa_wifi_readonly_20261022_120619_ym1naF`, laptop 12:06:19–12:06:41+07,
+collection RC0, 5 raw hashes + 3 input hashes verified. No ROS/hardware runtime.
+**IDLE_PING_GOOD_GROSS_CLOCK_MISMATCH_BLOCKS_NEXT_ROS_CAPTURE**.
+
+Idle ping20/20, loss0%, mean9.737ms, max79.746ms (19.025s). Laptop wlp8s0
+10.0.0.253, enp7s0DOWN; Pi wlan0 10.0.0.1, eth0DOWN. AP FireRobot_AP2.4GHz
+channel11. Laptop driver rtw89_8852be/kernel6.8.0-138, NMpowersave default;
+PCI runtime control on/active; rtw89 core disable_ps_mode=N and three PCI disable
+flags=N. These do not prove actual 802.11 PS ON. Pi brcmfmac/kernel5.15.0-1110,
+Hotspot modeap/bg/channel11/powersave disable; SDIO runtime auto/unsupported.
+Both iw missing; hostapd files inaccessible/not present, AP managed by NM.
+Cached signal100 and rate65Mbps are not measured throughput/airtime; Pi AP
+rate0/signal0 is not proof weak signal. Cached neighbors do not establish congestion.
+
+Critical new observation: laptop `2026-10-22T12:06:19.708+07`, Pi
+`2026-10-12T14:52:22.881+07`, approximately 854036.83s apart (sequential snapshots,
+not exact offset). Current NTP status and reboot cause were not collected. Do not
+assert NTP disabled or clock loss root cause. Correct current clock state before
+another distributed TF/source-age measurement. This does NOT explain away run004908,
+which had near-zero clock bounds and real steady-state arrival gaps. Short unloaded
+ping does NOT overturn loaded120s2.92%loss/346.87msmean/3576msmax result.
+
+Prepared qa_pair_clock_check_20261022: readonly timedatectl flags +5 existing
+SSH clock probes; conservative ±50ms measurement interval budget, not a change of
+300ms mission/350ms ACT guard. Too-wide bound INCONCLUSIVE, no usable probe BLOCKED.
+NTPflag=yes alone is insufficient. No claim holdover/reboot-safe time solved.
+User first closes ROS/motorpumpOFF, reconnects LAN laptop↔Pi and laptop Internet,
+enables existing Pi network-time service with explicit `sudo timedatectl set-ntp true`,
+waits for sync then runs check.sh10.42.0.185. After WiFi return/LANdown, check.sh
+10.0.0.1 before new runtime packet. No manually forced date, packages, WiFi changes,
+firmware/build, model/FPS/guard change. Inspector result actual reviewed; new clock
+recovery/checker NOT_RUN by assistant (shell syntax/AST/hash/data-only verification).
+
+Report/runbook: docs/codex/current/WIFI_CLOCK_INSPECTION_2026-10-22_120619.md.
+No commit/push. Keep old pinned runtime tools unchanged; next capture needs a new
+reviewed history/source snapshot after this journal entry.
+
+NEXT_STEP=RESTORE_PI_NETWORK_TIME_WITH_LAN_INTERNET_THEN_VERIFY_PAIR_CLOCKS_BEFORE_WIFI_RUNTIME
+
+
+## EXISTING-CHRONY-WIFI-DISCOVERED-20261022-65
+
+User recalled automatic WiFi clock sync and explicitly authorized SSH over LAN.
+Assistant performed read-only LAN SSH and local daemon inspection (sandbox socket
+access initially denied; retried through approved escalation). Saved pi_lan.log
+and laptop.log + evidence.sha256. No clock/config/service/network mutation.
+**EXISTING_WIFI_NTP_CONFIRMED_BY_JOURNAL_CURRENT_LAN_SYNC_OK_WIFI_ONLY_RECHECK_PENDING**.
+
+Laptop chrony enabled/active, UDP123 listens, existing
+/etc/chrony/conf.d/90-fire-robot-server.conf allows10.0.0.0/24 and10.42.0.0/24,
+localstratum8 for offline relative laptop time. Pi chrony enabled/active,
+/etc/chrony/sources.d/90-fire-robot-local.sources already contains10.0.0.253 and
+10.42.0.1, bothiburst/prefer/minpoll3/maxpoll5. No new NTP setup required.
+
+Pi journal proves it selected WiFi10.0.0.253 at oldOct12 14:53:05, reported
+854038.898972s error, then stepped to Oct22 12:07:04. This occurred AFTER readonly
+inspection120619 and BEFORE LANonline13:12:34/selected13:12:38. Thus entry64's
+large offset observation was real but transient; suggesting LAN as necessary
+recovery was incomplete and overlooked existing config. Intermittent no selectable
+sources events at12:07:20/12:08:00/13:00:27 recorded, cause not established.
+Current13:13LAN selected10.42.0.1, NTP/NTPSynchronizedyes; Pi reported offset~6us
+is a chrony estimate, not independent exact offset or WiFi verification.
+
+User-dirty scripts/fire_robot_pi_session.py has synchronize() before start(),
+3SSHsamples/100ms budget, authorized set_clock ifneeded; script demo code is not a
+WiFi-connect hook and current standalone QA runners don't invoke it. Read only,
+not modified or launched because it also owns ROS startup. No need a secondserver.
+
+Prepared qa_existing_chrony_review_20261022/check_wifi.sh (3 pinned tool inputs):
+user disconnectsLAN/reconnectsFireRobot_AP, waits30–60s, runs one read-only check.
+Require configured laptopIP10.0.0.253/routewlp8s0/LANdownboth, Pi selected^*10.0.0.253,
+NTPflagsyes and5SSHsample bestbound inside±50ms. Budget unchanged fromentry64,
+not robot300ms/350ms guard change. WAIT/inconclusive saved distinctly. Newactual
+WiFi-only run NOT_RUN; assistant shellsyntax/AST/hash only, no tests/ROS/hardware.
+No RTC/UTC guarantee offline; laptop local fallback gives relative coherence.
+Journal evidence does not show why initial boot time was old or why sources were
+intermittently unselectable; not proof of a driver fault. Existing004908nearzero
+clockbounds and8stale events remain valid. No commit/push or robot/FW changes.
+
+Next new ROS packet must gate clocks before starting nodes, inspect exact chrony
+source, and refresh reviewed history/source pins; never repin old raw captures.
+Report: docs/codex/current/EXISTING_WIFI_NTP_REVIEW_2026-10-22.md.
+
+NEXT_STEP=USER_RECONNECT_PI_WIFI_LAN_DOWN_THEN_VERIFY_EXISTING_CHRONY_SOURCE_AND_CLOCK_BOUND
+
+
+## WIFI-NTP-HANDOVER-SSH-MEASUREMENT-20261022-66
+
+User run qa_existing_ntp_wifi_20261022_132330_osNqfZ,13:23:30–36+07,RC2;
+9 raw + 3 V1tool hashes verified. Same date and NTPflagsyes both hosts; Pi source
+WiFi10.0.0.253 has Reach1/LastRx22s/estimate+24ms±49ms, but selected^*LAN10.42.0.1
+retains old sample46s ago. Both LANdown/route/IP preflights passed. This is stale
+source reference/handover pending, not proof physicalLANstillup or new10dayoffset.
+WiFi source estimate is not independent exact-clock proof.
+
+Fresh-SSH whole-invocation clock probe: RTT463.859ms, interval[-14.645,+449.214]ms.
+Includes authentication/interpreter startup; interval valid but too broad to prove
+±50ms or an actual464msclock error. V1 mislabeled the workflow as near-instantclock
+verification without separating handshake; own tool limitation, not measuredWiFiRTT.
+**WIFI_NTP_RESPONDED_SOURCE_HANDOVER_PENDING_CLOCK_OFFSET_NOT_ESTABLISHED**.
+
+Prepared separate qa_ntp_wifi_persistent_v2_tools_20261022 (4 inputs), preserving
+V1/raw: open oneSSHstream, awaitREADY then8id-bound request/responses, fourtimestamps
+client-send/peer-receive/peer-send/client-receive give interval without symmetric
+latency assumption. Handshake excluded; executor/transport delay still included.
+Wall-vs-monotonic jumps checked on both hosts; protocol error cannot PASS. Snapshot
+only, no UTC/reboot/loadedjitter guarantee. Clock alignment reported separately from
+source selection/NTPflags; budget±50ms unchanged, robot300ms/350msguards unchanged.
+Readonlychronyqueries up to60s toobservehandover; never reselect/offline/restartdaemon,
+changeclock/network/driver/firmware, or startROS. User closeslaunch/motorpumpOFF,
+WiFiPi/LANdown, runscheck_wifi.sh once, sendsLOG_CLOCK. ActualV2NOT_RUN byassistant;
+AST oflocal/remote Python andbash-n/hash reviewed only. No projecttests/build/runtime.
+No commit/push. NextROS packet must gate clocks and use freshsource/historypins.
+
+Report: docs/codex/current/WIFI_NTP_HANDOVER_RESULT_2026-10-22_132330.md.
+NEXT_STEP=USER_RUN_ONE_PERSISTENT_SSH_WIFI_CLOCK_CHECK_BEFORE_NEW_ROS_PACKET
+
+
+## NTP-WIFI-ALIGNMENT-PASS-DAEMON-REFRESH-20261022-67
+
+User qa_ntp_wifi_v2_20261022_133556_kiCVxH,13:35:56–13:37:03+07,runnerRC2,
+probeRC0. Verified 11 raw entries/4V2toolinputs. 8valid fourtimestamp probes;
+bestPi−laptop[+0.624544,+2.480787]ms,steadySSHRTT1.888910ms,bootstrap787.512ms
+excluded. Math recomputed from rawdata, all8valid, no newprojecttest execution.
+**CLOCK_ALIGNMENT_PASS_ONGOING_WIFI_NTP_SELECTION_NOT_CONFIRMED**.
+
+Clockalignment budget±50ms met, but no ^* in sources table (all^-). Tracking RefID
+10.42.0.1 is historical, RefTime06:22:47UTC vs06:37:02UTC snapshot, ~855s old.
+Do NOT call LAN currently selected based only onRefID. WiFi10.0.0.253Reach3,
+LastRx54s,sourceestimate−13ms±39ms. NTPflagsyes both, insufficient forfreshNTP
+proof. No ten-dayoffset now. Driver/network/selectionrootcause still unproven.
+
+Prepared qa_ntp_wifi_refresh_tools_20261022 (5inputs). Explicit one-time maintenance
+of existing daemon while bothROSstopped/motorpumpOFF/WiFiPi/LANdown: capture
+sudochronycselectdata/ntpdata, onlineWiFipeer,burst4/8onlythatpeer,reselectonce,
+observe45s. IfWiFialready^*, skip mutations. NoofflineLANfallback/configfile edit,
+serviceinstall/restart,manualsetdate/makestep,ROS/serial/firmwareoperation. Existing
+chrony may discipline time peritscurrentpolicy, soROSidleguard applies. Interactive
+SSH/sudoTTY, passwordnothandled/storedbytools. Thenreusebyte-identicalV2probeand
+assess (actually8probeverifiednow), requiringbothalignment andWiFiselectedsource.
+If stillblocked, saveactualselection/NTPtestdiagnostics; noautomaticrepeat/forcingPASS.
+
+Primarydocs chrony4.2 chronyc.html confirm online/burst/reselect andsource/reference
+semantics. Newwrapper onlybash-n/AST/hashreview, actualrefreshNOT_RUN; userexecutes.
+Robot300ms/350msguards,model,FPS15,FWN8R2 unchanged; no commit/push. No fullROSretry
+forclock alone. Afterclock+NTPselectionPASS, newstaticpacketclockgate+freshsourcepins
+theninvestigate00490815sjitter. EarlierRAW/resultsnotmodified.
+Report: docs/codex/current/NTP_WIFI_ALIGNMENT_AND_REFRESH_2026-10-22_133556.md.
+NEXT_STEP=USER_REFRESH_EXISTING_WIFI_NTP_ONCE_AND_VERIFY_WITH_PERSISTENT_SSH_BEFORE_ROS
+
+
+## NTP-REFRESH-INTERACTIVE-TIMEOUT-FIX-20261022-68
+
+User qa_wifi_ntp_refresh_20261022_135126_7g0axL,13:51:26.845–13:53:11.889+07,
+RC137 after105.043s atPI_NTP_REFRESH. Verified4rawhashes/5pre-fixinputhashes.
+pi_refresh.log0bytes, no result.json/pi_clock/probe. **BLOCKED_INTERACTIVE_SSH_WRAPPER_NO_NTP_VERIFICATION**.
+No receivedPihelperoutput; cannot establish actualremoteactions. Do notcallESPbad,
+NTPrefreshfailed, or erase133556CLOCK_ALIGNMENTPASS0.625–2.481ms.
+
+Found concrete assistantwrapperbug: `timeout100s ssh-t ... | tee` lacks--foreground,
+which is required for interactivecommandTTYreads in this invocation. LocalGNU
+`timeout--help` confirms. GenericlocalPTY stand-in (noSSH/NTP/ROS/projectimports/
+hardware) reproduced blockedread withoutforeground/timedout124; withforeground,
+readprobe_input succeeds/RC0. Firstharnessassert expectedexact137, got124; corrected
+assert toacceptdocumentedtimeouttermination124or137 while requiringnoreadcompletion,
+preservedinitial_expectation.json. This provesTTYdefect, notexacthistoricalsignalstate.
+
+Saved5oldinputs+manifest inqa_ntp_refresh_tty_fix_20261022/before. Patchedsameuser
+packet qa_ntp_wifi_refresh_tools_20261022: timeout--foreground--verbose keeps100s/
+killafter5; SSH-v-Etransportlog, begin/end/SSH/TEEcodes; helperfirstentrymarker.
+NTPcommands/guards/probe/assess unchanged (probe/assess byteidentical). 5inputmanifest
+updated. GenericPTYactualPASS, shellsyntax/AST/hashreview; newactualSSH/NTPNOT_RUN.
+NoOSconfig/clock/robot/FW/guard/model/FPSchanges orcommitpush. Userrerunthesamecommand
+onFireRobot_AP/LANdown/ROSclosed/motorpumpOFF; PisudopromptTTYpasswordnotstored.
+If blockedagain, transport/entrymarkers distinguishconnection/remote/sudophases;
+noautomaticrepeat. ToolfixREADME/reportupdated, oldraw/manifests preserved.
+Report: docs/codex/current/NTP_REFRESH_TTY_FIX_2026-10-22_135126.md.
+NEXT_STEP=USER_RERUN_SAME_WIFI_NTP_REFRESH_COMMAND_WITH_TTY_FIX_AND_TRANSPORT_LOGS
+
+
+## WIFI-NTP-REFRESH-PASS-CAMERA-NEXT-20261022-69
+
+User qa_wifi_ntp_refresh_20261022_140306_EsASKW,14:03:06–25+07,19.630s;
+11raw/5toolhashes verified, interactiveSSH/TEE/probe/runnerRC0,PHASECOMPLETED.
+**PASS_WIFI_TIME_SNAPSHOT_NO_MORE_STANDALONE_CLOCK_RETRY**. Pi selected^*10.0.0.253
+withfreshRef07:03:18/20UTC, NTPflagsyesboth.8validpersistentSSHprobes;
+Pi−laptopbestbound[+3.028266,+4.809837]ms,RTT1.818527ms,within±50msbudget.
+TTYfixactualSSHpassed; sourcebeforeall^?/selectdataSstale, onlineWiFi/burst4of8/
+reselect restoredWiFiselect. Tests1111111101→1111111111, peerDelay189.4→34.8ms;
+chronyestimates/cumulativeTX/RX notexactRFpacketlossorcontrolledABcausality.
+No configfile/manualdate/firmware/ROS/guardchange; lastingholdover/rebootnotproven.
+Stop clock-only retests. Existing0049088stale/120s andNav2forcedshutdown remainopen.
+
+Offline source review found nativecameraunpinRMWpublicationmode; serial/TFexplicit
+ASYNC. NativeV4L2pipe alreadybufsize0, queue1 andBEST_EFFORTdepth1, so do not claim
+buffered65536readbug. ActualcameraRMWenvironment wasn'tcaptured byold2-targetsampler;
+notprovenSYNCHRONOUSinthatrun. HumbleFastDDSprimarydocs describe defaultSYNC and
+ASYNCenqueue/thread behavior; XMLoverride1 canoverrideenv, futurecapturemustcheck.
+OldidlePSreconnectAB20/10hadnosignificantbenefit, no newpower-save/APtuning now.
+
+Prepared qa_camera_dds_async_candidate_20261022 shadowfire_robot_bringup,4filedelta:
+robot/sensors declare/forward native_camera_publication_mode defaultASYNC andSYNC
+rollback, onlynativecameraNode env scoped; camera3monotonic_nsreads/frame +2O1max
+countersinexisting10sstats; testsbackend/scope/forward/bothmodes/stamp/JPEG/CameraInfo/
+budgetdrop/reset + existingC2serialTF/safetywiring. Unbufferedcapture,750000Bps,FPS15,
+QoSdepth1/model/mission300ms/ACT350ms/FWN8R2 unchanged. ASYNCmaystillblockunderresource
+pressure, notclaimjitterfixed. Noheavydeps/newapp-timers/topics/threads/decode; middlewareASYNCusesabackgroundthread andmustbemeasured.
+
+Candidate notapplied, noactualQA/build/ROS. AssistantAST/bash-n/datahash/source review
+only. User runoneboundedofflineQA (camera+C2launch regressions, noROSinit/GPU/device),
+LOG_QA forreview beforeapply/commitpush/deploy. Freeze207runtimepins, bringuporiginal
+hashes, revieweddirtyidentity andhistorySHA afterentry69; don'trepinoldrawcapture.
+No commit/push. Report: docs/codex/current/WIFI_NTP_PASS_AND_CAMERA_NEXT_2026-10-22.md.
+NEXT_STEP=USER_RUN_ONE_OFFLINE_SHADOW_CAMERA_ASYNC_QA_THEN_REVIEW_BEFORE_APPLY_COMMIT_DEPLOY
+
+
+## CAMERA-ASYNC-OFFLINE-PASS-APPLIED-20261022-70
+
+User qa_camera_async_20261022_142547_4Ut1Pj,14:25:47–48+07,15PASS0.42s,
+runnerRC0/PHASECOMPLETED/sourceafter0/statusunchanged0/toolsafter0.
+Verified10raw/38pinnedinput/207runtime/30originalbringup/historySHA hashes;
+shadowimportnativecamera path verified. No blocking scoped-diff findings.
+**OFFLINE_CAMERA_QA_PASS_TESTED_BYTES_APPLIED_PI_RUNTIME_NOT_RUN**.
+
+Applied exact4testedfiles to laptop-baseline worktree (HEAD61bf6ea retained):
+launch/robot.launch.py,launch/sensors.launch.py,fire_robot_bringup/native_mjpeg_camera.py,
+test/test_camera_launch.py. Guardedoldhash/head/status/historySHA checks beforecopy,
+backup4oldfiles+history atqa_camera_dds_async_candidate_20261022/before_apply_20261022_142547,
+verifynewfiles equalshadow andallotherpackage/runtimefiles unchanged. Newsourcepins
+andapplication_review.json saved separately; immutabletest/rawinputmanifests unchanged.
+Preserveprior4perceptiondirtyfiles andprimarycheckoutuserdirtyscripts/maps. No gitstage/
+commit/push, Piupdate/build, hardware/runtime or firmware change byassistant.
+
+Change is nativecamera-scoped FastDDSASYNC, default15FPS/budget750000/QoSdepth1/latest
+queue1/stamp/JPEG unchanged. Rootlaunchargument native_camera_publication_mode forwards
+ASYNC/SYNC rollback. O1image/pairpublishmaxdurations appendtoexisting10sstats/reset,
+noappthread/timer/topic/decode dependency. MiddlewareASYNC hasbackgroundthread;
+CPU/RAM/queuing/blockingmuststillbemeasured. Safetywatchdog/300msmission/350msACT/
+Nav2andYOLOlaptop/ESP32-S3N8R2rawserial unchanged. XMLQoSoverride1 couldoverrideenv,
+futurecapturemust verifyactualcameraRMW/XMLenvironment; notclaimjitterfixed.
+
+ExistingYOLOstartup4filedelta alsoawaitscommit (offline40PASS/build0.66s reviewed,
+measured85.26→43.97s inonecomparison). Readyfor2logicalcommits: perceptionstartup
+4files, thenbringupcamera4files+trackedvalidationhistory (entries47–70). Commitonly
+whenuserexplicitlyauthorizes, thenpushfullbodies peruserworkflow; notautocommitfromQA.
+Draftcommitbodies andverifiedchanges saved inpacket forconcrete review.
+Aftercommitpush: Piupdatebaselinewithbackup/sourcechecks, userbuildbringuponly,
+thenoneclock-gatedstaticWiFicapturewithCOM/odom/TF/JPEG/DDS/CPU/publishmetrics.
+No extraoffline15testrepeat or standaloneclockloop required. NTP140306snapshotPASS
+3.028–4.810ms,sourcefresh10.0.0.253 remainslastverified; futurepreflightmustrecheck.
+
+Report: docs/codex/current/CAMERA_ASYNC_QA_APPLIED_2026-10-22_142547.md.
+NEXT_STEP=USER_AUTHORIZE_REVIEWED_COMMITS_AND_PUSH_THEN_PI_UPDATE_BUILD_STATIC_CAPTURE
+
+
+## AUTHORIZED-TWO-COMMIT-RELEASE-20261022-71
+
+User explicitly authorized: "Commit và push hai bản". Reviewed exact source
+bytes against prior perception and camera QA; index was empty and only the
+nine reviewed paths were dirty in the baseline worktree. Primary user scripts,
+maps, and firmware are outside this release.
+
+Perception commit: dbab2caf56e0c1a9ac87de97f67d6d57913a491e
+- Four perception source/test files; 40 offline tests passed, user build/install
+  checked, one startup observation 85.26 -> 43.97 s. Loaded stale episodes remain.
+
+This accompanying bringup commit contains the four tested camera files and the
+tracked validation history entries 47-71. Camera gate: 15 passed in 0.42 s, exact
+bytes applied, no runtime acceptance claim. Full commit bodies describe scope,
+QA, limits, rollback, and next steps. Backup/source snapshots and commit receipts
+are saved in qa_camera_dds_async_candidate_20261022/release_two_commits_20261022.
+
+Push verification is a separate step, recorded with both final SHAs in the
+current release ledger. Do not treat commit creation or offline PASS as a Pi
+build, loaded WiFi PASS, clean Nav2 teardown, or motion acceptance. No firmware,
+model, camera 15 FPS, watchdog, or freshness guard changes.
+
+NEXT_STEP=VERIFY_PUSH_THEN_USER_PI_BASELINE_UPDATE_BUILD_AND_CLOCK_GATED_STATIC_CAPTURE

@@ -2571,3 +2571,117 @@ FIRMWARE_MODIFIED=NO
 PI_MODIFIED=NO
 COMMIT_PUSH=NOT_AUTHORIZED_YET
 NEXT_STEP=REVIEW_APPLIED_DIFF_AUTHORIZE_COMMIT_PUSH_THEN_USER_PACKAGE_BUILD
+
+
+## NAV2-91 — 2026-10-22: full installed activation/destruction verified; launch exit guard
+
+qa_full_nav2_shutdown_20261022_210642_UIlRm5:23rawhashes verified. Eight managed
+Nav2 nodes plus local/global costmaps ACTIVE15.50s, all configured child parameters
+match baseline; AMCL/map TF and both costmap publications observed. No goal or
+nonzeroTwist; inferior exited0; GDB child clean; owned groups empty without force.
+Whole launchRC1 due repeated Shutdown attempting to stop ROSAdapter twice. Original
+QA verdict also assumed unprefixed process label, while actual child label is gdb-1.
+Raw run remains incomplete for overall launch, with container lifetime gate passed.
+
+Applied small on_container_exit guard: when context.is_shutdown, emit no second
+Shutdown; unexpected container death during normal operation still ends the launch.
+12launch tests PASS0.60s, including active-crash and already-shutdown exit0/-11 cases.
+Source applied, not committed; no C++ or firmware changes. No full runtime repeat
+yet after this guard. Full local synthetic Nav2 does not accept WiFi/physical motion.
+USB_CDC_ODOM_STALL=OPEN; next task USB transport source/evidence investigation.
+
+
+## USB-93 / NAV2-91 follow-up — 2026-10-22: real launch guard integration
+
+Runtime parent a7cbda4; existing launch guard source unchanged. Real Humble
+LaunchService/ROSAdapter imported the actual on_container_exit callback from this
+worktree. Raw evidence: qa_nav2_exit_guard_integration_20261022/review_20261022_214023.
+Old handler reproduced two Shutdown events, parent RC1 and ROSAdapter error.
+Patched handler produced one event and RC0. Unexpected child exit while launch was
+running also produced one event and RC0, stopping its companion process. No forced
+signals; synthetic Python children on localhost only, no Nav2 or hardware.
+
+STATUS=REAL_LAUNCH_GUARD_INTEGRATION_PASS_SOURCE_NOT_INSTALLED
+FULL_NAV2_AFTER_GUARD_INSTALL=NOT_RUN
+COMMIT_PUSH=NOT_AUTHORIZED_YET
+USB_CDC_ODOM_STALL=OPEN
+
+Separate USB213530 run: native PASS, build blocked before compilation because QA
+staging omitted custom boards/. V2 packaging fixed; PlatformIO resolves real N8R2,
+8MB/qio_qspi; actual Xtensa TaskSerialComm syntax check PASS. Full firmware build
+awaits user. No firmware source/SDK/Pi modifications or upload. Source diagnostics
+are not yet a demonstrated fix for field USB stall.
+NEXT_STEP=USER_N8R2_V2_BUILD_THEN_REVIEW_BINARY_BEFORE_APPLY_UPLOAD
+
+
+## USB-NAV2-94 — 2026-10-22: resumed, paired user gate prepared
+
+Confirmed a7cbda4 plus the same reviewed shutdown guard/test/history changes.
+No new robot runtime edit; no USB v2 full build log yet. Packet
+qa_usb_nav2_resume_tools_20261022 installs the guard via incremental package build,
+checks unchanged native binary and installed resources, runs one full local Nav2
+activation/shutdown, then invokes the frozen N8R2 candidate build without upload.
+Exact source/status/SDK/tool pins checked; proven fixture/GDB code reused unchanged.
+Syntax/pin preparation PASS, actual build/full runtime NOT_RUN. No repeated offline
+unit/lifetime QA. USB field stall remains OPEN; diagnostics are not a transport fix.
+NEXT_STEP=USER_ONE_LAPTOP_COMMAND_NAV2_INSTALL_SHUTDOWN_AND_N8R2_BUILD
+
+
+## USB-NAV2-95 — 22/10: full installed Nav2 shutdown PASS, USB snapshot source applied
+
+[Raw review and next step](/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/docs/codex/current/NAV2_SHUTDOWN_PASS_USB_ENDPOINT_RELEASE_2026-10-22_220830.md).37+15 manifest entries verified separately.
+10 ACTIVE15.500457s, parent/inferior/fixture0, no SIGSEGV/doubleShutdown/forced signals,
+cleanup empty, zero goals/nonzeroTwist. Local shutdown gate PASS; not motion/WiFi QA.
+N8R2 build23.322s/RAM33564/flash388425; ELFf826e088…/BINf31e3196…. Applied only2
+snapshot paths with backup, upload NOT_RUN. USB stall OPEN. Nav2 guard installed,
+not committed. User upload exact reviewed binary, then bounded UART/USB capture.
+NEXT_STEP=USER_UPLOAD_REVIEWED_N8R2_THEN_BOUNDED_USB_UART_FAULT_CAPTURE
+
+## USB-103 — loaded Wi-Fi234730 reviewed; mission shutdown race fixed
+
+- Raw139 outer/52 Pi/3 UART hashes verified (nested overlap). Main120s:
+  laptop camera14.950FPS/maxgap172.629ms, odom205.184ms, scan265.150ms,
+  odomTF175.575ms. Ping mean6.186ms/max56.6ms; zero LastScan changes.
+- Previous232001 camera12.466FPS/maxgap2140.614ms, odom944.366ms,
+  ping mean254.476ms. Operator walked less in234730; no controlled causal A/B.
+  New received JPEG byte rate480674B/s vs384940B/s; inference mean16.330ms.
+- Nav2/YOLO/RViz exit0; mission exit1 at cleanup SIGINT due invalid-context
+  WaitSet race. Patch only handles that exact RCLError inside spin when node
+  context is already shutdown. All other errors remain fatal; no behavior,
+  topics, QoS, safety thresholds, firmware or Pi source changes.
+- Applied-source regression58PASS/0.27s includes nine focused shutdown tests;
+  six real localhost Humble conditions PASS:
+  baseline forced WaitSet race1, patched0, actual SIGINT0/SIGTERM0,
+  unrelated closed-context/live-context errors1. Hardware after patch NOT_RUN.
+- USB rare stall remains OPEN; startup bridge reopen observed without native
+  disconnect or UART endpoint stall. JPEG decoder warnings still OPEN; do not
+  hide warnings/re-encode blindly without original matching-frame evidence.
+- Candidate path: qa_mission_shutdown_context_candidate_20261022, logs
+  real_shutdown_gz6xm_t4. Source applied with before hash/backup; uncommitted.
+  Symlink install points at source, so no package rebuild needed for this Python edit.
+- Next: review/commit with user approval; refresh exact source pins before any
+  further hardware runner, then bounded scene-motion/JPEG evidence as needed.
+
+
+## Shutdown final review and release — 2026-10-23
+
+User authorized commit and push after final review. No blocking findings.
+Mission source/test match the reviewed candidate; AST outside imports/main
+unchanged. Nav2 guard matches the full installed shutdown run. Verified 24
+mission evidence entries and 37 full Nav2 evidence entries separately.
+Existing QA: 58 regression tests (including nine shutdown tests), six real
+localhost Humble conditions, and full Nav2 activation/shutdown PASS. No repeat
+QA was run solely for release. Mission full robot workload after patch NOT_RUN.
+
+This release prevents duplicate launch shutdown events and handles only the
+observed invalid-context WaitSet exception during mission spin after context
+closure. Other failures remain fatal. Robot behavior, safety thresholds,
+interfaces, firmware and Pi source are unchanged. Humble exception matching
+must be reviewed when upgrading ROS.
+
+JPEG investigation DEFERRED_BY_USER, superseding the earlier JPEG next step.
+USB rare stall remains OPEN. Refresh source pins after this release, then
+prepare goal -> cancel -> goal rearm and observe mission shutdown in that run.
+Final review evidence: qa_shutdown_final_review_20261023/review.json and
+docs/codex/current/SHUTDOWN_FINAL_REVIEW_2026-10-23.md in the primary workspace.
+NEXT_STEP=REFRESH_GOAL_CANCEL_REARM_TOOLS_AFTER_PUSH

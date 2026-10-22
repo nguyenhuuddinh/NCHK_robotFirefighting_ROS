@@ -110,6 +110,16 @@ def build_components(package_dir):
     return result
 
 
+def on_container_exit(event, context):
+    # Humble launch_ros registers ROSAdapter.shutdown for each Shutdown event.
+    # SIGINT already dispatched one; emitting another on the expected child exit
+    # attempts to stop the adapter twice. A crash while running must still end
+    # the launch (including its optional RViz).
+    if context.is_shutdown:
+        return []
+    return [EmitEvent(event=Shutdown(reason='Nav2 composed container exited'))]
+
+
 def generate_launch_description():
     package_dir = get_package_share_directory('fire_robot_navigation')
     container = ComposableNodeContainer(
@@ -120,7 +130,7 @@ def generate_launch_description():
     # A dead container must end the launch even when its optional RViz is still up.
     container_exit = RegisterEventHandler(OnProcessExit(
         target_action=container,
-        on_exit=[EmitEvent(event=Shutdown(reason='Nav2 composed container exited'))]))
+        on_exit=on_container_exit))
     rviz_config = os.path.join(get_package_share_directory('nav2_bringup'),
                                'rviz', 'nav2_default_view.rviz')
     return LaunchDescription([

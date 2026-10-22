@@ -124,3 +124,25 @@ def test_missing_component_fails_before_container_spawn(profiles, monkeypatch):
     monkeypatch.setattr(composed, 'get_resource', lambda *_: ('wrong::Plugin;lib/missing.so', '/tmp'))
     with pytest.raises(RuntimeError, match='Component not registered'):
         composed.verify_runtime_components()
+
+
+@pytest.mark.parametrize('returncode', [0, -11])
+def test_expected_child_exit_during_shutdown_does_not_shutdown_adapter_twice(profiles, returncode):
+    composed, _, context = profiles
+    container = next(a for a in composed.generate_launch_description().entities
+                     if isinstance(a, ComposableNodeContainer))
+    event = ProcessExited(action=container, name='gdb', cmd=[], cwd=None,
+                          env=None, pid=123, returncode=returncode)
+    context._set_is_shutdown(True)  # Same state set by LaunchService on SIGINT.
+    assert composed.on_container_exit(event, context) == []
+
+
+def test_unexpected_child_crash_still_shuts_down_remaining_launch_actions(profiles):
+    composed, _, context = profiles
+    container = next(a for a in composed.generate_launch_description().entities
+                     if isinstance(a, ComposableNodeContainer))
+    event = ProcessExited(action=container, name='container', cmd=[], cwd=None,
+                          env=None, pid=123, returncode=-11)
+    actions = composed.on_container_exit(event, context)
+    assert len(actions) == 1 and isinstance(actions[0], EmitEvent)
+    assert isinstance(actions[0].event, Shutdown)

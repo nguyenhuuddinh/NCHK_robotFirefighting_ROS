@@ -9,6 +9,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from rclpy.impl.implementation_singleton import rclpy_implementation
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -837,7 +838,16 @@ def main(args=None):
     node = None
     try:
         node = FireMissionSupervisor()
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except rclpy_implementation.RCLError as exc:
+            # Humble can invalidate the context after the executor's ok() check
+            # but before WaitSet construction during SIGINT/SIGTERM shutdown.
+            # Only that exact teardown race is normal; runtime failures surface.
+            shutdown_wait_set_error = str(exc).startswith(
+                'failed to initialize wait set: the given context is not valid')
+            if node.context.ok() or not shutdown_wait_set_error:
+                raise
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

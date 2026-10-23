@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from rclpy.impl.implementation_singleton import rclpy_implementation
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -259,6 +260,16 @@ class YoloObserver(Node):
 
     def __init__(self):
         super().__init__('yolo_observer')
+        try:
+            self._initialize_observer()
+        except BaseException:
+            # Construction has not returned to main yet, so main cannot own
+            # this partial node. Release its ROS entities on every failure.
+            self.destroy_node()
+            raise
+
+    def _initialize_observer(self):
+        self._check_startup_context()
         startup_begin = time.monotonic()
         self._declare_parameters()
         self._read_and_validate_parameters()
@@ -312,8 +323,9 @@ class YoloObserver(Node):
         # Model import and GPU warm-up may take several seconds. Camera health
         # starts after that initialization, not before it.
         self._last_input_time = time.monotonic()
-        self.create_timer(0.5, self._check_input_health)
-        self.create_timer(self.stats_period, self._log_stats)
+        self._create_startup_timer(0.5, self._check_input_health)
+        self._create_startup_timer(self.stats_period, self._log_stats)
+        self._check_startup_context()
 
         self.get_logger().warning(
             '[YOLO] OBSERVE-ONLY: publishes detections and annotated images; '
@@ -435,11 +447,31 @@ class YoloObserver(Node):
                     self.annotated_topic, self.fire_class_name)):
             raise ValueError('topic names and fire_class_name cannot be empty')
 
+    def _check_startup_context(self):
+        """Stop between expensive initialization steps when ROS shuts down."""
+        if not self.context.ok():
+            raise ExternalShutdownException()
+
+    def _create_startup_timer(self, period, callback):
+        self._check_startup_context()
+        try:
+            return self.create_timer(period, callback)
+        except rclpy_implementation.RCLError as exc:
+            # SIGINT can invalidate the context after the check above.
+            # Only the observed context-invalid timer race is normal teardown.
+            if (not self.context.ok()
+                    and str(exc).startswith(
+                        'failed to create timer: the given context is not valid')):
+                raise ExternalShutdownException() from exc
+            raise
+
     def _startup_stage_begin(self, stage):
+        self._check_startup_context()
         self.get_logger().info(f'[YOLO_STARTUP] stage={stage} status=begin')
         return time.monotonic()
 
     def _startup_stage_done(self, stage, began):
+        self._check_startup_context()
         elapsed_ms = (time.monotonic() - began) * 1000.0
         self.get_logger().info(
             f'[YOLO_STARTUP] stage={stage} status=done '
@@ -498,7 +530,9 @@ class YoloObserver(Node):
                 (self.image_size, self.image_size, 3), dtype=np.uint8)
             with self._torch.inference_mode():
                 for _ in range(self.warmup_runs):
+                    self._check_startup_context()
                     self._model.predict(warmup, **self._predict_arguments())
+            self._check_startup_context()
             self._synchronize_gpu()
 
         self._startup_stage_done('gpu_warmup', began)
@@ -936,7 +970,17 @@ def main(args=None):
     node = None
     try:
         node = YoloObserver()
-        rclpy.spin(node)
+        try:
+            rclpy.spin(node)
+        except rclpy_implementation.RCLError as exc:
+            # Shutdown can race WaitSet construction or an in-flight image
+            # callback publishing its result. Accept only those closed-context
+            # errors; a live context or another publisher failure stays fatal.
+            if (node.context.ok()
+                    or not str(exc).startswith(
+                        ('failed to initialize wait set: the given context is not valid',
+                         "Failed to publish: publisher's context is invalid"))):
+                raise
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

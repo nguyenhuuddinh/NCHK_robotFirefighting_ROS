@@ -24,6 +24,7 @@ def test_latency_window_is_bounded_and_keeps_signed_clock_evidence():
 
 class Harness:
     """Call only model initialization with fake packages; never create a Node."""
+    _check_startup_context = YoloObserver._check_startup_context
     _load_model = YoloObserver._load_model
     _startup_stage_begin = YoloObserver._startup_stage_begin
     _startup_stage_done = YoloObserver._startup_stage_done
@@ -38,6 +39,7 @@ class Harness:
     ema_alpha = .6
 
     def __init__(self):
+        self.context = SimpleNamespace(ok=lambda: True)
         self.logs = []
         self.syncs = 0
 

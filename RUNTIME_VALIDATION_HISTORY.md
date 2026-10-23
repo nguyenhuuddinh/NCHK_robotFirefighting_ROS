@@ -2685,3 +2685,61 @@ prepare goal -> cancel -> goal rearm and observe mission shutdown in that run.
 Final review evidence: qa_shutdown_final_review_20261023/review.json and
 docs/codex/current/SHUTDOWN_FINAL_REVIEW_2026-10-23.md in the primary workspace.
 NEXT_STEP=REFRESH_GOAL_CANCEL_REARM_TOOLS_AFTER_PUSH
+
+
+## 2026-10-23 — YOLO startup and callback shutdown fixes
+
+Status: source reviewed and QA complete; user authorized commit and push on
+codex/laptop-baseline-recovery. Base b81dfdb232e4f1851727941ef23bd12c91b5235a.
+Physical robot runtime after this patch: NOT_RUN. Pi source and firmware have not
+been updated by this release. Do not interpret this change as a latency fix.
+
+### Trigger and resulting behavior
+
+Run160701 stopped before arm on the existing 8-second Pi SSH health timeout.
+SIGINT then interrupted YOLO initialization; the old constructor continued and
+created a timer with a closed ROS context, causing child exit1 under launch exit0.
+Check context between startup stages and warmup iterations, release a partially
+constructed node, and handle the precise shutdown timer/WaitSet races.
+
+Saved run121129 also contains a YOLO child failure during _publish_observation:
+"Failed to publish: publisher's context is invalid" after SIGINT. Its launch
+reported YOLO_EXIT_RC=0. The earlier claim of clean YOLO shutdown was incorrect;
+G1/G2 motion and prior telemetry measurements remain valid. Handle that exact
+publisher error only when the context is closed. Live-context errors, different
+publisher errors, and unrelated callback failures remain fatal.
+
+Model, thresholds, FPS, topics, QoS, watchdog deadlines and robot behavior are
+unchanged. No work thread or per-frame instrumentation is added.
+
+### Validation and evidence
+
+- Final perception/startup/shutdown unit suite:41 passed in0.29s.
+- Nine isolated real-Humble V1 probes retained: real context/timer/WaitSet with
+  fake ML dependencies, localhost/domain229; baseline failure reproduced,
+  patched SIGINT/SIGTERM/timer/WaitSet cases exit0, unrelated errors stay fatal.
+- Four additional V2 real-Humble probes: actual publish-after-shutdown fails1
+  before the extension and exits0 after; the same message with live context and
+  a different publisher failure remain fatal. The nine V1 probes were not rerun.
+- Applied source and installed Python symlink hashes match the reviewed candidate;
+  git diff --check passed. No full robot QA, hardware launch or firmware upload.
+- Initial candidate fixture collection/path failures were corrected; logs retained.
+
+Evidence in the primary workspace .codex_qa_backups/
+qa_r3_yolo_init_shutdown_candidate_20261023: unit_qa_v2.log,
+real_humble_6hoq3lc0/receipt.json, real_humble_wnc8axi7/receipt.json,
+final_source_review.json, source backups and applied_v2.json.
+Full review: docs/codex/current/R3_STARTUP_SHUTDOWN_REVIEW_2026-10-23.md in the
+primary workspace. A separate cleanup/verdict tool candidate passed67 tests;
+that candidate is not included in this production commit or deployed to Pi.
+
+### Remaining work
+
+Pi/DDS startup gaps, rare USB CDC TX stall and JPEG warnings remain OPEN.
+Run160701 shows camera capture/publication continuing while local and remote
+receivers stall; no current packet trace identifies the unique traffic cause.
+Refresh exact source/tool pins and prepare one bounded no-arm startup diagnostic
+with RTPS and callback/worker timing evidence before another R3 floor trial.
+Do not repeat the passed offline robot QA or use the old runner source pins.
+Model: strong for timing/root-cause review, lighter for reviewed deployment tools.
+NEXT_STEP=PREPARE_BOUNDED_NO_ARM_STARTUP_DIAGNOSTICS_AFTER_RELEASE

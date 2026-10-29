@@ -2,6 +2,8 @@
 
 Snapshot này đưa bộ source đang dùng trong QA lên Git để có thể đọc/review/khôi phục đầy đủ. Source gốc vẫn giữ nguyên tại workspace cục bộ; commit không triển khai hoặc chạy robot.
 
+`COLCON_IGNORE` tại thư mục release giúp colcon chạy từ gốc repo không tìm thêm các package trùng tên trong snapshot. Muốn build snapshot, chạy trực tiếp từ `ros/ros2_ws` như lệnh bên dưới; marker nằm ngoài bộ364 file được pin nên không đổi packet.
+
 ## Thành phần và định danh
 
 - `ros/`: đủ364 file được pin trong `ros/operational_packet.sha256`, gồm bringup, navigation, perception, mission, driver và tests.

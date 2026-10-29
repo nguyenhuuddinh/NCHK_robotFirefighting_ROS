@@ -1,0 +1,163 @@
+fire_mission_supervisor:
+  ros__parameters:
+    # Laptop-only, observe-only inputs. No command or action output exists.
+    detections_topic: "/yolo/detections"
+    alignment_topic: "/yolo/alignment_preview"
+    odom_topic: "/odom"
+    nav_command_topic: "/cmd_vel_nav"
+    raw_command_topic: "/cmd_vel_raw"
+    nav_status_topic: "/navigate_to_pose/_action/status"
+    post_spray_review_topic: "/fire_mission/post_spray_review"
+    actuator_state_topic: "/fire_sensors/actuator_state"
+    state_topic: "/fire_mission/state"
+
+    publish_rate_hz: 10.0
+    detection_timeout_s: 0.50
+    alignment_timeout_s: 0.50
+    odom_timeout_s: 0.50
+    command_timeout_s: 0.50
+
+    # A single YOLO frame is never enough to enter tracking intent.
+    fire_acquire_hold_s: 0.50
+    # Same acquired Nav2 goal only: 2 fresh confirmed YOLO updates plus hold.
+    fire_reacquire_hold_s: 0.20
+    centered_hold_s: 0.50
+
+    # Cross-host camera timestamps outside this envelope block readiness.
+    max_source_age_ms: 300.0
+    max_future_skew_ms: 20.0
+
+    stationary_linear_speed_m_s: 0.02
+    stationary_angular_speed_rad_s: 0.05
+    turn_comparison_epsilon_rad_s: 0.03
+    review_timeout_s: 0.60
+    actuator_timeout_s: 0.35
+
+alignment_handoff_shadow:
+  ros__parameters:
+    # Admission test only. The Twist output is intentionally isolated and is
+    # never consumed by the Pi SafetyGate or the ESP32.
+    mission_state_topic: "/fire_mission/state"
+    alignment_topic: "/yolo/alignment_preview"
+    arm_topic: "/fire_mission/alignment_arm_shadow"
+    shadow_command_topic: "/fire_mission/alignment_cmd_vel_shadow"
+    handoff_state_topic: "/fire_mission/alignment_handoff_state"
+    # Opt-in for the future live Nav2-to-alignment trial. Default remains
+    # shadow-only mission/alignment admission; this does not enable motors.
+    require_live_cancel_proof: false
+    gateway_state_topic: "/fire_mission/live_nav_stop_state"
+    cancel_guard_state_topic: "/fire_mission/nav2_cancel_guard_state"
+
+    publish_rate_hz: 10.0
+    mission_timeout_s: 0.35
+    alignment_timeout_s: 0.35
+    arm_timeout_s: 0.40
+    gateway_timeout_s: 0.35
+    cancel_guard_timeout_s: 0.35
+
+    # Lower than the 0.60 rad/s alignment preview ceiling. This is only a
+    # software shadow limit; no robot command is emitted in this phase.
+    max_angular_speed_rad_s: 0.35
+    centered_angular_epsilon_rad_s: 0.03
+
+motion_arbiter_shadow:
+  ros__parameters:
+    # Dry-run ownership arbiter. Its output is deliberately not connected to
+    # /cmd_vel_raw, the Pi SafetyGate, or the ESP32 motor controller.
+    mission_state_topic: "/fire_mission/state"
+    handoff_state_topic: "/fire_mission/alignment_handoff_state"
+    # Final velocity_smoother output from nav2_motion_shadow.launch.py.
+    # Do not consume the controller's unsmoothed /cmd_vel_nav here.
+    nav_command_topic: "/fire_mission/nav2_cmd_vel_shadow"
+    alignment_command_topic: "/fire_mission/alignment_cmd_vel_shadow"
+    shadow_command_topic: "/fire_mission/cmd_vel_arbiter_shadow"
+    arbiter_state_topic: "/fire_mission/motion_arbiter_state"
+
+    publish_rate_hz: 10.0
+    mission_timeout_s: 0.35
+    handoff_timeout_s: 0.35
+    nav_command_timeout_s: 0.35
+    alignment_command_timeout_s: 0.35
+
+    # Nav2 velocity_smoother uses 0.10 m/s and 0.80 rad/s. Alignment
+    # keeps the already-tested shadow ceiling of 0.35 rad/s.
+    max_nav_linear_speed_m_s: 0.10
+    max_nav_angular_speed_rad_s: 0.8
+    max_alignment_angular_speed_rad_s: 0.35
+    command_match_epsilon: 0.01
+
+nav2_cancel_intent_shadow:
+  ros__parameters:
+    mission_state_topic: "/fire_mission/state"
+    nav_status_topic: "/navigate_to_pose/_action/status"
+    intent_topic: "/fire_mission/nav2_cancel_intent_shadow"
+    publish_rate_hz: 10.0
+    mission_timeout_s: 0.35
+
+nav2_cancel_guard:
+  ros__parameters:
+    # Actual CancelGoal service call is opt-in AND needs a live operator arm.
+    # The first integration gate only permits Nav2's isolated shadow output.
+    enable_real_cancel: false
+    intent_topic: "/fire_mission/nav2_cancel_intent_shadow"
+    status_topic: "/navigate_to_pose/_action/status"
+    cancel_service: "/navigate_to_pose/_action/cancel_goal"
+    arm_topic: "/fire_mission/nav_cancel_arm"
+    odom_topic: "/odom"
+    cmd_topic: "/cmd_vel"
+    raw_cmd_topic: "/cmd_vel_raw"
+    shadow_nav_cmd_topic: "/fire_mission/nav2_cmd_vel_shadow"
+    alignment_state_topic: "/fire_mission/live_alignment_state"
+    state_topic: "/fire_mission/nav2_cancel_guard_state"
+    publish_rate_hz: 10.0
+    intent_timeout_s: 0.35
+    arm_timeout_s: 0.40
+    telemetry_timeout_s: 0.35
+    response_timeout_s: 2.0
+    cancel_timeout_s: 5.0
+    zero_hold_s: 0.50
+    stationary_linear_m_s: 0.02
+    stationary_angular_rad_s: 0.05
+    command_zero_epsilon: 0.001
+
+live_nav_stop_gateway:
+  ros__parameters:
+    # Real /cmd_vel_raw output: OFF unless an operator explicitly opts in.
+    # A separate Bool heartbeat on /fire_mission/live_nav_arm is also required.
+    enable_live_output: false
+    publish_rate_hz: 20.0
+    mission_timeout_s: 0.35
+    nav_timeout_s: 0.35
+    odom_timeout_s: 0.35
+    arm_timeout_s: 0.40
+    guard_timeout_s: 0.35
+    stationary_hold_s: 0.50
+    discovery_timeout_s: 0.75
+    stationary_linear_m_s: 0.02
+    stationary_angular_rad_s: 0.05
+    command_zero_epsilon: 0.001
+    max_nav_linear_m_s: 0.10
+    max_nav_angular_rad_s: 0.8
+
+live_alignment_takeover:
+  ros__parameters:
+    # Never included in the normal mission launch. Real turning additionally
+    # needs a fresh, unique /fire_mission/live_alignment_arm heartbeat.
+    enable_live_alignment: false
+    publish_rate_hz: 20.0
+    input_timeout_s: 0.35
+    arm_timeout_s: 0.40
+    discovery_timeout_s: 0.75
+    zero_hold_s: 0.50
+    # Supervised turn trial; command is still slew-limited and one-shot.
+    max_angular_speed_rad_s: 0.60
+    max_angular_accel_rad_s2: 0.40
+    max_observed_angular_rad_s: 0.80
+    # No time cap; stop if measured cumulative turn reaches one revolution.
+    max_total_rotation_rad: 6.283185307179586
+    stationary_linear_m_s: 0.02
+    stationary_angular_rad_s: 0.05
+    command_zero_epsilon: 0.001
+    min_rotation_clearance_m: 0.30
+    # A lost target holds angular=0 until fresh confirmed tracking returns.
+    # Stale input/arm, collision, owner conflict and stalled odom still stop.

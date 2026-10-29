@@ -1,0 +1,29 @@
+# User requested 2026-10-25: right-eye distance bands; no-flame only with fresh YOLO clear and all eyes >20000.
+# Legacy baseline parameters are retained for compatibility, unused by this explicit policy.
+ir_range_preview:
+  ros__parameters:
+    ir_topic: /fire_sensors/ir_raw
+    detection_topic: /yolo/detections
+    alignment_topic: /yolo/alignment_preview
+    preview_topic: /fire_mission/ir_range_preview
+    publish_rate_hz: 5.0
+    # Forward new ADC (or invalid input) immediately; timer is only heartbeat.
+    # Do not wait another 200ms behind the Pi's independent 5Hz raw cadence.
+    publish_on_ir_update: true
+    baseline_left: 26060
+    baseline_center: 26140
+    baseline_right: 25825
+    baseline_tolerance: 500
+    min_active_drop: 1000
+    right_too_close_max: 800
+    right_spray_max: 1000
+    right_approach_max: 20000
+    median_window: 5
+    stable_samples: 3
+    spray_confirm_samples: 5
+    spray_reentry_margin_counts: 0
+    ir_timeout_s: 0.6
+    vision_timeout_s: 0.5
+    max_ir_age_ms: 500.0
+    max_image_age_ms: 300.0
+    range_policy: YOLO_RIGHT_ADC_20261025

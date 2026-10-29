@@ -1,0 +1,65 @@
+{
+  "source_tools_manifest_sha256": "0ae9a803589b1a3c16b95bce871d7bdc545f4b50aeb33b32c2453d1f4df32d19",
+  "files": [
+    {
+      "path": "clock_gate.sh",
+      "sha256": "c009e82bbc0d6c5c6e2eb77cf776af44496103ad50f92867db7d2ee7e4140222",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/clock_gate.sh",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "clock_settle.py",
+      "sha256": "f06f21a350c22bd1b64943b05933225db9c94c6e9c6e631afb8a0f4546d377d5",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/clock_settle.py",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "clock_once.sh",
+      "sha256": "7d9e928bc1147b253ca34dee5c81dd1d248c9cf02919ab65db76a8b413fc177a",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/clock_once.sh",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "probe_clock.py",
+      "sha256": "e9e3e6862e5784208dd5147ada2c930fb0fd636249b1574fbcec5c5c0f674e57",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/probe_clock.py",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "assess_clock.py",
+      "sha256": "999f1979c972d26f7b10e520fe6bb2fae765d88b290d592c52aa012e5e20210a",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/assess_clock.py",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "verify_clock_freshness.py",
+      "sha256": "8de9fc97c056caf00162715232684bb378ffec0567f1a8f42b52e3c73b199355",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/verify_clock_freshness.py",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "pi_refresh.sh",
+      "sha256": "c5e4f19f9cece1099eecac34ae674e0319436099e7dd85f15f2f1b05b0a6c714",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/pi_refresh.sh",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "fresh_ntp_sample.py",
+      "sha256": "53ad4b0059cdbd2a0643984588039bf3c9b2426f69b16397e41f2aeca6f5b892",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/fresh_ntp_sample.py",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "ntp_cache_policy.py",
+      "sha256": "791f9f1adf19c9c7638c41786344329b19f215020b4ed3f222a441c5f79c176a",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/ntp_cache_policy.py",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    },
+    {
+      "path": "cleanup_group.py",
+      "sha256": "186995a3b94776796b8051367157e380d3f10bd77994c0643128998ccf46cd6e",
+      "source": "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/.codex_qa_backups/qa_r4d_servo60_tools_20261026/cleanup_group.py",
+      "verification": "BYTE_IDENTICAL_FROZEN_R4_SYNTAX_ONLY_NO_EXECUTION"
+    }
+  ]
+}

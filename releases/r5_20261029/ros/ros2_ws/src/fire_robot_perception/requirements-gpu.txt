@@ -1,0 +1,8 @@
+# Install inside a Python 3.10 venv created with --system-site-packages.
+# PyTorch is installed first according to the official Ultralytics guidance.
+setuptools==79.0.1
+torch==2.13.0
+torchvision==0.28.0
+ultralytics==8.4.102
+numpy==1.26.4
+opencv-python==4.11.0.86

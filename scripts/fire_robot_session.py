@@ -21,6 +21,8 @@ import time
 
 import yaml
 
+from fire_robot_pi_session import PiSession, install_subreaper, cleanup_descendants
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MAPS = ROOT / 'ros2_ws/src/fire_robot_navigation/maps'
@@ -83,6 +85,18 @@ def nodes():
     return output.splitlines()
 
 
+def nodes_present(*required):
+    """Evaluate one coherent ROS graph snapshot for a readiness check."""
+    current = set(nodes())
+    return all(name in current for name in required)
+
+
+def lifecycle_active(node):
+    """Accept only ROS lifecycle active (state 3), never inactive (state 2)."""
+    output = run(['ros2', 'lifecycle', 'get', node], timeout=7).stdout.strip()
+    return re.fullmatch(r'active\s+\[3\]', output) is not None
+
+
 def publisher_count(topic):
     """Count all publishers of a topic, treating an unknown topic as zero."""
     result = run(['ros2', 'topic', 'info', topic],
@@ -98,6 +112,43 @@ def publisher_count(topic):
     if match is None:
         raise SessionError(f'Không đọc được publisher count: {topic}\n{output}')
     return int(match.group(1))
+
+
+def no_fire_goal_ready(gateway):
+    """Require clear proof before reporting goal 2 as ready."""
+    return (isinstance(gateway, dict) and
+            gateway.get('state') == 'RELEASED_STOPPED' and
+            gateway.get('stop_reason') == 'NAV_GOAL_TERMINAL_NO_FIRE' and
+            gateway.get('next_goal_clear_ready') is True and
+            bool(gateway.get('cycle_goal_uuid')))
+
+
+def state_event_details(payload):
+    """Keep stop evidence in session logs; gateway UUID lives in cycle_goal_uuid."""
+    details = {
+        'state': payload.get('state') if 'state' in payload else payload.get('zone'),
+        'goal_uuid': payload.get('cycle_goal_uuid') or payload.get('goal_uuid'),
+        'stop_reason': payload.get('stop_reason'),
+    }
+    for key in ('blockers', 'rearm_blockers', 'first_stop'):
+        if key in payload:
+            details[key] = payload[key]
+    health = payload.get('health')
+    if isinstance(health, dict):
+        details['health_status'] = health.get('status')
+        details['health_blockers'] = health.get('blockers')
+    return details
+
+
+def ir_demo_event_details(uuid, detail, gateway, guard, ir):
+    """Diagnostic fallback only; never substitute UUIDs for cancel/arm decisions."""
+    return {
+        'goal_uuid': uuid or gateway.get('cycle_goal_uuid'),
+        'detail': detail,
+        'gateway': state_event_details(gateway),
+        'guard': state_event_details(guard),
+        'ir': state_event_details(ir),
+    }
 
 
 class TelemetryMonitor:
@@ -137,13 +188,16 @@ class TelemetryMonitor:
             if self.on_change is not None and payload.get(field) != (
                     previous[0].get(field) if previous else None):
                 self.on_change('STATE_CHANGE', topic=topic,
-                               state=payload.get(field),
-                               goal_uuid=payload.get('goal_uuid'),
-                               stop_reason=payload.get('stop_reason'))
+                               **state_event_details(payload))
 
     def _spin(self):
-        while not self.stop_event.is_set() and self.rclpy.ok():
-            self.rclpy.spin_once(self.node, timeout_sec=0.05)
+        from rclpy.executors import ExternalShutdownException
+        try:
+            while not self.stop_event.is_set() and self.rclpy.ok():
+                self.rclpy.spin_once(self.node, timeout_sec=0.05)
+        except ExternalShutdownException:
+            # SIGINT can shut down the context before Session.close joins us.
+            self.stop_event.set()
 
     def latest(self, topic, max_age=0.6):
         """Return only fresh JSON from the exact requested topic."""
@@ -165,6 +219,7 @@ class TelemetryMonitor:
 def wait_until(label, predicate, session=None, timeout=50):
     """Wait for a launch readiness condition while watching child health."""
     deadline = time.monotonic() + timeout
+    last_error = None
     while time.monotonic() < deadline:
         if session is not None:
             session.assert_alive()
@@ -172,10 +227,140 @@ def wait_until(label, predicate, session=None, timeout=50):
             if predicate():
                 print(f'[OK] {label}', flush=True)
                 return
-        except SessionError:
-            pass
+            last_error = None
+        except SessionError as exc:
+            last_error = str(exc)
         time.sleep(0.6)
-    raise SessionError(f'Không sẵn sàng sau {timeout}s: {label}')
+    detail = f'; kiểm tra gần nhất: {last_error}' if last_error else ''
+    raise SessionError(f'Không sẵn sàng sau {timeout}s: {label}{detail}')
+
+
+def startup_state_gaps(monitor, align_only, ir_only):
+    """Use fresh reports from each owned node, not multiple graph snapshots."""
+    required = {
+        '/fire_mission/live_nav_stop_state': 'WAITING_FOR_INPUT',
+        '/fire_mission/nav2_cancel_guard_state': 'WAITING_FOR_ADMISSION',
+        '/fire_mission/live_alignment_state': 'WAITING_FOR_ADMISSION',
+    }
+    if not align_only:
+        required['/fire_mission/ir_approach_live_state'] = \
+            'WAITING_FOR_ADMISSION'
+        if not ir_only:
+            required['/fire_mission/post_spray_review'] = \
+                'WAITING_FOR_PULSE'
+    gaps = []
+    for topic, expected_state in required.items():
+        report = monitor.latest(topic)
+        if not isinstance(report, dict):
+            gaps.append(f'{topic}: thiếu state mới (<=0,6s)')
+        elif report.get('schema_version') != 1:
+            gaps.append(f'{topic}: schema_version khác 1')
+        elif report.get('state') != expected_state:
+            gaps.append(f'{topic}: {report.get("state")!r}, '
+                        f'cần {expected_state}')
+        elif topic != '/fire_mission/post_spray_review' and \
+                report.get('enabled') is not True:
+            gaps.append(f'{topic}: chưa enabled')
+    return gaps
+
+
+def wait_for_startup_states(session, align_only, ir_only, timeout=50):
+    """Require fresh initial telemetry and child liveness before preflight."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        session.assert_alive()
+        gaps = startup_state_gaps(session.monitor, align_only, ir_only)
+        if not gaps:
+            print('[OK] cổng dừng/hủy/căn đã phát state ban đầu',
+                  flush=True)
+            return
+        time.sleep(0.6)
+    gaps = startup_state_gaps(session.monitor, align_only, ir_only)
+    raise SessionError(
+        f'Không sẵn sàng sau {timeout}s: cổng dừng/hủy/căn; '
+        + '; '.join(gaps or ['state thay đổi trong lúc kiểm tra']))
+
+
+class StableSafeWindow:
+    """A transient IDLE sample never grants an operator arm."""
+
+    def __init__(self, hold_s=1.0):
+        self.hold_s = float(hold_s)
+        self.since = None
+
+    def observe(self, safe, now):
+        if not safe:
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = float(now)
+        return float(now) - self.since >= self.hold_s
+
+
+def safe_initial_state(gateway, guard, mission, raw_publishers,
+                       pump_publishers):
+    """Check a fresh snapshot; the caller must also require a stable window."""
+    return (gateway.get('state') == 'WAITING_FOR_INPUT' and
+            gateway.get('fire_latched') is False and
+            gateway.get('cmd_vel_fresh_zero') is True and
+            gateway.get('odom_stationary') is True and
+            guard.get('state') == 'WAITING_FOR_ADMISSION' and
+            mission.get('state') == 'IDLE' and
+            (mission.get('health') or {}).get('status') == 'OK' and
+            not raw_publishers and not pump_publishers)
+
+
+def startup_preflight_stable(monitor, window, now=None):
+    """Read fresh safety state after graph checks; reset on query failure."""
+    topics = ('/fire_mission/live_nav_stop_state',
+              '/fire_mission/nav2_cancel_guard_state',
+              '/fire_mission/state')
+    before = tuple(monitor.latest(topic) or {} for topic in topics)
+    if not safe_initial_state(*before, 0, 0):
+        return window.observe(False, time.monotonic() if now is None else now)
+    try:
+        raw_publishers = publisher_count('/cmd_vel_raw')
+        pump_publishers = publisher_count('/pump_cmd')
+    except SessionError:
+        window.observe(False, time.monotonic())
+        raise
+    after = tuple(monitor.latest(topic) or {} for topic in topics)
+    safe = safe_initial_state(*after, raw_publishers, pump_publishers)
+    return window.observe(safe, time.monotonic() if now is None else now)
+
+
+def pre_spray_clear_waiting(mission, gateway, handled_goals):
+    """Recognize missing fire on the canceled goal without declaring it out."""
+    uuid = gateway.get('cycle_goal_uuid')
+    perception = mission.get('perception') or {}
+    return (isinstance(uuid, str) and len(uuid) == 32 and
+            uuid not in handled_goals and
+            mission.get('state') == 'TARGET_LOST' and
+            perception.get('detected_now') is False and
+            perception.get('confirmed') is False and
+            gateway.get('fire_latched') is True and
+            gateway.get('stop_reason') == 'FIRE_ACQUIRED')
+
+
+def target_recovery_event(waiting_uuid, mission, gateway, handled_goals):
+    """Report target loss/reacquisition; neither event withdraws an arm."""
+    uuid = gateway.get('cycle_goal_uuid')
+    if pre_spray_clear_waiting(mission, gateway, handled_goals):
+        return uuid, ('TARGET_REACQUIRE_WAITING'
+                      if waiting_uuid != uuid else None)
+    if waiting_uuid != uuid:
+        return None, None
+    perception = mission.get('perception') or {}
+    if (mission.get('state') in (
+            'FIRE_TRACKING', 'CENTERED_HOLD', 'ALIGNMENT_READY') and
+            perception.get('detected_now') is True and
+            perception.get('confirmed') is True):
+        return None, 'TARGET_REACQUIRED'
+    if ((mission.get('lifecycle') or {}).get(
+            'pre_spray_clear_goal_uuid') == uuid and
+            mission.get('state') == 'IDLE'):
+        return None, None
+    return waiting_uuid, None
 
 
 def no_external_owners():
@@ -197,6 +382,12 @@ def pi_ready():
     return all(name in current for name in (
         '/serial_bridge_node', '/safety_watchdog',
         '/scan_qos_relay', '/camsense_x1_node'))
+
+
+def detached_shell_command(command, log_path):
+    """Detach setup and launch together without retaining SSH output pipes."""
+    return (f'nohup bash -c {shlex.quote(command)} '
+            f'</dev/null >{shlex.quote(str(log_path))} 2>&1 &')
 
 
 def ensure_pi():
@@ -230,12 +421,13 @@ def ensure_pi():
             'Pi đã chạy một phần nhưng laptop chưa thấy đủ qua ROS LAN. '
             'Kiểm tra mạng/DDS hoặc launch Pi cũ; không mở Pi lần hai.')
     remote_launch = (
-        remote_env + ' && nohup ros2 launch fire_robot_bringup '
+        remote_env + ' && exec ros2 launch fire_robot_bringup '
         'robot.launch.py use_sim_time:=false use_camera:=true '
         'camera_backend:=native_mjpeg camera_fps:=15 '
-        'camera_max_bytes_per_sec:=750000 '
-        '</dev/null >/tmp/fire_robot_pi_auto.log 2>&1 &')
-    run(ssh + ['bash -lc ' + shlex.quote(remote_launch)], timeout=12)
+        'camera_max_bytes_per_sec:=750000')
+    remote_start = detached_shell_command(
+        remote_launch, '/tmp/fire_robot_pi_auto.log')
+    run(ssh + ['bash -lc ' + shlex.quote(remote_start)], timeout=12)
     print('[INFO] Đã yêu cầu Pi khởi động. Log: Pi:/tmp/fire_robot_pi_auto.log',
           flush=True)
     wait_until('Pi: bridge + watchdog + LiDAR', pi_ready, timeout=60)
@@ -270,8 +462,12 @@ def pi_sensor_preflight(camera, ir=True):
 class Session:
     """Own only subprocesses opened by this launcher and log events."""
 
-    def __init__(self):
+    def __init__(self, manage_pi=False):
         """Create a unique log directory and empty process registry."""
+        self.manage_pi = manage_pi
+        self.pi = None
+        if manage_pi:
+            install_subreaper()
         self.log_dir = Path(tempfile.mkdtemp(prefix='fire_robot_session_'))
         self.processes = []
         self.arms = []
@@ -317,6 +513,11 @@ class Session:
 
     def assert_alive(self):
         """Fail closed when any mandatory launch or arm publisher exits."""
+        if self.pi is not None:
+            try:
+                self.pi.assert_alive()
+            except RuntimeError as exc:
+                raise SessionError(str(exc)) from exc
         for label, process in self.processes:
             if label in self.optional:
                 continue
@@ -346,6 +547,9 @@ class Session:
     def remove(self, process):
         """Stop and unregister one owned process."""
         self.stop(process)
+        if process.poll() is None:
+            raise SessionError(
+                f'PID {process.pid} chưa thoát; giữ quyền quản lý tiến trình')
         self.processes = [pair for pair in self.processes
                           if pair[1] is not process]
         self.arms = [pair for pair in self.arms if pair[1] is not process]
@@ -356,18 +560,54 @@ class Session:
             self.remove(process)
         self.event('ARMS_WITHDRAWN')
 
+    def start_pi(self):
+        """Sync before launch; register ownership before any remote operation."""
+        self.pi = PiSession(PI_HOST, self.log_dir, self.event)
+        try:
+            self.pi.start()
+        except RuntimeError as exc:
+            raise SessionError(str(exc)) from exc
+        wait_until('Pi: bridge + watchdog + LiDAR', pi_ready,
+                   session=self, timeout=60)
+
     def close(self):
-        """Withdraw arms first, then stop owned actuation and launch nodes."""
-        # Remove authorization first. Pi watchdog remains an independent stop.
-        for _, process in reversed(self.arms):
-            self.stop(process)
-        if self.pump is not None:
-            self.stop(self.pump)
-        for _, process in reversed(self.processes):
-            self.stop(process)
-        if self.monitor is not None:
-            self.monitor.close()
-        self.event('SESSION_STOPPED')
+        """Withdraw arms, stop laptop, then stop the owned Pi stack."""
+        previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        errors = []
+        try:
+            print('[STOP] Đang dừng các launch của phiên; chờ xác nhận cleanup.', flush=True)
+            # Pi watchdog remains available while laptop publishers withdraw.
+            for process in ([p for _, p in reversed(self.arms)] +
+                            ([self.pump] if self.pump is not None else []) +
+                            [p for _, p in reversed(self.processes)]):
+                try:
+                    self.stop(process)
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    errors.append(str(exc))
+            if self.manage_pi:
+                ssh = self.pi.process if self.pi else None
+                remaining = cleanup_descendants(exclude_roots=(ssh.pid,) if ssh else ())
+                if remaining:
+                    errors.append(f'Laptop còn PID {remaining}')
+            if self.monitor is not None:
+                try:
+                    self.monitor.close()
+                except Exception as exc:
+                    errors.append('Monitor close: '+str(exc))
+        finally:
+            try:
+                if self.pi is not None and not self.pi.close():
+                    errors.append('Chưa xác nhận cleanup Pi; xem log Pi/SSH')
+                if self.manage_pi:
+                    remaining = cleanup_descendants()
+                    if remaining:
+                        errors.append(f'Laptop còn PID {remaining}')
+                self.event('SESSION_CLEANUP_INCOMPLETE' if errors else 'SESSION_STOPPED',
+                           errors=errors)
+            finally:
+                signal.signal(signal.SIGINT, previous_sigint)
+        if errors:
+            raise SessionError('; '.join(errors))
 
 
 def arm_once_false(topic):
@@ -389,6 +629,86 @@ def arm_true(session, topic, label):
     ], arm=True)
     wait_until(label + ' publisher', lambda: publisher_count(topic) == 1,
                session, timeout=12)
+
+
+def ir_arm_stage_ready(report, *, armed):
+    """Require the IR subscriber's fresh receipt, not only a ROS publisher."""
+    if not isinstance(report, dict) or report.get('schema_version') != 1:
+        return False
+    arm = report.get('arm')
+    return (isinstance(arm, dict) and
+            arm.get('false_seen') is True and
+            arm.get('cycle_seen') is armed and
+            arm.get('heartbeat_true') is armed and
+            arm.get('receive_fresh') is True and
+            arm.get('publisher_count') == 1)
+
+
+def ir_arm_missing_after_handoff(ir, guard, gateway, alignment):
+    """Detect a persistent lost arm only after the canceled goal is safe."""
+    uuid = guard.get('goal_uuid')
+    return (isinstance(uuid, str) and
+            re.fullmatch(r'[0-9a-fA-F]{32}', uuid) is not None and
+            ir.get('state') == 'WAITING_FOR_ADMISSION' and
+            'OPERATOR_ARM_MISSING_OR_STALE' in (ir.get('blockers') or []) and
+            guard.get('state') == 'CANCEL_CONFIRMED_STOPPED' and
+            guard.get('blockers') == [] and
+            gateway.get('state') == 'HANDOFF_READY' and
+            gateway.get('cycle_goal_uuid') == uuid and
+            alignment.get('state') == 'COMPLETE' and
+            alignment.get('goal_uuid') == uuid and
+            alignment.get('stop_reason') == 'TARGET_CENTERED')
+
+
+def arm_ir_with_ack(session):
+    """Hold each IR arm edge until the live node acknowledges receiving it."""
+    topic = '/fire_mission/ir_approach_arm'
+    false_publisher = session.start('ir_arm_false', [
+        'ros2', 'topic', 'pub', '--rate', '5', '--print', '1000',
+        '--qos-reliability', 'reliable', '--qos-durability', 'volatile',
+        topic, 'std_msgs/msg/Bool', '{data: false}',
+    ], arm=True)
+    try:
+        wait_until('IR arm false đã tới node',
+                   lambda: ir_arm_stage_ready(session.monitor.latest(
+                       '/fire_mission/ir_approach_live_state'), armed=False),
+                   session, timeout=8)
+    finally:
+        session.remove(false_publisher)
+    wait_until('IR arm false publisher đã nhả',
+               lambda: publisher_count(topic) == 0, session, timeout=8)
+    arm_true(session, topic, 'arm_4')
+    wait_until('IR arm true đã tới node',
+               lambda: ir_arm_stage_ready(session.monitor.latest(
+                   '/fire_mission/ir_approach_live_state'), armed=True),
+               session, timeout=8)
+    session.event('IR_ARM_ACKNOWLEDGED')
+
+
+def arm_pump_with_ack(session):
+    """Require the pump subscriber to acknowledge both arm edges."""
+    topic = '/fire_mission/pump_demo_arm'
+    state_topic = '/fire_mission/pump_demo_state'
+    false_publisher = session.start('pump_arm_false', [
+        'ros2', 'topic', 'pub', '--rate', '5', '--print', '1000',
+        '--qos-reliability', 'reliable', '--qos-durability', 'volatile',
+        topic, 'std_msgs/msg/Bool', '{data: false}',
+    ], arm=True)
+    try:
+        wait_until('pump arm false đã tới node',
+                   lambda: ir_arm_stage_ready(
+                       session.monitor.latest(state_topic), armed=False),
+                   session, timeout=8)
+    finally:
+        session.remove(false_publisher)
+    wait_until('pump arm false publisher đã nhả',
+               lambda: publisher_count(topic) == 0, session, timeout=8)
+    arm_true(session, topic, 'pump_arm')
+    wait_until('pump arm true đã tới node',
+               lambda: ir_arm_stage_ready(
+                   session.monitor.latest(state_topic), armed=True),
+               session, timeout=8)
+    session.event('PUMP_ARM_ACKNOWLEDGED')
 
 
 def save_map(name):
@@ -573,10 +893,9 @@ def pump_pulse(session, uuid, *, respray=False):
                     review.get('blockers') == [])
         wait_until('hậu kiểm vẫn cho phép phun lại',
                    review_still_ready, session, timeout=15)
-    arm_once_false('/fire_mission/pump_demo_arm')
     pump_arm = None
     try:
-        arm_true(session, '/fire_mission/pump_demo_arm', 'pump_arm')
+        arm_pump_with_ack(session)
         pump_arm = session.arms[-1][1]
         deadline = time.monotonic() + 20
         saw_firing = False
@@ -708,7 +1027,7 @@ def ir_stop_proof_overdue(state, stopping_since, now, timeout_s=4.0):
 
 
 def ir_telemetry_overdue(ir, last_seen_at, now, timeout_s=1.0):
-    """A stale monitor feed cannot authorize further motion or pumping."""
+    """Reject a stale monitor feed before further motion or pumping."""
     return ir is None and now - last_seen_at >= timeout_s
 
 
@@ -718,29 +1037,32 @@ def demo(args):
         raise SessionError('Demo chuyển động/phun cần --live rõ ràng')
     map_path = validate_map(args.map or selected_map())
     no_external_owners()
-    ensure_pi()
-    pi_sensor_preflight(camera=True, ir=not args.align_only)
-    session = Session()
+    session = Session(manage_pi=True)
+    phase = 'pi_start'
     try:
+        session.start_pi()
+        phase = 'pi_sensor_preflight'
+        pi_sensor_preflight(camera=True, ir=not args.align_only)
         session.monitor = TelemetryMonitor(on_change=session.event)
+        phase = 'nav2_startup'
         session.launch('nav2', 'fire_robot_navigation',
                        'nav2_motion_shadow.launch.py',
                        'use_sim_time:=false', f'map:={map_path}',
                        'rviz:=true')
+        print('\n[SETUP] Chờ bản đồ hiện trong RViz rồi đặt 2D Pose Estimate. '
+              'Nav2 cần pose để hoàn tất khởi động; chưa đặt goal cho tới '
+              'khi terminal báo [READY].', flush=True)
         wait_until('Nav2 active + map_server',
                    lambda: ('/bt_navigator' in nodes() and
-                            'active' in run(['ros2', 'lifecycle', 'get',
-                                             '/bt_navigator'],
-                                            timeout=7).stdout and
-                            'active' in run(['ros2', 'lifecycle', 'get',
-                                             '/map_server'],
-                                            timeout=7).stdout),
-                   session, timeout=90)
+                            lifecycle_active('/bt_navigator') and
+                            lifecycle_active('/map_server')),
+                   session, timeout=180)
+        phase = 'perception_startup'
         session.launch('yolo', 'fire_robot_perception',
                        'perception.launch.py', 'use_sim_time:=false')
         wait_until('YOLO + alignment observer',
-                   lambda: '/yolo_observer' in nodes() and
-                   '/fire_alignment_observer' in nodes() and
+                   lambda: nodes_present('/yolo_observer',
+                                         '/fire_alignment_observer') and
                    publisher_count('/yolo/detections') == 1,
                    session, timeout=150)
         if os.environ.get('DISPLAY'):
@@ -749,13 +1071,14 @@ def demo(args):
                 ['/home/huudinh/.venvs/fire_robot_yolo/bin/python',
                  str(ROOT / 'scripts/view_yolo_camera.py')],
                 optional=True)
+        phase = 'mission_startup'
         session.launch('mission', 'fire_robot_mission',
                        'mission_motion_arbiter_shadow.launch.py',
                        'require_live_cancel_proof:=true')
         wait_until('mission + cancel intent',
-                   lambda: '/fire_mission_supervisor' in nodes() and
-                   '/nav2_cancel_intent_shadow' in nodes() and
-                   '/alignment_handoff_shadow' in nodes(),
+                   lambda: nodes_present('/fire_mission_supervisor',
+                                         '/nav2_cancel_intent_shadow',
+                                         '/alignment_handoff_shadow'),
                    session)
         if not args.align_only:
             session.launch('ir_preview', 'fire_robot_mission',
@@ -782,20 +1105,12 @@ def demo(args):
                            'integrated_handoff:=true',
                            'continuous_approach:=true',
                            'speed_m_s:=0.08',
+                           'max_total_approach_m:=0.0',
                            'enable_reverse_jog:=false')
             if not args.ir_only:
                 session.launch('review', 'fire_robot_mission',
                                'post_spray_review.launch.py')
-        required_nodes = (
-            '/live_nav_stop_gateway', '/nav2_cancel_guard',
-            '/live_alignment_takeover')
-        if not args.align_only:
-            required_nodes += ('/ir_approach_live',)
-            if not args.ir_only:
-                required_nodes += ('/post_spray_review',)
-        wait_until('cổng dừng/hủy/căn đã xuất trạng thái',
-                   lambda: all(name in nodes() for name in required_nodes),
-                   session)
+        wait_for_startup_states(session, args.align_only, args.ir_only)
         wait_until('trạng thái ban đầu của gateway, guard, mission',
                    lambda: all(session.monitor.latest(topic) is not None
                                for topic in (
@@ -808,28 +1123,45 @@ def demo(args):
                        lambda: session.monitor.latest(
                            '/fire_mission/ir_approach_live_state') is not None,
                        session, timeout=20)
-        gateway = session.monitor.latest(
-            '/fire_mission/live_nav_stop_state') or {}
-        guard = session.monitor.latest(
-            '/fire_mission/nav2_cancel_guard_state') or {}
-        mission = session.monitor.latest('/fire_mission/state') or {}
-        if gateway.get('state') != 'WAITING_FOR_INPUT' or \
-                gateway.get('fire_latched') is not False or \
-                gateway.get('cmd_vel_fresh_zero') is not True or \
-                gateway.get('odom_stationary') is not True or \
-                guard.get('state') != 'WAITING_FOR_ADMISSION' or \
-                mission.get('state') != 'IDLE' or \
-                publisher_count('/cmd_vel_raw') or publisher_count('/pump_cmd'):
-            raise SessionError('Chưa ở trạng thái an toàn trước khi arm: '
-                               + str(gateway))
+        phase = 'startup_admission'
+        safe_window = StableSafeWindow()
+
+        try:
+            wait_until('mission/gateway/guard an toàn ổn định trước khi arm',
+                       lambda: startup_preflight_stable(
+                           session.monitor, safe_window), session, timeout=50)
+        except SessionError as exc:
+            if not str(exc).startswith('Không sẵn sàng sau '):
+                raise
+            latest = session.monitor.latest
+            gateway = latest('/fire_mission/live_nav_stop_state') or {}
+            guard = latest('/fire_mission/nav2_cancel_guard_state') or {}
+            mission = latest('/fire_mission/state') or {}
+            health = mission.get('health') or {}
+            detail = {
+                'gateway': gateway.get('state'),
+                'gateway_blockers': gateway.get('blockers'),
+                'guard': guard.get('state'),
+                'guard_blockers': guard.get('blockers'),
+                'mission': mission.get('state'),
+                'mission_health': health.get('status') if isinstance(
+                    health, dict) else None,
+                'mission_health_blockers': health.get('blockers') if
+                isinstance(health, dict) else None,
+            }
+            raise SessionError(f'{exc}; state cuối: '
+                               f'{json.dumps(detail, ensure_ascii=False)}') \
+                from exc
         arm_topics = ARM_TOPICS[:4] if args.align_only else ARM_TOPICS
         for index, topic in enumerate(arm_topics):
             if topic == '/fire_mission/ir_approach_arm':
-                arm_once_false(topic)
-            arm_true(session, topic, f'arm_{index}')
+                arm_ir_with_ack(session)
+            else:
+                arm_true(session, topic, f'arm_{index}')
         session.event('READY_FOR_RVIZ_GOAL', map=str(map_path),
                       pump_auto=not (args.align_only or args.ir_only),
                       align_only=args.align_only)
+        phase = 'live_demo'
         if args.align_only:
             print('\n[READY] Chỉ Nav2 → YOLO dừng/hủy → xoay căn tâm. '
                   'IR tiến và bơm KHÔNG được mở. Đặt 2D Pose Estimate nếu '
@@ -838,7 +1170,8 @@ def demo(args):
                   flush=True)
         elif args.ir_only:
             print('\n[READY] Nav2 → YOLO dừng/hủy → căn tâm → IR tiến '
-                  '0,08 m/s theo các chặng tối đa 30 cm, tổng tối đa 2 m. '
+                  '0,08 m/s theo các chặng tối đa 30 cm; YOLO có lửa nhưng '
+                  'IR còn ở nền thì tiếp cận như vùng xa. '
                   'Lệch tâm thì dừng và căn lại. KHÔNG mở node bơm. '
                   'Đặt goal ngắn và chỉ đưa lửa vào khi xe đang chạy; '
                   'Ctrl-C để thu hồi arm.', flush=True)
@@ -846,10 +1179,12 @@ def demo(args):
             print('\n[READY] Nếu AMCL chưa định vị, đặt 2D Pose Estimate '
                   'trong RViz trước. Sau đó đặt goal ngắn khi khu vực an toàn. '
                   'Xe có thể tự chạy, xoay, tiến IR 0,08 m/s theo chặng '
-                  '30 cm (tổng tối đa 2 m) và phun khi đã dừng, IR xác nhận '
+                  '30 cm và phun khi đã dừng, IR xác nhận '
                   'vùng phun. '
                   'Ctrl-C ở terminal này để thu hồi arm.', flush=True)
         handled = set()
+        normal_goals_announced = set()
+        pre_spray_clears_announced = set()
         realign_events = set()
         alignment_completed_at = None
         alignment_terminal = False
@@ -857,13 +1192,53 @@ def demo(args):
         ir_completed_at = None
         ir_stopping_since = None
         ir_last_seen_at = time.monotonic()
+        ir_arm_missing_since = None
+        target_wait_uuid = None
+        last_cycle_uuid = None
         while True:
             session.assert_alive()
             latest = session.monitor.latest
             guard = latest('/fire_mission/nav2_cancel_guard_state') or {}
             gateway = latest('/fire_mission/live_nav_stop_state') or {}
             alignment = latest('/fire_mission/live_alignment_state') or {}
+            cycle_uuid = gateway.get('cycle_goal_uuid')
+            if cycle_uuid is not None and cycle_uuid != last_cycle_uuid:
+                last_cycle_uuid = cycle_uuid
+                alignment_completed_at = None
+                ir_completed_at = None
+                ir_stopping_since = None
+                ir_arm_missing_since = None
+                ir_last_seen_at = time.monotonic()
             uuid = guard.get('goal_uuid')
+            mission = latest('/fire_mission/state') or {}
+            lifecycle = mission.get('lifecycle') or {}
+            pre_spray_uuid = lifecycle.get('pre_spray_clear_goal_uuid')
+            target_wait_uuid, recovery_event = target_recovery_event(
+                target_wait_uuid, mission, gateway, handled)
+            if recovery_event is not None:
+                session.event(recovery_event,
+                              goal_uuid=gateway.get('cycle_goal_uuid'),
+                              alignment_state=alignment.get('state'))
+            if (mission.get('state') == 'IDLE' and pre_spray_uuid and
+                    pre_spray_uuid == gateway.get('cycle_goal_uuid')):
+                if pre_spray_uuid not in pre_spray_clears_announced:
+                    pre_spray_clears_announced.add(pre_spray_uuid)
+                    session.event('PRE_SPRAY_FIRE_CLEARED',
+                                  goal_uuid=pre_spray_uuid)
+                    print('[READY] Lửa đã tắt trước khi phun; đang nhả '
+                          'quyền chuyển động và bơm vẫn OFF. Chờ xe '
+                          'đứng yên rồi có thể đặt goal mới.',
+                          flush=True)
+                time.sleep(0.3)
+                continue
+            if (no_fire_goal_ready(gateway) and
+                    gateway['cycle_goal_uuid'] not in normal_goals_announced):
+                normal_goals_announced.add(gateway['cycle_goal_uuid'])
+                session.event('NAV_GOAL_NO_FIRE_CLEARED',
+                              goal_uuid=gateway['cycle_goal_uuid'])
+                print('[READY] Goal Nav2 đã kết thúc không có lửa; '
+                      'đặt goal mới sau khi xe đứng yên và bơm OFF.',
+                      flush=True)
             if args.align_only:
                 if not alignment_terminal:
                     raw_publishers = (
@@ -912,47 +1287,6 @@ def demo(args):
                         total_progress_m=ir.get('total_progress_m'),
                         stop_trigger_blockers=ir.get(
                             'stop_trigger_blockers'))
-            if args.ir_only:
-                if not ir_terminal:
-                    raw_publishers = (
-                        publisher_count('/cmd_vel_raw') if
-                        ir.get('state') == 'COMPLETE' else None)
-                    outcome, detail = ir_demo_outcome(
-                        ir, guard, gateway, preview, raw_publishers)
-                    if outcome is None and guard.get('state') == 'FAILED' and \
-                            uuid:
-                        outcome, detail = 'FAILED', str(guard.get('blockers'))
-                    if outcome is None and gateway.get('state') == \
-                            'RELEASED_STOPPED' and gateway.get(
-                                'stop_reason') not in ('', 'FIRE_ACQUIRED'):
-                        outcome, detail = ('FAILED', 'Gateway: ' +
-                                           str(gateway.get('stop_reason')))
-                    if outcome is None and alignment.get('state') == \
-                            'COMPLETE' and alignment.get('stop_reason') != \
-                            'TARGET_CENTERED':
-                        outcome, detail = ('FAILED', 'Alignment: ' +
-                                           str(alignment.get('stop_reason')))
-                    if outcome is None and ir.get('state') == 'COMPLETE' and \
-                            ir.get('stop_reason') not in (
-                                'REALIGN_REQUIRED',
-                                'APPROACH_DISTANCE_LIMIT'):
-                        if ir_completed_at is None:
-                            ir_completed_at = time.monotonic()
-                        elif time.monotonic() - ir_completed_at > 5.0:
-                            outcome, detail = 'FAILED', 'Thiếu proof IR dừng'
-                    if outcome is not None:
-                        ir_terminal = True
-                        session.disarm()
-                        session.event('IR_DEMO_' + outcome,
-                                      goal_uuid=uuid, detail=detail)
-                        print(('[OK] IR đã dừng trong vùng phun; bơm chưa '
-                               'bật.' if outcome == 'COMPLETE' else
-                               '[WARN] IR dừng lỗi: ' + str(detail)) +
-                              ' Terminal/RViz giữ mở tới khi b Ctrl-C.',
-                              flush=True)
-                time.sleep(0.3)
-                continue
-            mission = latest('/fire_mission/state') or {}
             if not ir_terminal and uuid not in handled and \
                     ir_telemetry_overdue(ir_report, ir_last_seen_at,
                                          time.monotonic()):
@@ -980,8 +1314,70 @@ def demo(args):
                 print('[WARN] IR đã yêu cầu dừng nhưng chưa có proof đứng '
                       'yên/nhả quyền trong 4 s. Đã thu hồi arm; kiểm tra '
                       'xe và nguồn động cơ. KHÔNG phun.', flush=True)
-            if not ir_terminal and ir.get('state') == 'ABORTED' and \
-                    ir.get('goal_uuid'):
+            if not ir_terminal and uuid not in handled and \
+                    ir_arm_missing_after_handoff(
+                    ir, guard, gateway, alignment):
+                if ir_arm_missing_since is None:
+                    ir_arm_missing_since = time.monotonic()
+                elif time.monotonic() - ir_arm_missing_since >= 2.0:
+                    ir_terminal = True
+                    session.disarm()
+                    session.event('IR_ARM_LOST_AFTER_HANDOFF',
+                                  goal_uuid=uuid,
+                                  blockers=ir.get('blockers'))
+                    print('[WARN] IR mất quyền arm sau khi căn tâm; đã thu '
+                          'hồi các arm. Xe phải đứng yên, KHÔNG tiến/phun. '
+                          'Ctrl-C rồi kiểm tra IR arm.', flush=True)
+            else:
+                ir_arm_missing_since = None
+            if ir_terminal:
+                time.sleep(0.3)
+                continue
+            if args.ir_only:
+                if not ir_terminal:
+                    raw_publishers = (
+                        publisher_count('/cmd_vel_raw') if
+                        ir.get('state') == 'COMPLETE' else None)
+                    outcome, detail = ir_demo_outcome(
+                        ir, guard, gateway, preview, raw_publishers)
+                    if outcome is None and guard.get('state') == 'FAILED' and \
+                            uuid:
+                        outcome, detail = 'FAILED', str(guard.get('blockers'))
+                    if outcome is None and gateway.get('state') == \
+                            'RELEASED_STOPPED' and gateway.get(
+                                'stop_reason') not in (
+                                    '', 'FIRE_ACQUIRED',
+                                    'NAV_GOAL_TERMINAL_NO_FIRE'):
+                        outcome, detail = ('FAILED', 'Gateway: ' +
+                                           str(gateway.get('stop_reason')))
+                    if outcome is None and alignment.get('state') == \
+                            'COMPLETE' and alignment.get('stop_reason') != \
+                            'TARGET_CENTERED':
+                        outcome, detail = ('FAILED', 'Alignment: ' +
+                                           str(alignment.get('stop_reason')))
+                    if outcome is None and ir.get('state') == 'COMPLETE' and \
+                            ir.get('stop_reason') not in (
+                                'REALIGN_REQUIRED',
+                                'APPROACH_DISTANCE_LIMIT'):
+                        if ir_completed_at is None:
+                            ir_completed_at = time.monotonic()
+                        elif time.monotonic() - ir_completed_at > 5.0:
+                            outcome, detail = 'FAILED', 'Thiếu proof IR dừng'
+                    if outcome is not None:
+                        ir_terminal = True
+                        session.disarm()
+                        session.event('IR_DEMO_' + outcome,
+                                      **ir_demo_event_details(
+                                          uuid, detail, gateway, guard, ir))
+                        print(('[OK] IR đã dừng trong vùng phun; bơm chưa '
+                               'bật.' if outcome == 'COMPLETE' else
+                               '[WARN] IR dừng lỗi: ' + str(detail)) +
+                              ' Terminal/RViz giữ mở tới khi b Ctrl-C.',
+                              flush=True)
+                time.sleep(0.3)
+                continue
+            if not ir_terminal and \
+                    ir.get('state') == 'ABORTED' and ir.get('goal_uuid'):
                 ir_terminal = True
                 session.disarm()
                 details = ir_failure_evidence(ir, preview, mission)
@@ -990,6 +1386,26 @@ def demo(args):
                       '. Đã thu hồi arm; KHÔNG phun. RViz/log vẫn mở để '
                       'kiểm tra. Ctrl-C để đóng phiên.', flush=True)
             if ir_terminal:
+                time.sleep(0.3)
+                continue
+            if guard.get('state') == 'FAILED' and uuid:
+                ir_terminal = True
+                session.disarm()
+                session.event('CANCEL_GUARD_FAILED', goal_uuid=uuid,
+                              blockers=guard.get('blockers'))
+                print('[WARN] Cancel guard dừng lỗi; đã thu hồi arm. '
+                      'KHÔNG tiến/phun; xem log và bag.', flush=True)
+                time.sleep(0.3)
+                continue
+            if (alignment.get('state') == 'COMPLETE' and
+                    alignment.get('stop_reason') != 'TARGET_CENTERED' and
+                    uuid):
+                ir_terminal = True
+                session.disarm()
+                session.event('ALIGNMENT_FAILED', goal_uuid=uuid,
+                              reason=alignment.get('stop_reason'))
+                print('[WARN] Căn tâm dừng lỗi; đã thu hồi arm. '
+                      'KHÔNG tiến/phun; xem log và bag.', flush=True)
                 time.sleep(0.3)
                 continue
             if uuid not in handled and pump_admission(
@@ -1078,6 +1494,13 @@ def demo(args):
                         f'Hậu kiểm cần xử lý thủ công: {review["state"]}; '
                         'không tự xoay/tiến/phun tiếp')
             time.sleep(0.3)
+    except KeyboardInterrupt:
+        session.event('SESSION_INTERRUPTED', phase=phase)
+        raise
+    except Exception as exc:
+        session.event('SESSION_FAILED', phase=phase,
+                      error_type=type(exc).__name__, error=str(exc))
+        raise
     finally:
         session.close()
 

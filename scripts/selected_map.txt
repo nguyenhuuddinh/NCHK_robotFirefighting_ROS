@@ -1,1 +1,1 @@
-fire_room_demo.yaml
+fire_room_TN1.yaml

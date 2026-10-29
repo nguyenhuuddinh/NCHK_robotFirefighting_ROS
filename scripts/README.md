@@ -2,11 +2,26 @@ cd "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS"
 
 python3 scripts/stop_laptop_nodes.py
 Các file này dùng ROS 2 Humble trong `ros2_ws/install` hiện có. Trên Pi phải
-có cùng source ROS và firmware S3 tương thích; script tự kiểm tra Pi qua LAN và
-chỉ yêu cầu Pi chạy `robot.launch.py` nếu chưa có. SSH mặc định:
-`pi@10.42.0.185`; nếu địa chỉ khác, đặt `FIRE_PI_SSH_HOST=pi@<IP>` trước khi
-chạy. Nếu không muốn script tự mở Pi, đặt `FIRE_AUTO_START_PI=0` và tự chạy trên
-Pi:
+có cùng source ROS và firmware S3 tương thích. SSH mặc định `pi@10.42.0.185`;
+qua AP đặt `FIRE_PI_SSH_HOST=pi@10.0.0.1`. Script không tự đổi mạng laptop.
+
+**Demo cập nhật 2026-10-17:** `start_demo.sh` tự kiểm tra/đồng bộ giờ Pi theo
+laptop **trước khi mở ROS**, mở Pi launch một lần, và Ctrl-C dừng launch của
+phiên trên **cả laptop và Pi**. Nếu giờ đã khớp trong ngưỡng sai số 100 ms,
+không cần chỉnh; nếu cần chỉnh có thể hỏi mật khẩu sudo Pi, không lưu mật khẩu.
+Không đổi timezone hoặc cấu hình NTP. Xem
+[quy trình và kiểm thử](../docs/codex/DEMO_TIME_CLEANUP_2026-10-17.md).
+
+Demo từ chối khi Pi còn launch/node cũ: dừng đúng phiên cũ trước khi chạy.
+Không dùng `FIRE_AUTO_START_PI=0` với demo mới, vì demo cần quản lý Pi launch
+để đảm bảo cleanup. Log Pi có đường dẫn riêng trong event `PI_SESSION_STARTED`.
+Chờ `PI_SESSION_STOPPED` và `SESSION_STOPPED` trước khi đóng terminal/rút mạng;
+`PI_CLEANUP_UNCONFIRMED` yêu cầu kiểm tra Pi, không có nghĩa đã dừng thành công.
+
+Mapping vẫn dùng cơ chế cũ: có thể reuse Pi stack, `FIRE_AUTO_START_PI=0` để
+tự mở Pi; Ctrl-C mapping không dừng Pi hoặc đồng bộ giờ. Lệnh Pi thủ công dưới
+đây chỉ dành cho workflow đó hoặc chẩn đoán riêng, không mở đồng thời demo:
+
 ssh -o HostKeyAlias=ubuntu.local pi@10.0.0.1
 
 cd ~/NCHK_robotFirefighting_ROS/ros2_ws
@@ -127,6 +142,11 @@ cơ và lửa/vật cản được bố trí an toàn. Chờ `[READY]`, đặt g
 nếu `[WARN]` thì xe dừng và không phun. Ctrl-C để đóng phiên trước lượt mới.
 Chỉ dùng chế độ đầy đủ dưới đây sau khi lượt không bơm đạt và kiểm tra quãng
 dừng thực tế tại 0,08 m/s.
+Trước `[READY]`, script giữ lệnh arm IR `false` cho đến khi chính node IR báo
+đã nhận, rồi chuyển sang heartbeat `true` và đợi node xác nhận đủ chuỗi
+`false → true` cùng đúng một publisher. Nếu không xác nhận được, phiên dừng
+trước khi đặt goal. Nếu arm mất kéo dài sau khi căn tâm/bàn giao, script thu
+hồi arm và báo lỗi thay vì chờ im lặng; không tự tiến hay phun khi arm trở lại.
 
 Giữ ngọn lửa **ngoài camera** khi mở file. Xe phải ở sàn thoáng, người vận
 hành cạnh chỗ ngắt nguồn động cơ/bơm, vòi hướng nơi hứng an toàn và bơm được
@@ -156,10 +176,36 @@ xác nhận vùng phun đều dừng và không phun. Bơm chỉ được khởi
 IR báo vùng phun, quyền `/cmd_vel_raw` đã nhả và proof của gateway/guard khớp
 goal; `pump_demo_controller` vẫn tự kiểm tra lửa, odom, cmd và publisher. Nếu
 hậu kiểm xác nhận vẫn còn lửa **và** vẫn đúng tâm/vùng phun, script cho tối đa
-3 lượt phun 5 giây. Nếu hậu kiểm đòi xoay/tiến lại hoặc dữ liệu không chắc,
-phiên sẽ dừng và yêu cầu xử lý thủ công; chưa tự xoay/tiến lại sau khi phun.
+3 lượt phun 5 giây. Nếu hậu kiểm yêu cầu căn/tiến lại, script nhả publisher
+bơm trước, chờ bàn giao cùng UUID và thử phục hồi có giới hạn 90 giây; không
+đủ bằng chứng thì dừng và yêu cầu xử lý thủ công. Dữ liệu không chắc không
+được xem là đã hết lửa.
 
-Nếu IR dừng lỗi trong phiên đầy đủ, script **thu hồi toàn bộ arm**, ghi sự
+Lượt Nav2 **không có lửa**: goal SUCCEEDED, CANCELED (kể cả hủy bằng RViz)
+hoặc ABORTED đều có thể đặt goal khác mà không cần qua IR/bơm. Gateway chỉ
+nhận UUID mới sau khi goal cũ kết thúc, xe và `/cmd_vel` bằng 0, bơm/servo
+OFF và không còn publisher lệnh chuyển động/bơm. Nếu lửa đã được xác nhận
+nhưng tắt **trước lần phun đầu**, mission đợi camera và IR cùng không còn
+bằng chứng lửa trong 1,5 giây, Nav2 đã hủy đúng UUID, xe đứng yên và cơ cấu
+OFF; các node căn tâm/IR/guard mới nhả lượt cũ. Goal mới tới sát bản tin
+kết thúc goal cũ phải đợi guard nhả UUID và cửa sổ dừng an toàn; không cần
+đặt lại goal sau khi đủ điều kiện. Nếu node bơm từng giữ quyền trong lượt
+đó, không còn coi là nhánh "chưa phun" dù hiện tại publisher đã biến mất.
+Nếu IR/camera mất kết nối,
+không coi đó là “hết lửa” để tự cấp goal mới. Nếu đã từng phun, chỉ nhánh
+hậu kiểm sau phun được phép kết thúc lượt chữa cháy.
+
+Khi YOLO xác nhận lửa và đã căn tâm nhưng IR còn `NO_FLAME_SIGNATURE`, chế
+độ demo tích hợp xem đây là vùng tiếp cận xa, **không phải** xác nhận khoảng
+cách thật. Xe có thể tiến 0,08 m/s qua từng chặng tối đa 30 cm và kiểm tra
+lại Lidar/odom/camera/IR liên tục; file demo không đặt trần tổng 2 m nữa.
+Chỉ `SPRAY_RANGE` IR đã ổn định mới có thể mở bơm. Vùng xa này cần thử thật
+trong hành lang thoáng và vẫn có người ngắt nguồn: IR không thấy lửa cũng có
+thể do che khuất hoặc hiệu chuẩn sai. Vật cản, mất dữ liệu, vượt chặng hoặc
+không xác nhận vùng phun đều giữ bơm OFF.
+
+Nếu IR dừng lỗi trong phiên đầy đủ (ngoại trừ đang xác minh lửa tắt trước
+phun), script **thu hồi toàn bộ arm**, ghi sự
 kiện `IR_APPROACH_FAILED` với lý do, blocker lúc bắt đầu dừng và trạng thái
 IR/camera vào `events.jsonl`, nhưng giữ RViz và các node quan sát mở cho tới
 khi người vận hành Ctrl-C. Nó không tự tiến lại, tự tránh vật cản hay phun khi
@@ -168,8 +214,15 @@ thì dừng, nhả quyền, đo lại và tự tiếp tục khi proof còn đún
 xác nhận đã tới vùng phun. Mất target đã có frame IR mới thì dừng và chờ
 YOLO xác nhận lại trước khi căn tâm; mất sensor/heartbeat vẫn là lỗi an toàn.
 Để thử một
-goal khác sau lỗi, cần xác nhận xe đứng yên, Ctrl-C phiên cũ rồi khởi động
-phiên mới; tự phục hồi và nhiều goal liên tiếp sau lỗi chưa được nghiệm thu.
+goal khác sau lỗi cảm biến/an toàn, cần xác nhận xe đứng yên, Ctrl-C phiên cũ
+rồi khởi động phiên mới; nhiều goal liên tiếp sau lỗi chưa được nghiệm thu
+trên xe thật. Riêng lửa tắt trước phun chỉ được giải phóng goal khi đủ proof
+camera + IR + trạng thái Nav2 + cơ cấu OFF như trên. Khi YOLO mất tracking,
+các node giữ lệnh chuyển động bằng 0 và script vẫn giữ arm cho cùng goal;
+không còn thu hồi arm chỉ vì chờ quá 8 giây. Nếu YOLO xác nhận lại lửa lệch
+tâm, bộ căn tâm tiếp tục xoay sau khi các cổng an toàn còn hợp lệ. Nếu không
+có proof lửa tắt hoặc tracking mới, xe tiếp tục đứng yên; lỗi heartbeat,
+telemetry, Lidar, odom hoặc quyền lệnh vẫn dừng theo nhánh an toàn riêng.
 Nếu state `STOPPING` kéo dài quá 4 giây mà thiếu bằng chứng xe đứng yên và
 nhả `/cmd_vel_raw`, script ghi `IR_STOP_PROOF_TIMEOUT`, thu hồi arm và yêu cầu
 kiểm tra xe; tuyệt đối không xem timeout này là đã dừng để được phun.
@@ -182,8 +235,36 @@ khác. Nếu một cổng không đạt hoặc launch/heartbeat chết, file d�
 thu hồi các arm; Pi watchdog/S3 watchdog vẫn độc lập. **Ctrl-C** tại terminal
 demo sẽ dừng các launch do file mở. Script không tự giết các launch cũ: nếu
 thấy node trùng, hãy Ctrl-C đúng terminal cũ, xác nhận xe đứng yên, rồi chạy
-lại. Pi `robot.launch.py` được giữ chạy qua hai bước; dừng riêng trên Pi khi
-kết thúc buổi demo.
+lại. Demo mới dừng Pi `robot.launch.py` của phiên sau khi dọn laptop. Lượt
+demo kế tiếp sẽ kiểm tra giờ rồi mở lại Pi. Nếu SSH mất, supervisor Pi tự
+cleanup khi thấy EOF hoặc quá 35 giây không có heartbeat; đây là cơ chế dọn
+phiên, không thay thế watchdog motor/bơm. Nếu chưa nhận xác nhận cleanup,
+terminal báo lỗi và không tuyên bố Pi đã dừng.
+
+Để điều tra một lượt, ghi bag **trước khi đặt goal**; `--include-hidden-topics`
+là bắt buộc để thu `/navigate_to_pose/_action/status`. Ghi thêm các topic
+arm giúp phân biệt mất heartbeat với kẹt bàn giao. Dừng bag bằng Ctrl-C và
+gửi đường dẫn `BAG_DIR` cùng `fire_robot_session_*/events.jsonl`:
+
+```bash
+source /opt/ros/humble/setup.bash
+source "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/ros2_ws/install/setup.bash"
+export ROS_DOMAIN_ID=0
+unset ROS_LOCALHOST_ONLY
+BAG_DIR="/tmp/fire_full_$(date +%Y%m%d_%H%M%S)"
+echo "BAG_DIR=$BAG_DIR"
+ros2 bag record --include-hidden-topics --polling-interval 50 -o "$BAG_DIR" \
+  /yolo/detections /yolo/alignment_preview \
+  /fire_mission/state /fire_mission/live_nav_stop_state \
+  /fire_mission/nav2_cancel_guard_state /fire_mission/live_alignment_state \
+  /fire_mission/ir_range_preview /fire_mission/ir_approach_live_state \
+  /fire_mission/pump_demo_state /fire_mission/post_spray_review \
+  /fire_mission/live_nav_arm /fire_mission/nav_cancel_arm \
+  /fire_mission/live_alignment_arm /fire_mission/ir_approach_arm \
+  /fire_mission/pump_demo_arm /fire_sensors/ir_raw \
+  /fire_sensors/actuator_state /navigate_to_pose/_action/status \
+  /scan /odom /cmd_vel_raw /cmd_vel /pump_cmd
+```
 
 Log mỗi node và nhật ký sự kiện JSONL nằm dưới thư mục
 `/tmp/fire_robot_session_*` được in lúc khởi động. Đây là luồng tích hợp thử

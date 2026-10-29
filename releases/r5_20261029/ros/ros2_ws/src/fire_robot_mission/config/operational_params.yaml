@@ -1,0 +1,55 @@
+# R5 candidate configuration. Observer/proposals only; all live outputs disabled.
+fire_pulse_controller:
+  ros__parameters:
+    use_sim_time: false
+    enable_cycle_protocol: false
+    enable_pulse: false
+    enable_prespray_cancel: false
+    allow_provisional_ir: false
+    allow_close_stationary: false
+ir_approach_live:
+  ros__parameters:
+    use_sim_time: false
+    enable_cycle_protocol: false
+    enable_live_ir_jog: false
+    allow_provisional_ir: false
+    enable_reverse_jog: false
+    integrated_handoff: true
+    continuous_approach: true
+    speed_m_s: 0.08
+    continuous_distance_m: 0.30
+    max_total_approach_m: 0.30
+
+# Observer/GUI only. No live intent executor is connected in R5.2.
+fire_robot_operator:
+  ros__parameters:
+    automatic_mode: false
+    alignment_task_timeout_s: 0.0  # no wall timeout while a current flame remains; STOP/data guards still apply
+    target_recovery_timeout_s: 3.0
+    no_goal_handoff_timeout_s: 8.0
+    ir_final_confirm_timeout_s: 5.0
+    use_sim_time: false
+    show_gui: false
+    enable_live_intents: false
+    allow_close_stationary: false
+
+# R5.3 optional retirement participants; protocol does not enable live outputs.
+live_nav_stop_gateway:
+  ros__parameters:
+    enable_cycle_protocol: false
+    enable_live_output: false
+nav2_cancel_guard:
+  ros__parameters:
+    enable_cycle_protocol: false
+    enable_real_cancel: false
+live_alignment_takeover:
+  ros__parameters:
+    enable_cycle_protocol: false
+    enable_live_alignment: false
+fire_mission_supervisor:
+  ros__parameters:
+    enable_cycle_protocol: false
+post_spray_review:
+  ros__parameters:
+    use_operational_actor: false
+    max_pulses: 1

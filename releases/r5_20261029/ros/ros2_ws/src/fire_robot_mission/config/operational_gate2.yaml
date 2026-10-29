@@ -1,0 +1,74 @@
+# R5.5 live overrides; never loaded by the observe launcher. The automatic
+# runner supplies intents without A/F/T/I/P. Motion/actuation still requires
+# current source/BOOT/owner/UUID/STOP proofs.
+fire_pulse_controller:
+  ros__parameters:
+    enable_cycle_protocol: true
+    enable_pulse: true
+    enable_prespray_cancel: false
+    allow_provisional_ir: true
+    allow_close_stationary: true
+    max_pulses_per_cycle: 3
+    pulse_s: 6.0
+    start_on_ack: true
+    ir_confirm_samples: 3
+    unbounded_approach: true
+    reposition_resets_quota: true
+    max_total_pump_on_s: 18.0
+    respray_settle_s: 0.0
+    respray_wait_s: 0.0
+
+ir_approach_live:
+  ros__parameters:
+    enable_cycle_protocol: true
+    enable_live_ir_jog: true
+    allow_provisional_ir: true
+    enable_reverse_jog: false
+    integrated_handoff: true
+    continuous_approach: true
+    unbounded_approach: true
+    speed_m_s: 0.08
+    # Legacy parameter values are inactive while unbounded_approach is true.
+    continuous_distance_m: 0.30
+    max_total_approach_m: 0.30
+
+live_nav_stop_gateway:
+  ros__parameters:
+    enable_cycle_protocol: true
+    enable_live_output: true
+    enable_prespray_cancel: false
+
+nav2_cancel_guard:
+  ros__parameters:
+    enable_cycle_protocol: true
+    enable_real_cancel: true
+
+live_alignment_takeover:
+  ros__parameters:
+    enable_cycle_protocol: true
+    enable_live_alignment: true
+
+fire_mission_supervisor:
+  ros__parameters:
+    enable_cycle_protocol: true
+    enable_prespray_cancel: false
+
+post_spray_review:
+  ros__parameters:
+    use_operational_actor: true
+    ir_confirm_samples: 3
+    max_pulses: 1
+
+alignment_handoff_shadow:
+  ros__parameters:
+    require_live_cancel_proof: true
+
+# R5 behavior agreed 2026-10-29; R4/default profiles retain their old bounds.
+fire_robot_operator:
+  ros__parameters:
+    unbounded_approach: true
+    ir_confirm_samples: 3
+
+ir_range_preview:
+  ros__parameters:
+    spray_confirm_samples: 3

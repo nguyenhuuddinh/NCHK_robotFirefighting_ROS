@@ -1,0 +1,107 @@
+#lệnh tắt all node trên pi
+
+ssh pi@10.42.0.185 'bash -s' <<'PI_STOP'
+pkill -INT -f '[r]5_pi_session.py' || true
+sleep 8
+
+nodes='[r]5_pi_session.py|[s]erial_bridge_node|[s]afety_watchdog|[c]amsense_x1_node|[n]ative_mjpeg_camera|[o]dom_to_tf_broadcaster|[s]can_qos_relay|[r]osbridge_websocket|[r]obot_state_publisher'
+
+pkill -INT -f "$nodes" || true
+sleep 3
+pkill -TERM -f "$nodes" || true
+sleep 2
+
+pgrep -af "$nodes" || echo 'PI_ROBOT_NODES_STOPPED'
+PI_STOP		#Thấy PI_ROBOT_NODES_STOPPED là các tiến trình trong danh sách đã tắt
+
+#lệnh động bộ khi sài wifi
+
+PI_ADDR=10.0.0.1
+LAPTOP_ADDR=10.0.0.253
+
+ssh -t pi@"$PI_ADDR" \
+  "sudo chronyc online $LAPTOP_ADDR && \
+   sudo chronyc burst 4/4 $LAPTOP_ADDR && \
+   chronyc waitsync 30 0.02 0 2 && \
+   chronyc -n tracking && chronyc -n sources"
+
+#lệnh đồng bộ time khi sài lan
+
+PI_ADDR=10.42.0.185
+LAPTOP_ADDR=10.42.0.1
+
+ssh -t pi@"$PI_ADDR" \
+  "sudo chronyc online $LAPTOP_ADDR && \
+   sudo chronyc burst 4/4 $LAPTOP_ADDR && \
+   chronyc waitsync 30 0.02 0 2 && \
+   chronyc -n tracking && chronyc -n sources"
+
+
+#Đo độ lệch laptop với pi
+
+source /opt/ros/humble/setup.bash
+source "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/ros2_ws/install/setup.bash"
+ros2 run fire_robot_mission clock_sync_diagnostics \
+  --peer pi@10.0.0.1 --samples 20 \
+  --output /tmp/fire_clock_sync_wifi.json	#status: pass là ổn
+
+
+
+#các ip để ssh
+ssh pi@10.0.0.1
+
+pi@10.42.0.185
+
+#launch trên pi
+cd ~/NCHK_robotFirefighting_ROS/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+export ROS_DOMAIN_ID=0
+unset ROS_LOCALHOST_ONLY
+
+ros2 launch fire_robot_bringup robot.launch.py \
+  use_sim_time:=false \
+  use_camera:=true \
+  camera_backend:=native_mjpeg \
+  camera_fps:=15 \
+  camera_max_bytes_per_sec:=750000
+
+
+#stop all tiến trình
+cd "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS"
+python3 scripts/stop_laptop_nodes.py --dry-run  # Xem tiến trình sẽ dừng
+python3 scripts/stop_laptop_nodes.py            # SIGINT, rồi SIGTERM nếu kẹt
+
+
+#scan map
+cd "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS"
+./scripts/start_mapping.sh
+
+#teleop
+source /opt/ros/humble/setup.bash
+source "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/ros2_ws/install/setup.bash"
+
+export ROS_DOMAIN_ID=0
+unset ROS_LOCALHOST_ONLY
+
+ros2 run teleop_twist_keyboard teleop_twist_keyboard \
+  --ros-args \
+  -r cmd_vel:=/cmd_vel_raw \
+  -p speed:=0.05 \
+  -p turn:=0.5
+
+
+#Lưu file
+cd "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS"
+./scripts/start_mapping.sh save fire_room_demo
+
+
+#demo
+nav2
+cd "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS"
+./scripts/start_demo.sh --align-only
+
+
+
+cd "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS"
+./scripts/start_demo.sh --ir-only 2>&1 | tee "/tmp/fire_startup_lan_$(date +%Y%m%d_%H%M%S).log"

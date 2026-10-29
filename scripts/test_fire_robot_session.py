@@ -15,6 +15,40 @@ SPEC.loader.exec_module(SESSION)
 UUID = 'a' * 32
 
 
+@pytest.mark.parametrize(('output', 'expected'), [
+    ('active [3]\n', True),
+    ('inactive [2]\n', False),
+    ('unconfigured [1]\n', False),
+    ('inactive [3]\n', False),
+    ('active [2]\n', False),
+    ('/bt_navigator: active [3]\n', False),
+])
+def test_lifecycle_readiness_requires_exact_active_state(monkeypatch,
+                                                         output, expected):
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=output)
+    monkeypatch.setattr(SESSION, 'run', fake_run)
+    assert SESSION.lifecycle_active('/bt_navigator') is expected
+    assert calls == [['ros2', 'lifecycle', 'get', '/bt_navigator']]
+
+
+def test_no_fire_ready_message_requires_gateway_clear_proof():
+    gateway = {
+        'state': 'RELEASED_STOPPED',
+        'stop_reason': 'NAV_GOAL_TERMINAL_NO_FIRE',
+        'cycle_goal_uuid': UUID,
+    }
+    assert not SESSION.no_fire_goal_ready(gateway)
+    gateway['next_goal_clear_ready'] = False
+    assert not SESSION.no_fire_goal_ready(gateway)
+    gateway['next_goal_clear_ready'] = True
+    assert SESSION.no_fire_goal_ready(gateway)
+    gateway['state'] = 'STOPPING'
+    assert not SESSION.no_fire_goal_ready(gateway)
+
+
 def evidence():
     """Build a complete synthetic proof for a centered stopped goal."""
     ir = {
@@ -239,6 +273,135 @@ def test_existing_publisher_count_is_preserved():
         assert SESSION.publisher_count('/fire_mission/live_nav_arm') == 1
 
 
+def test_ir_arm_ack_rejects_missing_edge_stale_or_extra_publisher():
+    arm = {
+        'false_seen': True, 'cycle_seen': True,
+        'heartbeat_true': True, 'receive_fresh': True,
+        'publisher_count': 1,
+    }
+    report = {'schema_version': 1, 'arm': arm}
+    assert SESSION.ir_arm_stage_ready(report, armed=True)
+    assert not SESSION.ir_arm_stage_ready(report, armed=False)
+    false_report = {'schema_version': 1, 'arm': dict(
+        arm, cycle_seen=False, heartbeat_true=False)}
+    assert SESSION.ir_arm_stage_ready(false_report, armed=False)
+    for key, invalid in (
+            ('false_seen', False), ('cycle_seen', False),
+            ('heartbeat_true', False), ('receive_fresh', False),
+            ('publisher_count', 2)):
+        broken = {'schema_version': 1, 'arm': dict(arm, **{key: invalid})}
+        assert not SESSION.ir_arm_stage_ready(broken, armed=True)
+    assert not SESSION.ir_arm_stage_ready(None, armed=True)
+    assert not SESSION.ir_arm_stage_ready({'schema_version': 1}, armed=True)
+    assert not SESSION.ir_arm_stage_ready({
+        'schema_version': 1,
+        'arm': dict(false_report['arm'], receive_fresh=False)}, armed=False)
+
+
+def test_ir_arm_loss_warning_requires_exact_stopped_handoff():
+    ir = {'state': 'WAITING_FOR_ADMISSION',
+          'blockers': ['OPERATOR_ARM_MISSING_OR_STALE']}
+    guard = {'state': 'CANCEL_CONFIRMED_STOPPED',
+             'goal_uuid': UUID, 'blockers': []}
+    gateway = {'state': 'HANDOFF_READY', 'cycle_goal_uuid': UUID}
+    alignment = {'state': 'COMPLETE', 'goal_uuid': UUID,
+                 'stop_reason': 'TARGET_CENTERED'}
+    assert SESSION.ir_arm_missing_after_handoff(
+        ir, guard, gateway, alignment)
+    assert not SESSION.ir_arm_missing_after_handoff(
+        dict(ir, blockers=[]), guard, gateway, alignment)
+    assert not SESSION.ir_arm_missing_after_handoff(
+        dict(ir, state='MOVING'), guard, gateway, alignment)
+    assert not SESSION.ir_arm_missing_after_handoff(
+        ir, guard, dict(gateway, cycle_goal_uuid='b' * 32), alignment)
+    assert not SESSION.ir_arm_missing_after_handoff(
+        ir, dict(guard, state='ALIGNMENT_IN_PROGRESS'), gateway, alignment)
+    assert not SESSION.ir_arm_missing_after_handoff(
+        ir, guard, gateway, dict(alignment, stop_reason='TARGET_LOST'))
+
+
+def test_ir_arm_false_then_true_requires_subscriber_ack_before_ready():
+    events = []
+    phase = ['initial']
+    false_process = object()
+
+    class Monitor:
+        def latest(self, topic):
+            assert topic == '/fire_mission/ir_approach_live_state'
+            return {'schema_version': 1, 'arm': {
+                'false_seen': phase[0] != 'initial',
+                'cycle_seen': phase[0] == 'true',
+                'heartbeat_true': phase[0] == 'true',
+                'receive_fresh': True,
+                'publisher_count': int(phase[0] != 'released'),
+            }}
+
+    class FakeSession:
+        monitor = Monitor()
+
+        def start(self, label, cmd, *, arm):
+            assert label == 'ir_arm_false' and arm is True
+            assert '{data: false}' in cmd
+            events.append('false_started')
+            phase[0] = 'false'
+            return false_process
+
+        def remove(self, process):
+            assert process is false_process
+            events.append('false_removed')
+            phase[0] = 'released'
+
+        def event(self, name):
+            events.append(name)
+
+    def wait(label, predicate, session, timeout):
+        assert timeout == 8
+        assert predicate(), label
+        events.append(label)
+
+    def true(session, topic, label):
+        assert phase[0] == 'released'
+        events.append('true_started')
+        phase[0] = 'true'
+
+    with patch.object(SESSION, 'wait_until', side_effect=wait), \
+            patch.object(SESSION, 'publisher_count', return_value=0), \
+            patch.object(SESSION, 'arm_true', side_effect=true):
+        SESSION.arm_ir_with_ack(FakeSession())
+    assert events == [
+        'false_started', 'IR arm false đã tới node', 'false_removed',
+        'IR arm false publisher đã nhả', 'true_started',
+        'IR arm true đã tới node', 'IR_ARM_ACKNOWLEDGED',
+    ]
+
+
+def test_ir_arm_ack_timeout_removes_false_and_never_starts_true():
+    false_process = object()
+    removed = []
+    fake = SimpleNamespace(
+        start=lambda *args, **kwargs: false_process,
+        remove=lambda process: removed.append(process),
+        monitor=SimpleNamespace(latest=lambda topic: None))
+    with patch.object(SESSION, 'wait_until', side_effect=SESSION.SessionError(
+            'Không thấy false')), patch.object(SESSION, 'arm_true') as true:
+        with pytest.raises(SESSION.SessionError):
+            SESSION.arm_ir_with_ack(fake)
+        true.assert_not_called()
+    assert removed == [false_process]
+
+
+def test_stuck_arm_publisher_remains_owned_and_blocks_next_edge():
+    process = SimpleNamespace(pid=1234, poll=lambda: None)
+    session = SESSION.Session.__new__(SESSION.Session)
+    session.processes = [('ir_arm_false', process)]
+    session.arms = [('ir_arm_false', process)]
+    with patch.object(session, 'stop'):
+        with pytest.raises(SESSION.SessionError, match='chưa thoát'):
+            session.remove(process)
+    assert session.processes == [('ir_arm_false', process)]
+    assert session.arms == [('ir_arm_false', process)]
+
+
 def test_map_validation_rejects_missing_image(tmp_path):
     """Do not start Nav2 from a YAML map with a missing PGM."""
     path = tmp_path / 'room.yaml'
@@ -274,3 +437,473 @@ def test_align_demo_reports_target_loss_without_auto_exit():
     assert SESSION.alignment_demo_outcome(
         alignment, guard, gateway, 0) == (
             'FAILED', 'Alignment: TARGET_NOT_REACQUIRED')
+
+
+def test_startup_requires_continuously_safe_window():
+    window = SESSION.StableSafeWindow(1.0)
+    assert not window.observe(True, 0.0)
+    assert not window.observe(True, 0.8)
+    assert not window.observe(False, 0.9)
+    assert not window.observe(True, 1.0)
+    assert window.observe(True, 2.01)
+    safe = ({'state': 'WAITING_FOR_INPUT', 'fire_latched': False,
+             'cmd_vel_fresh_zero': True, 'odom_stationary': True},
+            {'state': 'WAITING_FOR_ADMISSION'},
+            {'state': 'IDLE', 'health': {'status': 'OK'}})
+    assert SESSION.safe_initial_state(*safe, 0, 0)
+    assert not SESSION.safe_initial_state(*safe, 1, 0)
+    assert not SESSION.safe_initial_state(*safe, 0, 1)
+    bad = dict(safe[2], state='FAULT')
+    assert not SESSION.safe_initial_state(safe[0], safe[1], bad, 0, 0)
+
+
+def test_startup_readiness_uses_fresh_node_telemetry_not_graph_snapshots():
+    states = {
+        '/fire_mission/live_nav_stop_state': 'WAITING_FOR_INPUT',
+        '/fire_mission/nav2_cancel_guard_state': 'WAITING_FOR_ADMISSION',
+        '/fire_mission/live_alignment_state': 'WAITING_FOR_ADMISSION',
+        '/fire_mission/ir_approach_live_state': 'WAITING_FOR_ADMISSION',
+        '/fire_mission/post_spray_review': 'WAITING_FOR_PULSE',
+    }
+    reports = {topic: {'schema_version': 1, 'state': state,
+                       'enabled': True}
+               for topic, state in states.items()}
+    monitor = SimpleNamespace(latest=lambda topic: reports.get(topic))
+    with patch.object(SESSION, 'nodes', side_effect=SESSION.SessionError(
+            'ROS graph CLI unavailable')):
+        assert SESSION.startup_state_gaps(monitor, False, True) == []
+        assert SESSION.startup_state_gaps(monitor, False, False) == []
+    reports.pop('/fire_mission/ir_approach_live_state')
+    assert SESSION.startup_state_gaps(monitor, False, True)
+    assert SESSION.startup_state_gaps(monitor, True, False) == []
+    reports.pop('/fire_mission/post_spray_review')
+    assert SESSION.startup_state_gaps(monitor, False, False)
+    assert SESSION.startup_state_gaps(monitor, True, False) == []
+
+
+def test_early_graph_readiness_uses_one_snapshot_per_attempt():
+    with patch.object(SESSION, 'nodes', side_effect=[
+            ['/yolo_observer', '/fire_alignment_observer'], []]) as listing:
+        assert SESSION.nodes_present(
+            '/yolo_observer', '/fire_alignment_observer')
+        assert listing.call_count == 1
+
+
+def test_startup_readiness_rejects_stale_invalid_or_disabled_state():
+    reports = {
+        '/fire_mission/live_nav_stop_state': {
+            'schema_version': 1, 'state': 'WAITING_FOR_INPUT',
+            'enabled': True},
+        '/fire_mission/nav2_cancel_guard_state': {
+            'schema_version': 1, 'state': 'WAITING_FOR_ADMISSION',
+            'enabled': True},
+        '/fire_mission/live_alignment_state': {
+            'schema_version': 1, 'state': 'WAITING_FOR_ADMISSION',
+            'enabled': True},
+    }
+    monitor = SimpleNamespace(latest=lambda topic: reports.get(topic))
+    assert SESSION.startup_state_gaps(monitor, True, False) == []
+    for broken in (
+            None,
+            {'schema_version': 2, 'state': 'WAITING_FOR_INPUT',
+             'enabled': True},
+            {'schema_version': 1, 'state': 'NAVIGATION', 'enabled': True},
+            {'schema_version': 1, 'state': 'WAITING_FOR_INPUT',
+             'enabled': False}):
+        reports['/fire_mission/live_nav_stop_state'] = broken
+        assert SESSION.startup_state_gaps(monitor, True, False)
+
+
+def test_startup_wait_reports_missing_topic_and_fails_on_dead_child():
+    monitor = SimpleNamespace(latest=lambda topic: None)
+    session = SimpleNamespace(monitor=monitor, assert_alive=lambda: None)
+    with pytest.raises(SESSION.SessionError,
+                       match='/fire_mission/live_nav_stop_state'):
+        SESSION.wait_for_startup_states(session, True, False, timeout=0)
+    session.assert_alive = lambda: (_ for _ in ()).throw(
+        SESSION.SessionError('gateway thoát'))
+    with pytest.raises(SESSION.SessionError, match='gateway thoát'):
+        SESSION.wait_for_startup_states(session, True, False, timeout=1)
+
+
+def test_readiness_timeout_keeps_latest_ros_graph_error():
+    with patch.object(SESSION.time, 'monotonic', side_effect=[0, 0.1, 1]), \
+            patch.object(SESSION.time, 'sleep'):
+        with pytest.raises(SESSION.SessionError,
+                           match='DDS graph unavailable'):
+            SESSION.wait_until('startup', lambda: (_ for _ in ()).throw(
+                SESSION.SessionError('DDS graph unavailable')), timeout=1)
+
+
+def test_startup_preflight_resets_on_fault_and_graph_query_error():
+    reports = {
+        '/fire_mission/live_nav_stop_state': {
+            'state': 'WAITING_FOR_INPUT', 'fire_latched': False,
+            'cmd_vel_fresh_zero': True, 'odom_stationary': True},
+        '/fire_mission/nav2_cancel_guard_state': {
+            'state': 'WAITING_FOR_ADMISSION'},
+        '/fire_mission/state': {
+            'state': 'IDLE', 'health': {'status': 'OK'}},
+    }
+    monitor = SimpleNamespace(latest=lambda topic: reports.get(topic))
+    window = SESSION.StableSafeWindow(1.0)
+    with patch.object(SESSION, 'publisher_count', return_value=0) as count:
+        assert not SESSION.startup_preflight_stable(monitor, window, now=0.0)
+        reports['/fire_mission/state']['state'] = 'FAULT'
+        assert not SESSION.startup_preflight_stable(monitor, window, now=0.5)
+        assert count.call_count == 2  # no CLI graph load while in FAULT
+        reports['/fire_mission/state']['state'] = 'IDLE'
+        assert not SESSION.startup_preflight_stable(monitor, window, now=1.0)
+        assert SESSION.startup_preflight_stable(monitor, window, now=2.1)
+    with patch.object(SESSION, 'publisher_count', side_effect=
+                      SESSION.SessionError('graph unavailable')):
+        with pytest.raises(SESSION.SessionError):
+            SESSION.startup_preflight_stable(monitor, window, now=2.2)
+    with patch.object(SESSION, 'publisher_count', return_value=0):
+        assert not SESSION.startup_preflight_stable(monitor, window, now=3.3)
+        assert SESSION.startup_preflight_stable(monitor, window, now=4.4)
+
+
+def test_startup_preflight_rechecks_state_after_slow_graph_queries():
+    reports = {
+        '/fire_mission/live_nav_stop_state': {
+            'state': 'WAITING_FOR_INPUT', 'fire_latched': False,
+            'cmd_vel_fresh_zero': True, 'odom_stationary': True},
+        '/fire_mission/nav2_cancel_guard_state': {
+            'state': 'WAITING_FOR_ADMISSION'},
+        '/fire_mission/state': {
+            'state': 'IDLE', 'health': {'status': 'OK'}},
+    }
+    monitor = SimpleNamespace(latest=lambda topic: reports.get(topic))
+    window = SESSION.StableSafeWindow(1.0)
+
+    def query(topic):
+        if topic == '/pump_cmd':
+            reports['/fire_mission/state'] = {'state': 'FAULT'}
+        return 0
+
+    with patch.object(SESSION, 'publisher_count', side_effect=query):
+        assert not SESSION.startup_preflight_stable(monitor, window, now=2.0)
+    assert window.since is None
+
+
+def test_pre_spray_wait_only_for_unpumped_target_loss():
+    mission = {'state': 'TARGET_LOST',
+               'perception': {'detected_now': False, 'confirmed': False}}
+    gateway = {'cycle_goal_uuid': UUID, 'fire_latched': True,
+               'stop_reason': 'FIRE_ACQUIRED'}
+    assert SESSION.pre_spray_clear_waiting(mission, gateway, set())
+    assert not SESSION.pre_spray_clear_waiting(mission, gateway, {UUID})
+    assert not SESSION.pre_spray_clear_waiting(
+        dict(mission, state='FAULT'), gateway, set())
+    assert not SESSION.pre_spray_clear_waiting(
+        mission, dict(gateway, fire_latched=False), set())
+
+
+def test_target_loss_survives_many_monitor_cycles_then_reports_reacquire():
+    """Target-loss monitoring has no deadline that withdraws all arms."""
+    gateway = {'cycle_goal_uuid': UUID, 'fire_latched': True,
+               'stop_reason': 'FIRE_ACQUIRED'}
+    lost = {'state': 'TARGET_LOST',
+            'perception': {'detected_now': False, 'confirmed': False}}
+    waiting, event = SESSION.target_recovery_event(None, lost, gateway, set())
+    assert (waiting, event) == (UUID, 'TARGET_REACQUIRE_WAITING')
+    for _ in range(200):
+        waiting, event = SESSION.target_recovery_event(
+            waiting, lost, gateway, set())
+        assert (waiting, event) == (UUID, None)
+    candidate = {'state': 'FIRE_CANDIDATE',
+                 'perception': {'detected_now': True, 'confirmed': False}}
+    waiting, event = SESSION.target_recovery_event(
+        waiting, candidate, gateway, set())
+    assert (waiting, event) == (UUID, None)
+    tracking = {'state': 'FIRE_TRACKING',
+                'perception': {'detected_now': True, 'confirmed': True}}
+    waiting, event = SESSION.target_recovery_event(
+        waiting, tracking, gateway, set())
+    assert (waiting, event) == (None, 'TARGET_REACQUIRED')
+    waiting, event = SESSION.target_recovery_event(
+        waiting, lost, gateway, set())
+    assert (waiting, event) == (UUID, 'TARGET_REACQUIRE_WAITING')
+
+
+def test_target_recovery_never_confuses_unproven_fire_clear_or_new_goal():
+    gateway = {'cycle_goal_uuid': UUID, 'fire_latched': True,
+               'stop_reason': 'FIRE_ACQUIRED'}
+    unconfirmed = {'state': 'FIRE_TRACKING',
+                   'perception': {'detected_now': True, 'confirmed': False}}
+    assert SESSION.target_recovery_event(
+        UUID, unconfirmed, gateway, set()) == (UUID, None)
+    clear = {'state': 'IDLE', 'lifecycle': {
+        'pre_spray_clear_goal_uuid': UUID}}
+    assert SESSION.target_recovery_event(
+        UUID, clear, gateway, set()) == (None, None)
+    new_gateway = dict(gateway, cycle_goal_uuid='b' * 32)
+    assert SESSION.target_recovery_event(
+        UUID, unconfirmed, new_gateway, set()) == (None, None)
+    fault = {'state': 'FAULT'}
+    assert SESSION.target_recovery_event(
+        UUID, fault, gateway, set()) == (UUID, None)
+
+
+def test_pump_arm_waits_for_subscriber_false_then_true():
+    phase = ['initial']
+    events = []
+    false_process = object()
+
+    def latest(topic):
+        assert topic == '/fire_mission/pump_demo_state'
+        return {'schema_version': 1, 'arm': {
+            'false_seen': phase[0] != 'initial',
+            'cycle_seen': phase[0] == 'true',
+            'heartbeat_true': phase[0] == 'true',
+            'receive_fresh': True,
+            'publisher_count': int(phase[0] != 'released'),
+        }}
+
+    class FakeSession:
+        monitor = SimpleNamespace(latest=latest)
+
+        def start(self, label, cmd, *, arm):
+            assert label == 'pump_arm_false' and arm
+            assert '{data: false}' in cmd
+            phase[0] = 'false'
+            events.append('false_started')
+            return false_process
+
+        def remove(self, process):
+            assert process is false_process
+            phase[0] = 'released'
+            events.append('false_removed')
+
+        def event(self, name):
+            events.append(name)
+
+    def wait(label, predicate, session, timeout):
+        assert timeout == 8 and predicate(), label
+        events.append(label)
+
+    def true(session, topic, label):
+        assert phase[0] == 'released'
+        assert topic == '/fire_mission/pump_demo_arm'
+        phase[0] = 'true'
+        events.append('true_started')
+
+    with patch.object(SESSION, 'wait_until', side_effect=wait), \
+            patch.object(SESSION, 'publisher_count', return_value=0), \
+            patch.object(SESSION, 'arm_true', side_effect=true):
+        SESSION.arm_pump_with_ack(FakeSession())
+    assert events == [
+        'false_started', 'pump arm false đã tới node', 'false_removed',
+        'pump arm false publisher đã nhả', 'true_started',
+        'pump arm true đã tới node', 'PUMP_ARM_ACKNOWLEDGED',
+    ]
+
+
+def test_detached_start_releases_capture_while_child_stays_alive(tmp_path):
+    """Exercise real shell pipes as used by SSH, without ROS or hardware."""
+    import os
+    import shlex
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    pidfile = tmp_path / 'child.pid'
+    logfile = tmp_path / 'log with spaces.txt'
+    child = ('import os,time; from pathlib import Path; '
+             f'Path({str(pidfile)!r}).write_text(str(os.getpid())); '
+             'print("child ready",flush=True); time.sleep(4)')
+    command = ('true && export QA_DETACH_FIXTURE=1 && exec ' +
+               shlex.join([sys.executable, '-c', child]))
+    child_pid = None
+    try:
+        # If a background setup shell retains either pipe, this times out.
+        result = subprocess.run(
+            ['bash', '-c', SESSION.detached_shell_command(command, logfile)],
+            capture_output=True, text=True, timeout=1.5)
+        assert result.returncode == 0
+        deadline = time.monotonic() + 1
+        while not pidfile.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert pidfile.exists()
+        child_pid = int(pidfile.read_text())
+        os.kill(child_pid, 0)
+        assert 'child ready' in logfile.read_text()
+        assert result.stdout == '' and result.stderr == ''
+    finally:
+        # An unsuccessful regression also releases its fixture eventually.
+        if child_pid is None and pidfile.exists():
+            child_pid = int(pidfile.read_text())
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+
+def test_detached_setup_failure_is_logged_without_running_launch(tmp_path):
+    import shlex
+    import subprocess
+    import time
+
+    marker = tmp_path / 'unexpected_launch'
+    logfile = tmp_path / 'setup.log'
+    command = ("(printf 'setup failed\\n' >&2; false) && touch " +
+               shlex.quote(str(marker)))
+    result = subprocess.run(
+        ['bash', '-c', SESSION.detached_shell_command(command, logfile)],
+        capture_output=True, text=True, timeout=1.5)
+    deadline = time.monotonic() + 1
+    while (not logfile.exists() or not logfile.read_text()) and time.monotonic() < deadline:
+        time.sleep(.02)
+    assert result.returncode == 0  # Background start is not readiness proof.
+    assert 'setup failed' in logfile.read_text()
+    assert not marker.exists()
+
+
+def test_ensure_pi_reuses_running_stack_without_ssh(monkeypatch):
+    monkeypatch.setattr(SESSION, 'pi_ready', lambda: True)
+    def forbidden(*args, **kwargs):
+        pytest.fail('A ready Pi must not start another SSH launch')
+    monkeypatch.setattr(SESSION, 'run', forbidden)
+    SESSION.ensure_pi()
+
+
+def test_ensure_pi_rejects_partial_stack_without_launch(monkeypatch):
+    monkeypatch.setattr(SESSION, 'pi_ready', lambda: False)
+    monkeypatch.setenv('FIRE_AUTO_START_PI', '1')
+    def wait(*args, **kwargs):
+        raise SESSION.SessionError('rediscovery timeout')
+    monkeypatch.setattr(SESSION, 'wait_until', wait)
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout='/serial_bridge_node\n', returncode=0)
+    monkeypatch.setattr(SESSION, 'run', run)
+    with pytest.raises(SESSION.SessionError, match='Pi đã chạy một phần'):
+        SESSION.ensure_pi()
+    assert len(calls) == 1
+    assert 'nohup' not in calls[0][-1]
+
+
+def test_ensure_pi_detaches_then_requires_readiness(monkeypatch):
+    import shlex
+    monkeypatch.setattr(SESSION, 'pi_ready', lambda: False)
+    monkeypatch.setenv('FIRE_AUTO_START_PI', '1')
+    waits, calls = [], []
+    def wait(label, *args, **kwargs):
+        waits.append((label, kwargs))
+        if len(waits) == 1:
+            raise SESSION.SessionError('rediscovery timeout')
+        raise SESSION.SessionError('Pi not ready')
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout='', returncode=0)
+    monkeypatch.setattr(SESSION, 'wait_until', wait)
+    monkeypatch.setattr(SESSION, 'run', run)
+    with pytest.raises(SESSION.SessionError, match='Pi not ready'):
+        SESSION.ensure_pi()
+    assert len(calls) == 2
+    background = shlex.split(calls[1][-1])[-1]
+    assert background.startswith('nohup bash -c ')
+    assert '&& exec ros2 launch' in background
+    assert background.endswith('</dev/null >/tmp/fire_robot_pi_auto.log 2>&1 &')
+    assert waits[-1][1]['timeout'] == 60
+
+
+def test_state_log_keeps_gateway_cycle_uuid_first_stop_and_live_blockers():
+    payload = {'state': 'RELEASED_STOPPED', 'cycle_goal_uuid': UUID,
+               'stop_reason': 'NAV_INPUT_OR_TOPOLOGY_LOST',
+               'blockers': [], 'rearm_blockers': ['OLD_GOAL_TERMINAL_PROOF_INVALID'],
+               'first_stop': {'blockers': ['NAV_COMMAND_MISSING_OR_INVALID']}}
+    details = SESSION.state_event_details(payload)
+    assert details['goal_uuid'] == UUID
+    assert details['blockers'] == []
+    assert details['first_stop']['blockers'] == ['NAV_COMMAND_MISSING_OR_INVALID']
+    assert details['rearm_blockers'] == payload['rearm_blockers']
+
+
+def test_state_log_retains_mission_health_and_legacy_reports():
+    assert SESSION.state_event_details({'state': 'IDLE'}) == {
+        'state': 'IDLE', 'goal_uuid': None, 'stop_reason': None}
+    info = SESSION.state_event_details({'state': 'FAULT', 'health': {
+        'status': 'BLOCKED', 'blockers': ['DETECTION_STALE']}})
+    assert info['health_status'] == 'BLOCKED'
+    assert info['health_blockers'] == ['DETECTION_STALE']
+
+
+def test_ir_failure_uuid_uses_gateway_before_cancel_guard_has_goal():
+    gateway = {'cycle_goal_uuid': UUID, 'first_stop': {'blockers': ['ODOM_NOT_FRESH']}}
+    guard = {'goal_uuid': None}
+    info = SESSION.ir_demo_event_details(None, 'Gateway failure', gateway, guard, {})
+    assert info['goal_uuid'] == UUID
+    assert info['gateway']['first_stop']['blockers'] == ['ODOM_NOT_FRESH']
+    assert guard['goal_uuid'] is None  # Logging must not alter cancel ownership.
+
+
+@pytest.mark.parametrize('recovery_goal', [UUID, 'cd' * 16])
+def test_ir_session_withdraws_arms_and_stays_latched_after_recovery(monkeypatch, recovery_goal):
+    """Exercise actual demo loop with startup/I/O stubbed, never spawning ROS."""
+    events, arms = [], []
+    state = {'tick': 0}
+    first_stop = {'cycle_goal_uuid': UUID, 'reason': 'NAV_INPUT_OR_TOPOLOGY_LOST',
+                  'blockers': ['ODOM_NOT_FRESH']}
+    def latest(topic):
+        if topic == '/fire_mission/live_nav_stop_state':
+            return {'state': 'RELEASED_STOPPED', 'cycle_goal_uuid': UUID,
+                    'stop_reason': 'NAV_INPUT_OR_TOPOLOGY_LOST',
+                    'blockers': ['ODOM_NOT_FRESH'] if state['tick'] == 1 else [],
+                    'rearm_blockers': ['OLD_GOAL_TERMINAL_PROOF_INVALID'],
+                    'first_stop': first_stop}
+        if topic == '/fire_mission/state':
+            return {'state': 'FAULT' if state['tick'] == 1 else 'NAV2_NAVIGATING',
+                    'navigation': {'goal_uuid': recovery_goal}}
+        return {'state': 'WAITING_FOR_ADMISSION', 'goal_uuid': None}
+    class FakeSession:
+        def __init__(self, **kwargs): pass
+        def start_pi(self): pass
+        def launch(self, *args): pass
+        def event(self, name, **kw): events.append((name, kw))
+        def assert_alive(self):
+            state['tick'] += 1
+            if state['tick'] == 4: raise KeyboardInterrupt()
+        def disarm(self): arms.append('withdrawn')
+        def close(self): events.append(('closed', {}))
+    monkeypatch.delenv('DISPLAY', raising=False)
+    monkeypatch.setattr(SESSION, 'Session', FakeSession)
+    monkeypatch.setattr(SESSION, 'TelemetryMonitor', lambda **kw: SimpleNamespace(latest=latest))
+    monkeypatch.setattr(SESSION, 'validate_map', lambda value: value)
+    monkeypatch.setattr(SESSION, 'no_external_owners', lambda: None)
+    monkeypatch.setattr(SESSION, 'pi_sensor_preflight', lambda **kw: None)
+    monkeypatch.setattr(SESSION, 'wait_until', lambda *a, **kw: None)
+    monkeypatch.setattr(SESSION, 'wait_for_startup_states', lambda *a, **kw: None)
+    monkeypatch.setattr(SESSION, 'arm_true', lambda *a: arms.append('armed'))
+    monkeypatch.setattr(SESSION, 'arm_ir_with_ack', lambda *a: arms.append('armed'))
+    monkeypatch.setattr(SESSION.time, 'sleep', lambda *a: None)
+    with pytest.raises(KeyboardInterrupt):
+        SESSION.demo(SimpleNamespace(live=True, map='fixture.yaml', align_only=False, ir_only=True))
+    assert arms == ['armed'] * 5 + ['withdrawn']
+    failed = [data for name, data in events if name == 'IR_DEMO_FAILED']
+    assert len(failed) == 1
+    assert failed[0]['goal_uuid'] == UUID
+    assert failed[0]['gateway']['first_stop'] == first_stop
+    assert ('SESSION_INTERRUPTED', {'phase': 'live_demo'}) in events
+    assert events[-1][0] == 'closed'
+
+
+def test_actual_monitor_callback_keeps_evidence_when_initial_stop_message_was_missed():
+    import threading
+    import json
+    events = []
+    monitor = SESSION.TelemetryMonitor.__new__(SESSION.TelemetryMonitor)
+    monitor.lock = threading.Lock()
+    monitor.cache = {}
+    monitor.on_change = lambda name, **kw: events.append((name, kw))
+    payload = {'state': 'RELEASED_STOPPED', 'cycle_goal_uuid': UUID,
+               'stop_reason': 'NAV_INPUT_OR_TOPOLOGY_LOST', 'blockers': [],
+               'first_stop': {'blockers': ['NAV_SHADOW_TOPOLOGY_INVALID']}}
+    monitor._on_message('/fire_mission/live_nav_stop_state',
+                        SimpleNamespace(data=json.dumps(payload)))
+    assert events[0][1]['goal_uuid'] == UUID
+    assert events[0][1]['first_stop']['blockers'] == ['NAV_SHADOW_TOPOLOGY_INVALID']

@@ -1,0 +1,74 @@
+# ============================================================
+# PI_PARAMS.YAML — Tham số phần cứng cho Raspberry Pi
+# Tất cả sensor/device config tập trung ở đây, KHÔNG hardcode
+# trong launch file hay source code.
+# ============================================================
+
+# --- Camsense X1 Lidar ---
+camsense_x1_node:
+  ros__parameters:
+    frame_id: "laser_frame"       # Khớp với URDF (base_link → laser_frame)
+    port: "/dev/ttyUSB0"
+    baud: 115200
+    angle_offset: 180             # Hiệu chỉnh góc (degree, right hand)
+
+# --- Native MJPEG Camera (mặc định) ---
+# Logitech C210 xuất JPEG ngay từ webcam; Pi không decode/re-encode ảnh.
+native_mjpeg_camera:
+  ros__parameters:
+    video_device: "/dev/video0"
+    image_width: 640
+    image_height: 480
+    framerate: 15                 # Đã đạt gate LAN + WiFi AP ngày 2026-09-21
+    frame_id: "camera_frame"
+    output_topic: "/image_raw/compressed"
+    camera_info_topic: "/camera_info"
+    max_bytes_per_sec: 750000
+    disable_dynamic_framerate: true  # Giữ FPS ổn định trong cảnh tối
+    restart_delay_s: 2.0
+    frame_timeout_s: 2.0
+    stats_period_s: 10.0
+
+# --- usb_cam fallback ---
+# Node name: usb_cam (mặc định của package usb_cam)
+# Executable: usb_cam_node_exe
+# usb_cam xuất raw nội bộ Pi; image_transport nén JPEG rồi relay Best Effort.
+usb_cam:
+  ros__parameters:
+    video_device: "/dev/video0"
+    image_width: 640
+    image_height: 480
+    framerate: 10.0               # Mức khởi đầu bảo thủ; đo WiFi + scan/odom/IMU trước khi tăng
+    pixel_format: "yuyv2rgb"       # Hỗ trợ trên usb_cam 0.8.1; JPEG nén trên Pi
+    io_method: "mmap"
+    camera_name: "fire_robot_cam"
+    frame_id: "camera_frame"       # Tham số usb_cam; khớp URDF (base_link → camera_frame)
+
+# Chỉ dùng relay này với camera_backend:=usb_cam.
+# 750 kB/s payload trung bình, bỏ frame dư thay vì backlog.
+camera_qos_relay:
+  ros__parameters:
+    max_bytes_per_sec: 750000
+
+# --- Serial Bridge Node (Raw Serial V2) ---
+serial_bridge_node:
+  ros__parameters:
+    serial_port: "/dev/serial/by-id/usb-Espressif_Systems_Freenove_ESP32-S3_WROOM_N8R2__8MB_Flash___2MB_PSRAM__28372F1F73C8-if00"
+    serial_baudrate: 115200
+    # ESP32-S3 can need ~4-6 s after reset for boot + IMU calibration +
+    # Task_SerialComm startup. A 2 s grace made Pi close DTR before the first
+    # STATE frame, causing repeated USB open/close cycles after a board reset.
+    first_state_timeout_s: 8.0
+    # PUMP=ON requires a continuing ROS heartbeat; otherwise bridge sends OFF.
+    pump_command_timeout_s: 0.7
+
+# --- Odometry -> TF ---
+odom_to_tf_broadcaster:
+  ros__parameters:
+    tf_publish_rate_hz: 20.0
+    odom_stale_timeout_ms: 300
+    odom_qos_depth: 10
+    tf_stamp_source: "pi_receive_time"
+    # Odom 10 Hz co the tre toi ~100 ms so voi lookup "now" cua Rotation Shim.
+    # Gia tri am day TF ve phia truoc; stale guard van dung TF neu mat odom.
+    tf_stamp_offset_ms: -100

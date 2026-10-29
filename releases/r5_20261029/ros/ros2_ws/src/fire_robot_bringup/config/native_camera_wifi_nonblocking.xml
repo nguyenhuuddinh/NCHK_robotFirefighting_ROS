@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Fast DDS 2.6.x. Camera child only, opt-in; ROS BEST_EFFORT/depth 1 unchanged.
+     A full socket may discard a datagram. Leave buffers/fragment size at defaults.
+     Built-in transports are disabled so this UDP descriptor actually takes effect.
+     Local camera subscribers also use UDP in this mode (no shared memory). -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>native_camera_wifi_udp</transport_id>
+      <type>UDPv4</type>
+      <non_blocking_send>true</non_blocking_send>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="native_camera_wifi" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>native_camera_wifi_udp</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>

@@ -1,0 +1,26 @@
+{
+  "release": "r5_20261029",
+  "source_pins": 364,
+  "packet_sha256": "0c54d9b797655ebca350b9ad21062791b1dd2a3fbab6949516983d3af9ffcdd0",
+  "firmware_repository": "https://github.com/nguyenhuuddinh/NCHK_robotFirefighting_mainBoard_esp32_S3",
+  "firmware_environment": "freenove_esp32_s3_wroom_n8r2_motor_trace_r5_link_home",
+  "firmware_elf_sha256": "ce19ecd3f4fa2bbabea4c7857723a6e0ba385b6088a271136db79d74f826eee5",
+  "model_name": "best_29_10_2026.pt",
+  "model_sha256": "28d3b25f70ccd0ea958a2abfa11f35804f5a82c2f711e4786d5bfa6cce46baca",
+  "confidence_threshold": 0.15,
+  "selected_maps": [
+    "fire_room_9_10_2026",
+    "fire_room_TN1"
+  ],
+  "laptop_static_source_hashes_verified": 95,
+  "pi_receipt_for_this_packet": "PENDING",
+  "robot_runtime_for_this_packet": "NOT_TESTED",
+  "inherited_stationary_qa": {
+    "delta": 50,
+    "affected_regression": 71
+  },
+  "model_launch_and_tools_offline_checks": 15,
+  "map_selection_offline_checks": 7,
+  "legacy_session_tools_offline_checks": 84,
+  "logs_build_cache_and_model_weights_included": false
+}

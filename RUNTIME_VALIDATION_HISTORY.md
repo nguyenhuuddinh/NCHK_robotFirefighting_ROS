@@ -723,3 +723,16 @@ Kiểm tra publication: xuất source từ Git index, dựng lại đúng packet
 449/449 pins byte-exact; 20 ca source/launch/runner/model chạy lại trên checkout
 xuất từ Git PASS, 154 Python AST và 7 bash syntax PASS, scan credential không
 có finding. Các kiểm tra này không phát sinh nghiệm thu phần cứng mới.
+
+
+## Map TN1/TN2 dùng cùng app source checkpoint — 2026-10-30
+
+Validation-Record: MAP_TN1_TN2_CHECKPOINT_20261030
+
+Lưu hai cặp YAML/PGM TN1_30_10_2026 và TN2_30_10_2026 đã có trên laptop,
+để mốc khôi phục app có dữ liệu bản đồ đi kèm. Không đổi pixel, origin hoặc
+tham số map; không sửa launch/Nav2/SLAM/R5. Map tạm temp.* giữ ngoài commit.
+Kiểm tra offline: hai YAML trỏ đúng PGM cùng thư mục, đọc được toàn ảnh xám;
+TN1 118 × 132 ô, TN2 115 × 115 ô, resolution 0,05 m, ngưỡng free/occupied
+hợp lệ và SHA256 ảnh/YAML được đối chiếu trước stage. Chưa nghiệm thu độ chính
+xác bản đồ hoặc chạy robot trong lượt publication.

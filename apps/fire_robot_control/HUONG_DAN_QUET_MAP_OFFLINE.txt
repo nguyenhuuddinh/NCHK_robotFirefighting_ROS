@@ -1,0 +1,134 @@
+FIRE ROBOT — HƯỚNG DẪN QUÉT/LƯU MAP OFFLINE
+Cập nhật: 30/10/2026. App f63e38d7… đã sync Pi và được chọn để nghiệm thu.
+Đã bổ sung phục hồi khi cleanup Pi cũ có lỗi: Xác minh dừng kiểm PID/lock hiện
+tại, rồi lấy STOP mới có telemetry. Không xóa lỗi cũ hoặc mở khóa khi chưa
+đủ bằng chứng. Journal hỗ trợ phiên mới bị thiếu receipt; hồ sơ cũ mất cả
+ownership vẫn cần kiểm tra riêng. Đóng app cũ và mở lại trước khi thử.
+Esc bỏ công cụ Goal/Initial Pose đang chọn; chỉ Q hoặc nút DỪNG PHIÊN dừng
+phiên. Đóng app cũ rồi mở lại để nhận bản mới. Esc không hủy goal đã gửi;
+dùng X để hủy tác vụ. Đã QA trên laptop và kiểm cài đặt tĩnh Pi qua LAN.
+Chưa nghiệm thu robot/WiFi của bản này. R5 và lệnh terminal cũ giữ nguyên.
+Hồ sơ phiên cũ được giữ; nếu BLOCKED, xem mục XÁC MINH DỪNG bên dưới.
+
+Bản mới sửa hộp mật khẩu bị mất ở supervisor. Nếu hiện “Xác thực Pi”, nhập
+mật khẩu tài khoản pi trong app; không gửi qua chat. Hủy hộp thoại yêu cầu
+STOP. Nếu chưa nhập khi helper đồng bộ giờ hết hạn, lần xác minh sẽ thất bại;
+không tự coi STARTING_PI là đã mở robot hoặc đã xác nhận dừng.
+
+Khi nhấn, nút lún/đổi màu; sau gửi hiện nhãn chờ và thông báo dưới cửa sổ.
+“Đã gửi yêu cầu” chưa phải kết quả thành công; xem trạng thái phiên và receipt.
+Kiểm tra lại hiện “Kiểm tra lần N: THÀNH CÔNG / CHƯA ĐẠT” và lý do;
+kết quả giữ trên màn hình đến lần kiểm tra tiếp theo hoặc khi mở phiên mới.
+
+Mở sẵn file này trước khi chuyển sang WiFi Pi. WiFi Pi báo “không có Internet”
+là bình thường; app liên lạc với Pi qua mạng nội bộ. Phiên vẫn cần qua kiểm
+tra kết nối và đồng bộ giờ giữa laptop/Pi; không bỏ qua lỗi để chạy.
+
+MỤC TIÊU LẦN THỬ NÀY: QUÉT → LÁI CHẬM → LƯU MAP → DỪNG SẠCH.
+
+1. CHUẨN BỊ
+- Rút cáp LAN giữa laptop và Pi; giữ nguyên các dây thiết bị trên robot.
+- Kết nối laptop với WiFi của Pi. Chấp nhận giữ kết nối dù không có Internet.
+- Bật robot theo cách đã dùng cho R5, đặt xe ở khu vực trống và có người giám sát.
+- Không chạy đồng thời các lệnh ROS cũ ở terminal.
+- Mở Fire Robot Control (ứng viên) từ menu ứng dụng. Nếu app đã mở và ở IDLE,
+  tiếp tục dùng cửa sổ đó. Không cần chọn map cũ khi mục đích là quét map mới.
+
+2. BẤM “QUÉT MAP” MỘT LẦN
+- App tự làm phần khởi động Pi, nhận pairing và chạy SLAM trên laptop.
+- Nếu app hỏi mật khẩu SSH/sudo của Pi, nhập ngay trong hộp thoại.
+- Chờ trạng thái MAPPING và khung “Bàn phím quét map”. Các bước khởi động/
+  đồng bộ giờ có thể cần chờ; không bấm nút khởi động lặp lại.
+- Trước khi lái, kiểm tra map/Lidar đang cập nhật. Camera dùng ảnh raw khi quét;
+  nhãn YOLO chưa có dữ liệu khi quét không có nghĩa là lỗi nhận diện lửa.
+
+3. ĐIỀU KHIỂN XE
+- Click vào bên trong khung “Bàn phím quét map”.
+  I         : tiến
+  ,         : lùi
+  J         : xoay trái
+  L         : xoay phải
+  K / Space : dừng xe
+- Tốc độ cấu hình: tiến 0,10 m/s; xoay 0,8 rad/s.
+- Lái từng đoạn ngắn, chậm, quét dần khu vực để bản đồ mở rộng.
+- Luôn bấm K hoặc Space và quan sát xe đã dừng trước khi chuyển sang bấm nút
+  trên app. Không chỉ nhả phím rồi mặc định xe đã dừng.
+- Giữ khung bàn phím mở khi còn muốn quét. Đóng khung này hoặc bấm Q trong
+  khung sẽ yêu cầu dừng cả phiên quét, không chỉ ẩn bàn phím.
+- Esc không dừng phiên và không đóng khung bàn phím. Trong RViz, dùng Esc
+  để bỏ công cụ đang chọn và trở về công cụ quan sát mặc định.
+
+4. LƯU MAP
+- Khi đã quét được khu vực cần dùng, bấm K/Space và quan sát xe dừng.
+- Bấm “Lưu map”. Nhập tên mới, ví dụ: phong_TN1_2910_lan1
+- Tên dùng chữ không dấu, số, dấu _ hoặc -, tối đa 64 ký tự. Không nhập đuôi
+  .yaml/.pgm. Nếu báo trùng tên, đặt tên khác; app không ghi đè map cũ.
+- Chờ hết “Đang lưu map”; map mới phải xuất hiện và được chọn trong danh sách.
+- App tạo hai file .yaml và .pgm trên LAPTOP, tại thư mục:
+  /media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/ros2_ws/src/fire_robot_navigation/maps
+- Giữ cả cặp file. Lưu map chưa kết thúc phiên quét.
+
+5. DỪNG PHIÊN
+- Dừng xe bằng K/Space, rồi bấm “DỪNG PHIÊN (Q)” trên app.
+- Giữ WiFi Pi và cửa sổ app trong lúc STOPPING; chờ xử lý dừng và cleanup.
+- Kết quả mong đợi: IDLE, “Dừng robot: ĐÃ XÁC NHẬN”, “Cleanup: SẠCH”, đồng thời
+  quan sát xe thực sự đã dừng. Không xem riêng dòng trên màn hình là kiểm chứng
+  vật lý đầy đủ.
+- Nếu chưa xác nhận dừng, cleanup lỗi hoặc BLOCKED: giữ lại log, không bấm
+  khởi động mới chồng lên phiên cũ; dùng mục KIỂM TRA LẠI bên dưới. Không xóa
+  pending.json để vượt khóa. Nếu xe chưa dừng hoặc
+  có chuyển động bất thường, dùng cách dừng khẩn cấp/ngắt nguồn động lực đã
+  quen dùng trên robot; không chờ chat phản hồi.
+- Sau khi kết thúc và xác nhận dừng, có thể đổi lại WiFi có Internet để gửi
+  kết quả/ảnh lỗi. Lần đầu hãy hoàn tất luồng quét/lưu/dừng trước khi thử chữa cháy.
+
+KIỂM TRA LẠI SAU PHIÊN QUÉT/CHỮA CHÁY LỖI
+- Khi phiên cũ đã kết thúc ở BLOCKED, nút Quét map đổi thành “Kiểm tra lại”.
+- Giữ kết nối Pi qua WiFi hoặc LAN, bấm “Kiểm tra lại” một lần.
+- Chờ “Đang kiểm tra…”; thao tác này không khởi động robot.
+- Nếu đạt, app về IDLE và nút trở lại “Quét map”. Log lỗi cũ vẫn được giữ.
+- Nếu đang dùng LAN để kiểm tra: rút LAN, chuyển sang WiFi Pi trước khi quét.
+- Sau khi xe đã dừng và phiên cũ kết thúc, nếu cần thì rút/cắm lại ESP32 theo
+  cách vẫn dùng. Bấm “Quét map” để tạo phiên mới; không tự quét sau kiểm tra.
+- Nếu không đạt: đọc lỗi, kiểm tra kết nối/tiến trình/receipt rồi bấm kiểm tra
+  lại. Thiếu xác nhận STOP, còn tiến trình hoặc reboot Pi sẽ tiếp tục giữ khóa.
+- Bản mới tách lỗi khởi động khỏi STOP/cleanup, có cửa sổ chờ hữu hạn sau
+  seal timeout để thu bằng chứng dừng. Không nới ngưỡng TF hoặc bỏ watchdog.
+  Lỗi TF/USB thực tế có thể lặp lại; không xem static sync là đã hết lỗi.
+
+XÁC MINH DỪNG KHI HỒ SƠ CŨ THIẾU STOP
+- Kiểm tra lại chỉ đọc; với hồ sơ đang giữ từ bản 6734 có thể báo
+  RECOVERY_STOP_NOT_CONFIRMED. Không xóa pending để vượt khóa.
+- Nút “Xác minh dừng trên robot” là thao tác riêng: mở I/O và gửi
+  STOP/OFF/home để lấy proof mới; không chạy nhiệm vụ, servo có thể về home.
+- Chỉ dùng khi bạn ở cạnh, đã quan sát xe dừng và sẵn sàng cho OFF/home.
+  Rút LAN, nối WiFi Pi đúng profile, không chạy terminal R5 đồng thời.
+- Bấm một lần; nhập mật khẩu SSH/sudo nếu được hỏi. Giữ kết nối/app cho đến
+  khi hoàn tất. Đây chưa phải hành vi đã nghiệm thu phần cứng của bản mới.
+- Nếu Pi đã reboot: app kiểm boot mới/tiến trình/lock và pairing cũ, rồi
+  chỉ cho thử STOP mới. Reboot không tự được coi là robot đã dừng. Nếu Pi
+  reboot thêm giữa chừng, app giữ BLOCKED và báo mã lỗi rõ; chờ kiểm tra lại.
+- Chỉ khi dừng và cleanup đủ bằng chứng, app mới archive hồ sơ cũ, giữ liên
+  kết kết quả mới và trở về IDLE. Nếu chưa đạt, giữ log/lý do, không quét chồng.
+
+HÌNH XE VÀ ĐƯỜNG
+- Xe dùng URDF/TF thật, nhìn từ trên xuống; cần map/TF hợp lệ.
+- Đường xanh là kế hoạch Nav2 gần nhất, chỉ có ở chế độ chữa cháy khi đã có
+  plan; chưa phải vệt đã đi. Quét map thủ công không có đường Nav2.
+
+NẾU CÓ LỖI KHI OFFLINE
+- LAN_MUST_BE_DISCONNECTED: kiểm tra đã rút cáp LAN.
+- WIFI_ADDRESS_OR_ROUTE_MISMATCH / WIFI_ROUTE_NOT_AVAILABLE: mạng chưa đúng
+  profile WiFi Pi (Pi 10.0.0.1, laptop 10.0.0.253). Không bỏ qua kiểm tra này.
+- Clock/STARTING_PI/WAIT_PI_IO/WAIT_SLAM lỗi hoặc timeout: bấm dừng phiên, chờ
+  kết quả; ghi lại nguyên văn lỗi và giai đoạn. Không chạy thêm lệnh ROS cũ
+  hay khởi động phiên mới chồng lên phiên chưa dọn xong.
+- Chưa thấy camera/map: không lái thử để “xem có chạy không”. Dừng và lưu lỗi.
+- Chụp màn hình lỗi, ghi tên map/thao tác vừa làm. Khi có Internet trở lại,
+  gửi ảnh và đường dẫn log app hiển thị. Không gửi mật khẩu hoặc pairing secret.
+
+LOG NẰM TRÊN LAPTOP
+- Log phiên: ~/.local/state/fire_robot_control/session_*/
+- Trong đó có laptop_runner.log, laptop/ và desktop_receipt.json (khi đã ghi).
+- Nếu lỗi mở app: hộp thoại chỉ đường dẫn /tmp/fire-robot-launch-*.log.
+- Không cần copy pairing thủ công hoặc chạy “Terminal 1/Terminal 2” trong luồng app.

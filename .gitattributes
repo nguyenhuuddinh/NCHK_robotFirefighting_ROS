@@ -1,3 +1,8 @@
 # Preserve the exact source bytes covered by the R5 SHA256 manifests.
 /releases/r5_20261029/ros/** -text
 /releases/r5_20261029/deployment/** -text
+# Keep app source reconstruction identical to the pinned desktop packet.
+/apps/fire_robot_control/** -text
+# Preserve the source-pinned trailing lines of these existing snapshot files.
+/apps/fire_robot_control/services/session_model.py whitespace=-blank-at-eof
+/apps/fire_robot_control/tests/test_session_model.py whitespace=-blank-at-eof

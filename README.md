@@ -2,6 +2,13 @@
 
 Robot chữa cháy dùng ROS 2 Humble: Raspberry Pi thu thập camera/Lidar và giao tiếp ESP32; laptop chạy Nav2, YOLO, RViz và điều phối hành vi.
 
+## Ứng dụng RViz và camera
+
+[Fire Robot Control](apps/fire_robot_control/README.md) cung cấp giao diện quan sát,
+quét/lưu/chọn map và quản lý phiên. Mốc source app ngày 30/10/2026 dùng inflation
+0,30 m và model ngoài repo `best_minireplay.pt`; giữ nguyên bộ R5 bên dưới.
+Xem [hướng dẫn khôi phục và giới hạn QA](apps/fire_robot_control/docs/SOURCE_CHECKPOINT_2026-10-30.md).
+
 ## Bản R5 hiện hành
 
 Source R5 automatic ngày 29/10/2026 nằm trong **[releases/r5_20261029](releases/r5_20261029/README.md)**. Đây là snapshot đầy đủ của packet `0c54d9b79765`, dùng model `best_29_10_2026.pt` với confidence0,15 và firmware ESP32 `ce19ecd3f4fa`.

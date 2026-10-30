@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+build/
+artifacts/
+!docs/
+docs/qa_evidence/

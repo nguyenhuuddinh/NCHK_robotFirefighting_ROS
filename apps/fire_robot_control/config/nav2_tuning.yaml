@@ -1,0 +1,6 @@
+# App-only tuning. The measured footprint, padding, collision checks and
+# controller settings are inherited unchanged from the sealed R5 parent.
+local_costmap:
+  inflation_radius: 0.30
+global_costmap:
+  inflation_radius: 0.30

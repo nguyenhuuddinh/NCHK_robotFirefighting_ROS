@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Fire Robot Control (ứng viên)
+Comment=Giao diện RViz và camera cho robot chữa cháy
+Exec=bash "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/apps/fire_robot_control/launchers/start_candidate_desktop.sh"
+Icon=applications-science
+Terminal=false
+Categories=Science;Robotics;

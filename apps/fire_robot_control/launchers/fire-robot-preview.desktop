@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Fire Robot - Bản xem thử
+Comment=Xem RViz và bản đồ với dữ liệu mô phỏng
+Exec=/bin/bash "/media/huudinh/New Volume/esp32/NCHK_robotFirefighting_ROS/apps/fire_robot_control/launchers/start_preview.sh"
+Icon=applications-science
+Terminal=false
+Categories=Science;

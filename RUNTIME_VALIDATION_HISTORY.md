@@ -695,3 +695,31 @@ NEXT_STEP=REVIEW_MISSION_SHUTDOWN_PATCH_THEN_BOUNDED_MATCHED_JPEG_SCENE_CAPTURE
 > NEXT_STEP=USER_ONE_9F6734_AUTOMATIC_DELTA_CAPTURE_STATIONARY_PROOF_AND_PUMP_ADMISSION.
 
 Các mục dưới là lịch sử trước packet9f6734; runtime phun R5 chưa PASS.
+
+
+## App source checkpoint trước chỉnh đường đi — 2026-10-30
+
+Validation-Record: APP_SOURCE_CHECKPOINT_20261030_6133
+
+Lưu source giao diện RViz/camera, quản lý quét/lưu/chọn map và phiên chữa cháy,
+phục hồi STOP/cleanup, X/Goal và quy tắc Q dừng/Esc bỏ công cụ. Packet app
+6133ff387973f5c7ccc6b245b6acaa1c6d74126ea3f2f5b0eb4f75a376f60426 dùng inflation
+local/global 0,30 m, model best_minireplay.pt; giữ nguyên 364 file parent R5,
+footprint 34 × 20 cm, padding 1,5 cm, watchdog và mapping runner.
+
+Bằng chứng có trước publication: sửa X/Goal 798 PASS + 2 SKIP; bản inflation
+0,40 m 184 PASS + 2 SKIP; delta 0,30 m 21 PASS và native CTest PASS. Không cộng
+các suite này thành một tổng runtime. Static laptop/Pi 95/103 file đúng hash;
+449 source pins khớp. Thông tin packet/hash, giới hạn và cách khôi phục nằm ở
+apps/fire_robot_control/checkpoint.json và docs/SOURCE_CHECKPOINT_2026-10-30.md
+trong thư mục app. Raw log và artifact giữ cục bộ, ngoài Git.
+
+Đường Nav2 đổi bên/vòng cua rộng vẫn OPEN, chưa đổi BT hoặc lookahead. Đây là
+SOURCE/BUILD/STATIC checkpoint, không nghiệm thu toàn bộ robot. Lượt publication
+chỉ kiểm source, tái dựng packet và kiểm tra Git; không chạy ROS/xe/bơm, SSH Pi,
+NTP hoặc flash. Không stage mục observer R5 đã có từ công việc khác.
+
+Kiểm tra publication: xuất source từ Git index, dựng lại đúng packet6133 với
+449/449 pins byte-exact; 20 ca source/launch/runner/model chạy lại trên checkout
+xuất từ Git PASS, 154 Python AST và 7 bash syntax PASS, scan credential không
+có finding. Các kiểm tra này không phát sinh nghiệm thu phần cứng mới.

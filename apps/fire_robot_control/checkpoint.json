@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "validation_record": "APP_SOURCE_CHECKPOINT_20261030_6133",
+  "source_packet": "6133ff387973f5c7ccc6b245b6acaa1c6d74126ea3f2f5b0eb4f75a376f60426",
+  "parent_r5_manifest_sha256": "0c54d9b797655ebca350b9ad21062791b1dd2a3fbab6949516983d3af9ffcdd0",
+  "rollback_tag": "desktop-inflation-030-source-pass-v1",
+  "binary_sha256": "83dde16198c554c3c4a3493bac16f697a2864532c149e303cb39a6bac52fbfad",
+  "archive_sha256": "c83293adb28810156ad022c842fa3163fc0afffb11f6676cdf66738d6242af4e",
+  "artifacts_tracked_in_git": false,
+  "model_weights_tracked_in_git": false,
+  "app_model": {
+    "name": "best_minireplay.pt",
+    "sha256": "e792f896faf3fb584842898e93913cdfd0fc33b5d48d620163fadd15f02212c4"
+  },
+  "parameters": {
+    "local_inflation_radius": 0.3,
+    "global_inflation_radius": 0.3,
+    "local_cost_scaling_factor": 3.0,
+    "global_cost_scaling_factor": 5.0,
+    "lookahead_time": 2.0
+  },
+  "validation": {
+    "source_030_tests_pass": 21,
+    "native_ctest_pass": true,
+    "laptop_installed_files": 95,
+    "pi_installed_files": 103,
+    "source_pins": 449,
+    "full_robot_acceptance": "OPEN",
+    "path_switching_and_wide_turn": "OPEN_NOT_CHANGED",
+    "publication_staged_packet_reconstruction": "PASS_449_PINS_EXACT",
+    "publication_exported_source_tests_pass": 20,
+    "publication_python_ast_pass": 154,
+    "publication_shell_syntax_pass": 7
+  },
+  "local_evidence_sha256": {
+    "docs/qa_evidence/task_cancel_fix_20261030/summary.json": "43202f3446e1776ed155cfbe7bf2c04e2c1b13539b25a60f5f920a4cebcbb85d",
+    "docs/qa_evidence/task_cancel_fix_20261030/full_pytest.xml": "c0d9aebb28b69b252c1d5a92547f033e2899809383d0764d1fa55b35475d9d77",
+    "docs/qa_evidence/task_cancel_fix_20261030/final_acceptance.xml": "8b620b2f2afa3c8d93b243ba2b023cb324e39b76e6cca43c203a5e7c7c58e229",
+    "docs/qa_evidence/task_cancel_fix_20261030/packaged_final_smoke.xml": "5486c191537691a9ae88ae226594c82ac6e083ef07439448a1165de8749fc6a6",
+    "docs/qa_evidence/nav_inflation_20261030/summary.json": "983498a1ba614df59a16550c322222982f439b2ee1dbc112b36b3b992cd10aef",
+    "docs/qa_evidence/nav_inflation_20261030/regression.xml": "fba8a6ecce3ae0213dc28472469df92cfafb9693a6579eced92875bf56ac2741",
+    "docs/qa_evidence/nav_inflation_20261030/mapping_isolated.xml": "0a4f5b182846da256bbb1acfbf2a7c01f80c9a1bd985aeee2c528c983ee882fb",
+    "docs/qa_evidence/nav_inflation_20261030/packaged_smoke.xml": "d9f065deac90cd7795bbfa82849356946dda6b06ec5f2820e6c885dc964a0acc",
+    "docs/qa_evidence/nav_inflation_20261030/selection.json": "63cb82b45c01ca94dfc46ebe670d4d3264bb1eeaac70cce868c3e635fb1039c6",
+    "docs/qa_evidence/nav_inflation_030_20261030/summary.json": "084a815c6d821d309bba6820793da4d24ab81cf1203d32570018a00889f332ab",
+    "docs/qa_evidence/nav_inflation_030_20261030/config_tests.xml": "c5c179737960d89b1951a0734cdedaeff86207b99bc4568d30b4f474e3bc4b24",
+    "docs/qa_evidence/nav_inflation_030_20261030/packaged_smoke.xml": "03d3ac5ea8df9b5143c140b8c407fbfb54e743e95497562e49b940737611c110",
+    "docs/qa_evidence/nav_inflation_030_20261030/selection.json": "2353aa1d2c7305b977753046e9c899cdd2d97072ade7b75d72233282485b3f90",
+    "docs/qa_evidence/nav_inflation_030_20261030/release_review.json": "912377a7751a66ec07f551ff30cb400cd4ada49bb135fa16a3f2d52ea0e2e11b",
+    "docs/qa_evidence/github_checkpoint_20261030/staged_source_verification.json": "6dd070e2b829e9f1102e680b0c9f26cb26b8aea690bf8d3310f2c1941582119a",
+    "docs/qa_evidence/github_checkpoint_20261030/exported_source_tests.xml": "caf114f86ec0a4d74fa0a65740e45e1aab03f07096df7db9d751feadbb5fd47a",
+    "docs/qa_evidence/github_checkpoint_20261030/maps_verification.json": "1f3ce92a127836f70daaf25a97c663856e68a4d1280a98262aa01de351c19e5d"
+  }
+}

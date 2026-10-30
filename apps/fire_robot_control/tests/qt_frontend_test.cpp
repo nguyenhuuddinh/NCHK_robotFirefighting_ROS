@@ -2,6 +2,7 @@
 #include "../native_rviz/frontend_bootstrap.hpp"
 #include "../native_rviz/strict_json.hpp"
 #include "../native_rviz/goal_admission.hpp"
+#include "../native_rviz/navigation_recovery_label.hpp"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -26,7 +27,20 @@ private slots:
   void stopBeforeConnectionStillDeliversQ();
   void rejectsAmbiguousAndInvalidReports();
   void goalRequiresCurrentAppAdmission();
+  void navigationHoldShowsRecoveryWithoutGrantingGoal();
 };
+
+void FrontendTest::navigationHoldShowsRecoveryWithoutGrantingGoal()
+{
+  QVERIFY(navigationRecoveryLabel({}).isEmpty());
+  for (const auto & state : {"WAIT_COMMAND", "WAIT_STOP", "VERIFYING", "REACQUIRING", "BLOCKED"}) {
+    QJsonObject recovery{{"state", state}, {"reason", "NAV_COMMAND_GAP"}};
+    QVERIFY(!navigationRecoveryLabel(recovery).isEmpty());
+    QJsonObject report{{"app_navigation_recovery", recovery}};
+    QVERIFY(!appGoalAllowed(report, .1));
+  }
+  QVERIFY(navigationRecoveryLabel({{"state", "RESUMED"}}).isEmpty());
+}
 
 void FrontendTest::goalRequiresCurrentAppAdmission()
 {

@@ -25,6 +25,13 @@ def patch_runner(text):
     ]
     for old, new in changes:
         text = replace_once(text, old, new)
+    # Recovery rebuilds only mission, but must use the SAME app wrappers as
+    # initial startup. Calling R5 commands directly silently drops app fixes.
+    text = replace_once(text,
+        "lambda path,nonce,after_pulse:commands(a.map,a.rviz,gate2=True,automatic=True,\n"
+        "                    auto_start=path,auto_session=nonce,auto_packet=packet,recovery=True,recovery_after_pulse=after_pulse),auto_start)",
+        "lambda path,nonce,after_pulse:desktop.commands(commands(a.map,a.rviz,gate2=True,automatic=True,\n"
+        "                    auto_start=path,auto_session=nonce,auto_packet=packet,recovery=True,recovery_after_pulse=after_pulse)),auto_start)")
     return text
 
 

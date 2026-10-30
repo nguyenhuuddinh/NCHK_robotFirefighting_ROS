@@ -746,3 +746,17 @@ Sửa kiểm tra cost_scaling_dist chỉ áp dụng cho local costmap. Giữ foo
 padding, collision detection và R5. QA 24 ca source/launch/model và smoke IDLE
 PASS; Qt CTest, static laptop 95 file và Pi 103 file PASS theo báo cáo app.
 Chưa nghiệm thu khoảng hở robot thực; đổi bên và vòng cua rộng còn OPEN.
+
+## App data return recovery — 2026-10-31
+
+Validation-Record: APP_DATA_RETURN_RECOVERY_20261031
+
+Sửa giữ dừng Goal sau gap odom/mission/ARM hoặc query ROS và bảo toàn wrapper
+app khi recovery mission; dữ liệu hiện hành cùng identity, STOP/OFF và owner
+phải được xác minh lại trước khi tiếp tục. Thêm chẩn đoán pose và yêu cầu
+AMCL cập nhật khi đứng yên, không giả pose hoặc bỏ guard. Giữ R5, mapping,
+watchdog, TF, QoS và hành vi phun 3 lượt x 6 giây từ ACK PWM ON.
+QA tổng hợp 982 PASS, 2 SKIP theo ID duy nhất; full 980/2, lượt bị ảnh hưởng
+452/2 và release 30 PASS, không cộng rerun. Qt CTest, smoke gói, static
+laptop 95 file/Pi 103 file PASS. Packet app 95e9facbc7d2 đã chọn/sync Pi.
+Chưa nghiệm thu xe/bơm thật; pending phiên lỗi cũ giữ để xác minh STOP mới.

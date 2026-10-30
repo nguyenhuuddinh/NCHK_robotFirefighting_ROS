@@ -35,6 +35,7 @@
 #include <QPushButton>
 #include "button_style.hpp"
 #include "goal_admission.hpp"
+#include "navigation_recovery_label.hpp"
 #include <QStatusBar>
 #include <QTimer>
 #include <QThread>
@@ -506,6 +507,8 @@ SessionUi * configureUi(QMainWindow & frame, DemoData * demo,
             cancelReason.contains("CANCEL_REJECTED") || cancelReason.contains("CANCEL_UNCONFIRMED") ?
             QString::fromUtf8("Chưa xác nhận hủy Goal · bấm Q để dừng và kiểm tra phiên") :
             QString::fromUtf8("Đang hủy tác vụ · chờ dừng / OFF / HOME"));
+        } else if (!navigationRecoveryLabel(report.value("app_navigation_recovery").toObject()).isEmpty()) {
+          taskLabel->setText(navigationRecoveryLabel(report.value("app_navigation_recovery").toObject()));
         } else {
           static const QHash<QString, QString> labels = {
             {"STARTUP", QString::fromUtf8("Khởi động")},

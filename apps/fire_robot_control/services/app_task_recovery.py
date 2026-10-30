@@ -4,6 +4,7 @@ No ROS context or actuator output is created here. The existing cancel guard
 still sends exact UUID actions and every motion/STOP admission stays gated.
 """
 import uuid
+import time
 
 from fire_robot_mission.operational_session_core import OperationalSessionCore, obj
 from fire_robot_mission.operational_handback import OperationalHandback
@@ -13,6 +14,8 @@ from fire_robot_mission.cycle_endpoint import CycleEndpoint
 from fire_robot_mission.live_nav_stop_gateway import LiveNavStopCore
 from fire_robot_mission.cycle_blocked_goal import BlockedGoalCancel
 from fire_robot_mission.nav2_cancel_guard import make_cancel_request
+from fire_robot_mission.actuator_freshness import fresh_off, fresh_motion_off
+from .app_nav_recovery import AppNavRecovery
 
 
 class AppSessionCore(OperationalSessionCore):
@@ -23,9 +26,12 @@ class AppSessionCore(OperationalSessionCore):
         self.app_clear_seen = None
         self.app_cancel_id = None
         self.app_cancel_targets = set()
+        self.app_navigation_session = uuid.uuid4().hex
+        self.app_navigation_epoch = 0
 
     def _key(self, key, now):
         if key == 'X' and self.armed and not self.closed and self.fault is None:
+            self.app_navigation_epoch += 1
             self.app_x_latched = True
             self.app_clear_since = None
             self.app_clear_seen = None
@@ -71,6 +77,8 @@ class AppSessionCore(OperationalSessionCore):
 
     def report(self, now):
         report = super().report(now)
+        report['app_navigation_lease'] = dict(session=self.app_navigation_session,
+                                             cancel_epoch=self.app_navigation_epoch)
         cycle = self.cycles.current
         if self.cancel_requested and cycle is not None and not self.p_used:
             if self.app_cancel_id is None:
@@ -84,10 +92,12 @@ class AppSessionCore(OperationalSessionCore):
             request_id=self.app_cancel_id, goal_uuids=sorted(self.app_cancel_targets))
             if self.app_cancel_id and cycle is None else None)
         gateway = obj(self.get('gateway', now))
+        recovery = obj(gateway.get('app_navigation_recovery'))
         state = gateway.get('state')
         waiting = bool(self.navigation_cancel_uuid or cycle is not None)
         eligible = (not waiting and self.armed and not self.closed and not self.fault
                     and not (self.input_hold or self.identity_hold or self.graph_hold)
+                    and recovery.get('state') not in ('WAIT_COMMAND', 'WAIT_STOP', 'VERIFYING', 'REACQUIRING', 'BLOCKED')
                     and (state in ('NAVIGATION', 'WAITING_FOR_INPUT', 'ARMING')
                          and not gateway.get('stop_reason')
                          or gateway.get('normal_rearm_ready') is True
@@ -96,6 +106,11 @@ class AppSessionCore(OperationalSessionCore):
             reason='READY' if eligible else 'WAIT_TASK_STOP_OR_GATEWAY_READY',
             cancel_pending=bool(self.navigation_cancel_uuid or self.cancel_requested),
             fire_suppressed=self.app_x_latched)
+        if report.get('phase') == 'NAVIGATION' and not waiting:
+            if recovery.get('state') in ('WAIT_COMMAND', 'WAIT_STOP', 'VERIFYING', 'REACQUIRING', 'BLOCKED'):
+                report['app_navigation_recovery'] = recovery
+            elif gateway.get('released') is True or gateway.get('stop_reason'):
+                report['app_navigation_recovery'] = dict(state='BLOCKED', reason=gateway.get('stop_reason'))
         return report
 
 
@@ -122,7 +137,7 @@ class AppHandback(OperationalHandback):
         return super().step(session, now, **kwargs)
 
 
-class AppNavCore(LiveNavStopCore):
+class AppNavCore(AppNavRecovery, LiveNavStopCore):
     def _normal_terminal_result(self, now):
         if self.status_at is None or now < self.status_at:
             return None
@@ -140,6 +155,8 @@ class AppNavCore(LiveNavStopCore):
                             mission_count, odom_count, arm_count):
         args = (now, blockers, raw_ok, nav_ok, safety_ok, stationary, cmd_zero,
                 raw_count, status_count, mission_count, odom_count, arm_count)
+        if self._app_resume_same_goal(*args):
+            return True
         session = getattr(self, 'app_operator_session', {})
         if (not getattr(self, 'app_session_current', False) or session.get('cycle') is not None
                 or session.get('navigation_cancel_uuid') is not None):
@@ -289,7 +306,7 @@ class AppCycleEndpoint(CycleEndpoint):
             return [b for b in blockers if b not in semantic], goal
         core._preflight = preflight
 
-    def _session(self, now):
+    def _session(self, now, *, allow_input_pause=False):
         p = self.participant
         session = p.get('operator_session', now) or {}
         identity, received = p.inputs.get('identity', (None, None))
@@ -300,7 +317,8 @@ class AppCycleEndpoint(CycleEndpoint):
             and type(session.get('schema_version')) is int and session['schema_version'] == 1
             and session.get('scope') == 'R5_SESSION_INTENT_ONLY'
             and session.get('armed') is True and session.get('closed') is False
-            and not any(session.get(k) for k in ('input_hold', 'identity_hold', 'graph_hold'))
+            and session.get('graph_hold') is not True
+            and (allow_input_pause or not any(session.get(k) for k in ('input_hold', 'identity_hold')))
             and session.get('fault') is None and session.get('armed_identity') == list(self.continuity.bound or ()))
         return session if good else None
 
@@ -334,13 +352,48 @@ class AppCycleEndpoint(CycleEndpoint):
         return request['goal_uuid']
 
     def before_step(self, now):
+        previous = getattr(self.node, self.core_attr)
+        gap_stop = (self.role == 'gateway' and getattr(previous, 'app_nav_ticket', None) is not None
+                    and previous.stop_latched and previous.stop_reason == 'NAV_INPUT_OR_TOPOLOGY_LOST')
+        saved_stop = (previous.stop_since, previous.released) if gap_stop else None
         super().before_step(now)
         if self.role != 'gateway':
             return
+        now = time.monotonic()
         core = getattr(self.node, self.core_attr)
+        if gap_stop and core is previous and not core.stop_latched:
+            # R5's separate short identity/input-pause lane must not skip this
+            # Nav2-gap ticket's new-command/continuous-proof requirement.
+            core.stop_latched = True
+            core.stop_reason = 'NAV_INPUT_OR_TOPOLOGY_LOST'
+            core.stop_since, core.released = saved_stop
+        core.app_recovery_clock = time.monotonic
+        core.app_recovery_checked_at = now
         session = self._session(now)
         core.app_session_current = session is not None
         core.app_operator_session = session or {}
+        # An authenticated operator may pause ARM while inputs are late. Keep
+        # only its SAME intent token through that pause; _session() above and
+        # the full R5 preflight must be current again before recovery can move.
+        intent_session = self._session(now, allow_input_pause=True)
+        lease = obj(obj(intent_session).get('app_navigation_lease'))
+        runtime = obj(obj(intent_session).get('runtime_rebind'))
+        # Pin this recovery to one operator instance, X epoch, device identity,
+        # runtime generation and the endpoint GIDs already validated by R5.
+        valid_lease = (intent_session is not None and valid_uuid(lease.get('session'))
+            and type(lease.get('cancel_epoch')) is int and lease['cancel_epoch'] >= 0
+            and intent_session.get('cycle') is None and intent_session.get('navigation_cancel_uuid') is None
+            and not obj(intent_session.get('app_goal_admission')).get('cancel_pending')
+            and runtime.get('held') is not True and not runtime.get('cancel_pending')
+            and runtime.get('generation') == runtime.get('applied_generation')
+            and not self.node.get_publishers_info_by_topic('/pump_cmd')
+            and (self.participant.context is None or self.participant.phase == 'COMMITTED'))
+        core.app_recovery_binding = ((lease['session'], lease['cancel_epoch'],
+            tuple(self.continuity.bound), runtime.get('generation'),
+            tuple(sorted(self.pins.items()))) if valid_lease else None)
+        actuator, received = self.participant.inputs.get('actuator', (None, None))
+        off_check = fresh_motion_off if obj(session).get('navigation_only') is True else fresh_off
+        core.app_recovery_off = (session is not None and off_check(actuator, received, now))
         if session is None:
             core.app_idle_since = core.app_idle_seen = None
             core.app_terminal_history = {}
@@ -375,3 +428,23 @@ class AppCycleEndpoint(CycleEndpoint):
         if self.role == 'guard':
             self.blocked_goals = AppBlockedGoalCancel()
         self._bind_guard_preflight()
+
+    def decorate(self, payload, now, **kwargs):
+        payload = super().decorate(payload, now, **kwargs)
+        if self.role == 'gateway':
+            import json
+            stop = (payload.get('cycle_goal_uuid'), payload.get('stop_reason'))
+            if stop != getattr(self, 'app_stop_logged', None):
+                self.app_stop_logged = stop
+                if stop[1]:
+                    self.node.get_logger().info('APP_NAV_STOP '+json.dumps(dict(
+                        goal_uuid=stop[0], reason=stop[1], blockers=payload.get('blockers'),
+                        state=payload.get('state'), raw_publishers=payload.get('raw_publishers')),
+                        allow_nan=False))
+            recovery = obj(payload.get('app_navigation_recovery'))
+            transition = (recovery.get('state'), recovery.get('goal_uuid'), recovery.get('reason'))
+            if transition != getattr(self, 'app_recovery_logged', None):
+                self.app_recovery_logged = transition
+                if recovery:
+                    self.node.get_logger().info('APP_NAV_RECOVERY '+json.dumps(recovery, allow_nan=False))
+        return payload

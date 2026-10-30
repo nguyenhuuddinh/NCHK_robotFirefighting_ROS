@@ -1,5 +1,46 @@
 # Fire Robot Control
 
+> **Hiện hành — 95e9facb, ngày 31/10/2026.**
+> Đã sửa giữ dừng vĩnh viễn khi odom/mission/ARM hoặc query ROS trễ rồi hồi
+> phục; cùng Goal/cùng identity chỉ chạy lại sau dữ liệu mới và STOP/OFF ổn
+> định một giây. Recovery mission giữ wrapper app; observer có chẩn đoán pose
+> chi tiết và yêu cầu mẫu AMCL thật khi xe đang đứng yên, không bỏ guard.
+> **982 ca PASS, 2 SKIP theo ID duy nhất**; build/CTest/smoke gói cuối đạt.
+> Static laptop/Pi 95/103 file đúng hash, đã sync LAN và chọn gói. R5 364 file,
+> quét map/model/tuning nguyên byte. Bơm giữ tối đa 3 lượt liên tiếp × 6 giây
+> từ ACK ON, OFF/HOME giữa lượt; hai ca bus có/không Goal đã đạt.
+> Chưa thử xe/bơm thật. Pending lỗi 02:31 giữ nguyên; đóng/mở lại app, kết nối
+> Pi và dùng Xác minh dừng trên robot để lấy STOP mới trước khi chạy phiên mới.
+> [Bản sửa, QA và giới hạn](docs/DATA_RETURN_RECOVERY_FIX_2026-10-31.md).
+> Các mục dưới là lịch sử.
+
+> **Baseline runtime 02:21–02:31 ngày 31/10: lỗi trên 62c78ddf trước sửa.**
+> QA mới có 12 FAIL chức năng: dữ liệu odom/mission/ARM trở lại vẫn giữ
+> Goal dừng, gap chồng bị kẹt, và dựng lại mission bỏ qua wrapper app.
+> Epoch đổi lần hai còn chờ pose; Q chưa xác nhận STOP do epoch cũ.
+> [Bằng chứng, ma trận 32 ca và phạm vi](docs/QA_DATA_RETURN_0231_2026-10-31.md).
+> Lượt này chưa sửa runtime; kết quả source/static bên dưới thuộc phạm vi cũ.
+
+> **Bản trước — 62c78ddf, ngày 31/10/2026.**
+> Phục hồi cùng Goal sau khi Nav2 tạm ngừng phát vận tốc trong recovery Wait:
+> giữ STOP, nhận lệnh mới và proof dừng/OFF ổn định 1 giây rồi xác minh lại
+> publisher mới. X/Q vẫn ưu tiên; UI hiện rõ chờ/phục hồi/giữ dừng.
+> 924 ca PASS, 2 SKIP theo test ID duy nhất, gồm 112 ca phục hồi mới; CTest
+> và smoke gói đạt. Static laptop/Pi 95/103 file khớp, đã sync LAN và chọn gói.
+> R5 gốc, mapping, model và tuning 0,25/0,30 m giữ nguyên. Chưa thử xe thật.
+> Đóng app cũ và mở lại để dùng bản mới.
+> [Cơ chế, bằng chứng QA và cách thử](docs/NAV2_WAIT_RECOVERY_FIX_2026-10-31.md).
+
+> **Bản trước — 33f9f7db, ngày 31/10/2026.**
+> Giảm riêng global inflation 0,30 → 0,25 m; local giữ 0,30 m và toàn bộ
+> tham số giảm tốc/va chạm, footprint/padding, R5 và mapping giữ nguyên.
+> 24 ca kiểm tra và CTest đạt, static laptop/Pi 95/103 file đạt; đã sync/chọn
+> gói mới. Chưa đo khoảng hở robot; đường đổi bên/vòng cua rộng vẫn OPEN.
+> Đóng app cũ rồi mở lại để dùng bản mới.
+> [Thay đổi và QA](docs/NAV2_GLOBAL_INFLATION_025_2026-10-31.md).
+> Tag khôi phục bản 0,30 m vẫn là `desktop-inflation-030-source-pass-v1`.
+> Các mục dưới mô tả mốc source và lịch sử trước thay đổi này.
+
 > **Mốc source hiện tại — 6133ff38, ngày 30/10/2026.**
 > App gom RViz/camera, quét/lưu/chọn map và quản lý phiên; Q dừng phiên,
 > Esc bỏ công cụ RViz, X hủy tác vụ rồi nhận Goal mới sau khi đủ bằng chứng.

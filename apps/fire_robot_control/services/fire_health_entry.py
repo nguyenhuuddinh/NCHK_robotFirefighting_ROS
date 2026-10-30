@@ -1,9 +1,10 @@
-"""Fire-app-only instrumentation around unchanged R5 health decisions/schedule."""
+"""App health diagnostics and actual AMCL refresh; R5 readiness stays intact."""
 import argparse
 from pathlib import Path
 import os
 import sys
 import time
+import math
 
 from .diagnostic_stream import DiagnosticStream
 
@@ -15,7 +16,16 @@ def health_command(*args):
 def instrument(original, stream, session, packet):
     class Observed(original):
         def __init__(self, *args, **kwargs):
+            self._app_pose_age = None
+            self._app_reading_pose = False
+            self._app_pose_detail = None
             super().__init__(*args, **kwargs)
+            self._app_pose_refresh = None
+            if getattr(self.core, 'role', None) == 'laptop':
+                from std_srvs.srv import Empty
+                from .app_pose_refresh import PoseRefresh
+                self._app_pose_refresh = PoseRefresh(
+                    self.create_client(Empty, '/request_nomotion_update'), Empty.Request)
             report = self.core.report
             self._app_detail = {}
             def observed(now, **fields):
@@ -34,19 +44,51 @@ def instrument(original, stream, session, packet):
                 return row
             self.core.report = observed
 
+        def age(self, message):
+            value = super().age(message)
+            if self._app_reading_pose:
+                self._app_pose_age = value
+            return value
+
+        def pose(self, message):
+            self._app_pose_age = None
+            self._app_reading_pose = True
+            try:
+                super().pose(message)
+            finally:
+                self._app_reading_pose = False
+            q = message.pose.pose.orientation
+            values = [q.x, q.y, q.z, q.w, *message.pose.covariance,
+                      message.pose.pose.position.x, message.pose.pose.position.y]
+            norm = sum(v*v for v in (q.x, q.y, q.z, q.w))
+            age = self._app_pose_age
+            self._app_pose_detail = dict(frame_id=message.header.frame_id,
+                age_s=age if age is not None and math.isfinite(age) else None,
+                quaternion_norm2=norm if math.isfinite(norm) else None,
+                frame_ok=message.header.frame_id == 'map',
+                stamp_ok=age is not None and -.02 <= age <= .5,
+                finite=all(math.isfinite(v) for v in values),
+                quaternion_ok=.9 <= norm <= 1.1,
+                policy_valid=self.core.inputs.get('pose', (False, None))[0] is True)
+
         def sample(self):
             start = time.monotonic()
             row = super().sample()
             finished = time.monotonic()
+            if self._app_pose_refresh is not None:
+                self._app_pose_refresh.step(row, self._app_detail,
+                    self.core.inputs.get('pose', (None, None))[1], finished)
             if stream.due():
                 detail = self._app_detail
                 stream.emit(dict(schema_version=1, scope='PERFORMANCE_ONLY_NOT_READINESS_OR_STOP_PROOF',
                     session=session, packet=packet, sample_mono=finished, sample_ms=(finished-start)*1000,
                     policy_sample_age_ms=(finished-row['sample_mono'])*1000,
                     localization=detail, localization_blockers=[k for k,v in detail.items() if not v],
+                    pose_sample=self._app_pose_detail,
+                    pose_refresh=None if self._app_pose_refresh is None else self._app_pose_refresh.report(),
                     checks=row['checks'], stable_s=row['stable_s'],
-                    lifecycle_services=row.get('io_diagnostics', {}).get('detail', {}).get('control', {}),
-                    runtime_fault=row.get('runtime_recovery', {}).get('operator', {}).get('fault')))
+                    lifecycle_services=((row.get('io_diagnostics') or {}).get('detail') or {}).get('control', {}),
+                    runtime_fault=((row.get('runtime_recovery') or {}).get('operator') or {}).get('fault')))
             return row
     return Observed
 

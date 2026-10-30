@@ -77,6 +77,7 @@ def test_generated_runner_uses_ui_attachment_and_existing_operator_cleanup_witho
                     result = dict(commands)
                     result["rviz"] = ["ui-attachment-fixture"]
                     result["operator"] = ["operator-fixture", session]
+                    result['mission'] = ['app-mission-fixture', *commands['mission']]
                     return result
                 def prepare_start_monitor(self, local, stop): pass
                 def handoff_monitor(self, local): pass
@@ -86,8 +87,14 @@ def test_generated_runner_uses_ui_attachment_and_existing_operator_cleanup_witho
                     records.append(("monitor_fallback", []))
             class FakeRecovery:
                 excluded = ()
-                def __init__(self, *args): self.core = SimpleNamespace(report=lambda: {})
-                def step(self, *args, **kwargs): pass
+                def __init__(self, *args):
+                    self.core = SimpleNamespace(report=lambda: {})
+                    self.factory, self.start = args[4:6]
+                def step(self, *args, **kwargs):
+                    for after_pulse in (False, True):
+                        rebuilt = self.factory(self.start, session, after_pulse)
+                        records.append(('recovery_mission_'+str(after_pulse), rebuilt['mission']))
+                        assert rebuilt['operator'] == ['operator-fixture', session]
             health = {"checks": {}, "stable_s": {}, "operator_diagnostics": {}, "io_diagnostics": {}}
             with patch.object(services.desktop_hooks, "DesktopHooks", FakeDesktop), \
                  patch.object(Path, "home", return_value=tmp), \
@@ -108,6 +115,9 @@ def test_generated_runner_uses_ui_attachment_and_existing_operator_cleanup_witho
             order = [role for role, _ in records]
             assert order.index("rviz") < order.index("view_ready") < order.index("yolo") < order.index("operator")
             assert roles["operator"] == ["operator-fixture", session]
+            assert roles['mission'][0] == 'app-mission-fixture'
+            assert roles['recovery_mission_False'] == roles['mission']
+            assert roles['recovery_mission_True'] == roles['mission']
             assert all("rviz2" not in argv and "show_gui:=true" not in argv for _, argv in records)
             assert [role for role, _ in records].index("drain") < [role for role, _ in records].index("pi_stop")
             receipt = json.loads((tmp / "session/receipt.json").read_text())

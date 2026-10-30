@@ -33,7 +33,7 @@ def test_only_inflation_radii_change_and_parent_remains_intact(candidate):
     for scope in ('local_costmap', 'global_costmap'):
         node = expected[scope][scope]['ros__parameters']
         assert node['inflation_layer']['inflation_radius'] == .55
-        node['inflation_layer']['inflation_radius'] = .30
+        node['inflation_layer']['inflation_radius'] = .30 if scope == 'local_costmap' else .25
     # Whole-tree equality includes footprint/padding, RPP, collision detection,
     # speed, plugin/QoS/topic configuration, and every unrelated Nav2 parameter.
     assert actual == expected
@@ -86,7 +86,7 @@ def test_humble_launch_rewrite_keeps_both_child_costmaps(candidate, tmp_path, mo
         params = yaml.safe_load(rewritten_path.read_text())
         for scope in ('local_costmap', 'global_costmap'):
             node = params[scope][scope]['ros__parameters']
-            assert node['inflation_layer']['inflation_radius'] == .30
+            assert node['inflation_layer']['inflation_radius'] == (.30 if scope == 'local_costmap' else .25)
             assert node['footprint_padding'] == .015
             assert node['use_sim_time'] is False
         assert params['map_server']['ros__parameters']['yaml_filename'] == str(tmp_path / 'selected map.yaml')
@@ -125,3 +125,35 @@ def test_tuning_cannot_override_footprint(tmp_path):
                                     for scope in ('local_costmap', 'global_costmap')}))
     with pytest.raises(ValueError, match='APP_NAV_TUNING_INVALID'):
         write_params(SOURCE / RELATIVE_PARAMS, tuning, tmp_path / 'params.yaml')
+
+
+def test_global_radius_can_shrink_while_local_rpp_slow_zone_stays_intact(tmp_path):
+    tuning = tmp_path / 'tuning.yaml'
+    tuning.write_text(yaml.safe_dump({
+        'local_costmap': {'inflation_radius': .30},
+        'global_costmap': {'inflation_radius': .25},
+    }))
+    output = tmp_path / 'params.yaml'
+    write_params(SOURCE / RELATIVE_PARAMS, tuning, output)
+    params = yaml.safe_load(output.read_text())
+    local = params['local_costmap']['local_costmap']['ros__parameters']
+    global_ = params['global_costmap']['global_costmap']['ros__parameters']
+    controller = params['controller_server']['ros__parameters']['FollowPath']
+    assert local['inflation_layer']['inflation_radius'] == controller['cost_scaling_dist'] == .30
+    assert global_['inflation_layer']['inflation_radius'] == .25
+    assert controller['inflation_cost_scaling_factor'] == local['inflation_layer']['cost_scaling_factor']
+    assert local['footprint'] == global_['footprint']
+    assert local['footprint_padding'] == global_['footprint_padding'] == .015
+
+
+@pytest.mark.parametrize('local_radius,global_radius', [(.25, .25), (.30, .23)])
+def test_separate_scopes_still_reject_invalid_local_slow_zone_and_global_envelope(tmp_path, local_radius, global_radius):
+    tuning = tmp_path / 'tuning.yaml'
+    tuning.write_text(yaml.safe_dump({
+        'local_costmap': {'inflation_radius': local_radius},
+        'global_costmap': {'inflation_radius': global_radius},
+    }))
+    output = tmp_path / 'params.yaml'
+    with pytest.raises(ValueError, match='APP_NAV_INFLATION_TOO_SMALL_OR_INVALID'):
+        write_params(SOURCE / RELATIVE_PARAMS, tuning, output)
+    assert not output.exists()

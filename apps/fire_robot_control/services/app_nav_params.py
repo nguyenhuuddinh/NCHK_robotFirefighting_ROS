@@ -20,7 +20,11 @@ def write_params(parent, tuning, destination):
         node = params[scope][scope]['ros__parameters']
         footprint = ast.literal_eval(node['footprint'])
         envelope = max(math.hypot(x, y) for x, y in footprint) + math.sqrt(2) * node['footprint_padding']
-        minimum = max(envelope, params['controller_server']['ros__parameters']['FollowPath']['cost_scaling_dist'])
+        # RPP derives obstacle distance from the local costmap only. Keep its
+        # slowdown distance covered there; global planning has no RPP coupling.
+        minimum = envelope
+        if scope == 'local_costmap':
+            minimum = max(minimum, params['controller_server']['ros__parameters']['FollowPath']['cost_scaling_dist'])
         if (type(radius) not in (int, float) or not math.isfinite(radius)
                 or radius < minimum):
             raise ValueError('APP_NAV_INFLATION_TOO_SMALL_OR_INVALID:' + scope)

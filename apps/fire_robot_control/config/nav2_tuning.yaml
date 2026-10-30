@@ -3,4 +3,4 @@
 local_costmap:
   inflation_radius: 0.30
 global_costmap:
-  inflation_radius: 0.30
+  inflation_radius: 0.25

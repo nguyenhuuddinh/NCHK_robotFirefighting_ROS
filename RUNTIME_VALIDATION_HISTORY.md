@@ -736,3 +736,13 @@ Kiểm tra offline: hai YAML trỏ đúng PGM cùng thư mục, đọc được 
 TN1 118 × 132 ô, TN2 115 × 115 ô, resolution 0,05 m, ngưỡng free/occupied
 hợp lệ và SHA256 ảnh/YAML được đối chiếu trước stage. Chưa nghiệm thu độ chính
 xác bản đồ hoặc chạy robot trong lượt publication.
+
+## App global inflation 0.25 m — 2026-10-31
+
+Validation-Record: APP_GLOBAL_INFLATION_025_20261031
+
+Giảm global inflation từ 0,30 m xuống 0,25 m cho app; local vẫn 0,30 m.
+Sửa kiểm tra cost_scaling_dist chỉ áp dụng cho local costmap. Giữ footprint,
+padding, collision detection và R5. QA 24 ca source/launch/model và smoke IDLE
+PASS; Qt CTest, static laptop 95 file và Pi 103 file PASS theo báo cáo app.
+Chưa nghiệm thu khoảng hở robot thực; đổi bên và vòng cua rộng còn OPEN.
